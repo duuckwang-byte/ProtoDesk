@@ -1,0 +1,28 @@
+# 构建产物
+桌面端/
+桌面工具/
+dist/
+*.exe
+
+# 依赖
+node_modules/
+
+# 运行时数据
+smoke-sandbox/
+sandboxSeed/
+
+# 开发隔离数据
+.devdata/
+
+# opencode 运行时内部文件
+sidecar.js
+.rewrite-stream.js
+
+# 临时调试文件
+.dbg7.tmp.js
+.diag2.tmp.js
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.log

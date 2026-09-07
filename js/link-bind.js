@@ -1,0 +1,877 @@
+/* [js/link-bind.js] 跳转绑定运行时 + 外层消息处理 + 检查器/管理抽屉（T1+T2） */
+/* 暴露全局 window.LinkBind：原型 html 注入体 + 外层消息监听 + 跳转执行器 + 抽屉 UI */
+var LinkBind = (function () {
+  'use strict';
+
+  /* 基础示意图标助手：PlanBIcon 不可用时回退基础字符 */
+  function lbIco(name, fallback) {
+    try { if (window.PlanBIcon) { var svg = window.PlanBIcon(name, 13); if (svg) return svg; } } catch (e) {}
+    return fallback || '';
+  }
+
+  /* ═══════ 悬停提示气泡样式（仅 iframe 内使用） ═══════ */
+  var TIP_STYLE = 'position:absolute;pointer-events:none;z-index:99999;padding:4px 10px;border-radius:6px;'
+    + 'background:#333;color:#fff;font:12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;'
+    + 'box-shadow:0 2px 8px rgba(0,0,0,.25);transform:translateX(-50%);';
+
+  /* ═══════ RUNTIME_BODY：注入到 iframe 内执行的字符串脚本 ═══════ */
+  /* 全部包 try/catch 静默失败，绝不影响原型自身 */
+  var RUNTIME_BODY = [
+    '(function(){',
+    '  var TIP_STYLE="' + TIP_STYLE.replace(/"/g, '\\"') + '";',
+    '  var P=window.__plrt||{links:[],mode:false,from:""};',
+    '  function findLink(el){',
+    '    if(P.mode)return null;',
+    '    var cur=location.hash.replace(/^#/,"");',
+    '    for(var i=0;i<P.links.length;i++){',
+    '      var l=P.links[i];',
+    '      if(l.page!==cur) continue;',
+    '      try{ if(el.closest(l.selector)){ /* 再次确认唯一性 */ var all=document.querySelectorAll(l.selector); if(all.length===1) return l; } }catch(e){}',
+    '    }',
+    '    return null;',
+    '  }',
+    '  /* 捕获阶段 click 监听 */',
+    '  document.addEventListener("click",function(ev){',
+    '    if(P.mode)return; /* 编辑模式：外层检查器接管 */',
+    '    if(ev.ctrlKey||ev.metaKey)return; /* Ctrl/Cmd 穿透 */',
+    '    var t=ev.target;if(!t||t.nodeType!==1)return;',
+    '    var tag=String(t.tagName||"").toLowerCase();if(tag==="html"||tag==="body")return;',
+    '    var link=findLink(t);',
+    '    if(!link)return;',
+    '    ev.preventDefault();ev.stopPropagation();',
+    '    try{ parent.postMessage({type:"proto-link",from:P.from,target:{proto:link.target,page:link.targetPage||""}},"*"); }catch(e){}',
+    '  },true);',
+    '  /* 预览态悬停提示 */',
+    '  var tipEl=null,origShadow=null,origEl=null;',
+    '  function removeTip(){',
+    '    if(tipEl){try{tipEl.remove();}catch(e){}tipEl=null;}',
+    '    if(origEl&&origShadow!==null){try{origEl.style.boxShadow=origShadow;}catch(e){}origEl=null;origShadow=null;}',
+    '  }',
+    '  function addTip(el,link){',
+    '    removeTip();',
+    '    if(!el||!link)return;',
+    '    /* 高亮描边 */',
+    '    try{ origShadow=el.style.boxShadow; origEl=el; el.style.boxShadow="inset 0 0 0 2px rgba(64,150,255,.55)"; }catch(e){}',
+    '    /* 气泡定位 */',
+    '    var r=el.getBoundingClientRect();',
+    '    var x=r.left+r.width/2;',
+    '    var y=r.top;',
+    '    /* 创建气泡 */',
+    '    var tip=document.createElement("div");',
+    '    tip.style.cssText=TIP_STYLE;',
+    '    tip.textContent="跳转至 "+link.target;',
+    '    document.body.appendChild(tip);',
+    '    var tw=tip.offsetWidth,th=tip.offsetHeight;',
+    '    var tx=x-tw/2;',
+    '    var ty=y-th-8;',
+    '    if(ty<4)ty=r.bottom+8; /* 下方空间不足，翻到下方 */',
+    '    if(tx<4)tx=4;',
+    '    if(tx+tw>window.innerWidth-4)tx=window.innerWidth-tw-4;',
+    '    tip.style.left=tx+"px";',
+    '    tip.style.top=ty+"px";',
+    '    tipEl=tip;',
+    '  }',
+    '  document.addEventListener("mouseover",function(ev){',
+    '    if(P.mode)return;',
+    '    if(!P.links.length)return;',
+    '    var t=ev.target;if(!t||t.nodeType!==1)return;',
+    '    var link=findLink(t);',
+    '    if(link) addTip(t,link);',
+    '  },true);',
+    '  document.addEventListener("mouseout",function(ev){',
+    '    if(P.mode)return;',
+    '    var t=ev.target;if(!t||t.nodeType!==1)return;',
+    '    var link=findLink(t);',
+    '    if(link) removeTip();',
+    '  },true);',
+    '  document.addEventListener("click",function(){ removeTip(); },true);',
+    '  /* 外层消息监听 */',
+  '  window.addEventListener("message",function(ev){',
+  '    var d=ev.data;if(!d||typeof d!=="object")return;',
+  '    if(d&&d.type==="proto-mode" && ev.source !== parent) return;', // P0-1 fix reverse check
+  '    if(d.type==="proto-mode"){ P.mode=!!d.edit; removeTip(); }',
+    '    else if(d.type==="proto-goto"){ var pg=String(d.page||""); if(pg)location.hash=pg; }',
+    '  });',
+    '})();'
+  ].join('\n');
+
+  /* ═══════ wrapProtoHtml：在原型 html 装入 iframe 前调用 ═══════ */
+  function wrapProtoHtml(html, opts) {
+    var payload = JSON.stringify({
+      links: (opts && opts.links) || [],
+      mode: !!(opts && opts.mode),
+      from: String((opts && opts.from) || '')
+    });
+    var tag = '<script data-plrt>' + safeScript('(function(){window.__plrt=' + payload + ';try{' + RUNTIME_BODY + '}catch(e){}})();') + '<\/script>';
+    if (/<\/body\s*>/i.test(html)) return html.replace(/<\/body\s*>/i, tag + '</body>');
+    return html + tag;
+  }
+
+  /* ═══════ 外层消息处理 ═══════ */
+  var pendingGoto = null;
+  function isTrustedProtoMessage(ev){ // P0-1 fix
+    if(!ev.source || ev.source !== frame?.contentWindow) return false;
+    if(ev.origin !== 'null' && ev.origin !== location.origin) return false; // file:// origin 为 null，放行
+    return true;
+  }
+  function initMessageListener() {
+    window.addEventListener('message', function (ev) {
+      if(!isTrustedProtoMessage(ev)) return; // P0-1 fix
+      var d = ev.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'proto-link') {
+        handleProtoLink(d);
+      }
+    });
+  }
+  function handleProtoLink(d) {
+    var target = d.target || {};
+    var protoName = target.proto || '';
+    var targetPage = target.page || '';
+    var dest = null;
+    for (var i = 0; i < sources.length; i++) {
+      if (sources[i].displayName === protoName) { dest = sources[i]; break; }
+    }
+    if (!dest) {
+      libStatus('跳转失败：目标原型「' + protoName + '」不存在，可能已被删除或重命名。');
+      return;
+    }
+    pendingGoto = targetPage;
+    closeAllDrawers();
+    loadSource(dest);
+  }
+
+  /* ═══════ performLink(link)：跳转执行器 ═══════ */
+  function performLink(link) {
+    if (!link) return;
+    var protoName = link.target || '';
+    var targetPage = link.targetPage || '';
+    var dest = null;
+    for (var i = 0; i < sources.length; i++) {
+      if (sources[i].displayName === protoName) { dest = sources[i]; break; }
+    }
+    if (!dest) {
+      libStatus('跳转失败：目标原型「' + protoName + '」不存在，可能已被删除或重命名。');
+      return;
+    }
+    pendingGoto = targetPage;
+    closeAllDrawers();
+    loadSource(dest);
+  }
+
+  /* ═══════ broadcastMode(edit)：模式广播 ═══════ */
+  function broadcastMode(edit) {
+    try {
+      var f = frame;
+      if (f && f.contentWindow) {
+        f.contentWindow.postMessage({ type: 'proto-mode', edit: !!edit }, '*');
+      }
+    } catch (e) {}
+  }
+
+  /* ═══════ closeAllDrawers：依次收起所有抽屉与遮罩 ═══════ */
+  function closeAllDrawers() {
+    closeInspector();
+    closeLinkMgr();
+    if (typeof closeEditDrawer === 'function') closeEditDrawer();
+    if (window.AnnotationEngine && typeof window.AnnotationEngine.closeAll === 'function') {
+      window.AnnotationEngine.closeAll();
+    }
+  }
+
+  /* ═══════ 页面键取值：返回原始 hash（首页返回 ''），与 links.json 存储约定一致 ═══════ */
+  function framePageKey() {
+    try {
+      var h = (frame.contentWindow && frame.contentWindow.location && frame.contentWindow.location.hash) || '';
+      return h.replace(/^#/, '');
+    } catch (e) { return ''; }
+  }
+
+  /* ═══════ 元素检查器抽屉 ═══════ */
+  var inspectorEl = null;    /* 当前锁定的元素 */
+  var inspectorLink = null;  /* 当前元素的绑定 */
+  var inspectorMode = '';    /* 'view' | 'select' | 'bound' */
+  var inspectorSelectTarget = null; /* 选择态预选的目标源 */
+
+  function openInspector(el) {
+    if (!el) return;
+    /* 关闭其他抽屉（必须在状态赋值之前，否则 closeInspector 会清空状态） */
+    closeAllDrawers();
+    inspectorEl = el;
+    /* 计算元素信息 */
+    var sel = generateSelector(el);
+    var pg = framePageKey();
+    var label = editElementLabel(el);
+    var txt = '';
+    try { txt = String(el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30); } catch (e) {}
+    /* 查找现有绑定 */
+    var links = (currentSource && currentSource._links) || [];
+    inspectorLink = null;
+    for (var i = 0; i < links.length; i++) {
+      if (links[i].selector === sel && links[i].page === pg) {
+        inspectorLink = links[i];
+        break;
+      }
+    }
+    inspectorMode = inspectorLink ? 'bound' : 'view';
+    inspectorSelectTarget = null;
+    /* 渲染 */
+    renderInspector(sel, pg, label, txt);
+    /* 显示遮罩和抽屉 */
+    var mask = $('linkInspMask');
+    if(mask) mask.onclick=function(){closeInspector();};
+    var drawer = $('linkInspector');
+    if (mask) mask.style.display = 'block';
+    if (drawer) drawer.classList.add('open');
+    /* 加载修改需求草稿 */
+    loadReqDraft(sel, pg);
+    /* 加载需求标注 */
+    if (window.AnnotationEngine && typeof window.AnnotationEngine.loadInspectorAnno === 'function') {
+      window.AnnotationEngine.loadInspectorAnno(el, sel, pg);
+    }
+    if(window.MaskStack) window.MaskStack.push('linkInspMask', closeInspector); // P1-7 fix mask统一
+  }
+
+  function closeInspector() {
+    if(window.MaskStack) window.MaskStack.pop('linkInspMask'); // P1-7 fix
+    var mask = $('linkInspMask');
+    var drawer = $('linkInspector');
+    if (mask) mask.style.display = 'none';
+    if (drawer) drawer.classList.remove('open');
+    inspectorEl = null;
+    inspectorLink = null;
+    inspectorMode = '';
+    inspectorSelectTarget = null;
+  }
+
+  function renderInspector(sel, pg, label, txt) {
+    var titleEl = $('liTitle');
+    var selTip = $('liSelTip');
+    var jumpChip = $('liJumpChip');
+    var jumpBody = $('liJumpBody');
+    if (titleEl) {
+      var rawName = (typeof extractElementText === 'function') ? extractElementText(inspectorEl) : '';
+      if (rawName) {
+        titleEl.innerHTML = '<span class="li-title-btn-badge">当前按钮/元素</span><span class="li-title-btn-name">【' + escHtml(rawName) + '】</span>';
+      } else {
+        titleEl.textContent = label || '元素';
+      }
+    }
+    if (selTip) {
+      selTip.innerHTML = '<span class="li-pos-tag">定位</span> <span class="li-pos-sel">' + escHtml(sel) + '</span><span class="li-pos-page">页面: ' + escHtml(pg || '首页') + '</span>';
+      selTip.title = sel;
+    }
+    /* 渲染跳转交互板块 */
+    renderJumpSection(sel, pg, jumpChip, jumpBody);
+  }
+
+  function renderJumpSection(sel, pg, chipEl, bodyEl) {
+    if (!bodyEl) return;
+    /* 检查是否有 sandboxDir */
+    if (!currentSource || !currentSource.sandboxDir) {
+      bodyEl.innerHTML = '<div class="li-hint">该原型未入沙箱，暂不支持保存跳转。</div>';
+      if (chipEl) { chipEl.className = 'state-chip'; chipEl.textContent = ''; }
+      return;
+    }
+    if (inspectorMode === 'select') {
+      renderSelectTarget(sel, pg, chipEl, bodyEl);
+      return;
+    }
+    if (inspectorMode === 'bound' && inspectorLink) {
+      renderBoundTarget(sel, pg, chipEl, bodyEl);
+      return;
+    }
+    /* 未绑定 */
+    if (chipEl) { chipEl.className = 'state-chip'; chipEl.textContent = ''; }
+    bodyEl.innerHTML = '<div class="li-hint">该元素尚未设置跳转。</div>'
+      + '<div class="li-actions"><button class="docs-btn primary" id="liSetJump">＋ 设置跳转目标</button></div>';
+    var btn = $('liSetJump');
+    if (btn) btn.onclick = function () { inspectorMode = 'select'; inspectorSelectTarget = null; renderJumpSection(sel, pg, chipEl, bodyEl); };
+  }
+
+  function renderSelectTarget(sel, pg, chipEl, bodyEl) {
+    if (chipEl) { chipEl.className = 'state-chip active'; chipEl.textContent = '选择中'; }
+    /* 获取其他源 */
+    var others = [];
+    for (var i = 0; i < sources.length; i++) {
+      if (sources[i] !== currentSource) others.push(sources[i]);
+    }
+    if (!others.length) {
+      bodyEl.innerHTML = '<div class="li-hint">项目内暂无其他原型可跳转。</div>'
+        + '<div class="li-actions"><button class="docs-btn" id="liSelBack">返回</button></div>';
+      var backBtn = $('liSelBack');
+      if (backBtn) backBtn.onclick = function () { inspectorMode = 'view'; renderJumpSection(sel, pg, chipEl, bodyEl); };
+      return;
+    }
+    var html = '<div class="li-targets">';
+    for (var j = 0; j < others.length; j++) {
+      var s = others[j];
+      var kindCls = s.kind === 'pc' ? 'pc' : 'mobile';
+      var kindLabel = s.kind === 'pc' ? 'PC' : '移动';
+      var selCls = (inspectorSelectTarget === s) ? ' selected' : '';
+      html += '<div class="li-target-item' + selCls + '" data-idx="' + j + '">'
+        + '<span class="li-target-name">' + escHtml(s.displayName) + '</span>'
+        + '<span class="li-target-kind ' + kindCls + '">' + kindLabel + '</span>'
+        + '</div>';
+    }
+    html += '</div>';
+    /* 页面选择（预选时展开） */
+    html += '<div class="li-page-row" id="liPageRow" style="display:none"><label>目标页面：</label><select id="liPageSelect"><option value="">打开首页</option></select></div>';
+    html += '<div class="li-actions" id="liSelectActions" style="display:none"><button class="docs-btn" id="liSelBack">返回</button><button class="docs-btn primary" id="liSaveJump">保存绑定</button></div>';
+    bodyEl.innerHTML = html;
+    /* 绑定事件 */
+    var items = bodyEl.querySelectorAll('.li-target-item');
+    for (var k = 0; k < items.length; k++) {
+      (function (item) {
+        item.onclick = function () {
+          var idx = parseInt(item.getAttribute('data-idx'), 10);
+          inspectorSelectTarget = others[idx];
+          /* 更新选中态 */
+          var allItems = bodyEl.querySelectorAll('.li-target-item');
+          for (var m = 0; m < allItems.length; m++) allItems[m].classList.remove('selected');
+          item.classList.add('selected');
+          /* 展开页面选择 */
+          var pageRow = $('liPageRow');
+          var pageSelect = $('liPageSelect');
+          var actions = $('liSelectActions');
+          if (pageRow) pageRow.style.display = '';
+          if (actions) actions.style.display = '';
+          if (pageSelect) {
+            pageSelect.innerHTML = '<option value="">打开首页</option>';
+            var pages = extractPages(inspectorSelectTarget.content || '');
+            for (var p = 0; p < pages.length; p++) {
+              var opt = document.createElement('option');
+              opt.value = pages[p];
+              opt.textContent = pages[p];
+              pageSelect.appendChild(opt);
+            }
+          }
+        };
+      })(items[k]);
+    }
+    var backBtn2 = $('liSelBack');
+    if (backBtn2) backBtn2.onclick = function () { inspectorMode = 'view'; inspectorSelectTarget = null; renderJumpSection(sel, pg, chipEl, bodyEl); };
+    var saveBtn = $('liSaveJump');
+    if (saveBtn) saveBtn.onclick = function () {
+      var pageSelect = $('liPageSelect');
+      var targetPage = pageSelect ? pageSelect.value : '';
+      saveJumpBinding(sel, pg, inspectorSelectTarget.displayName, targetPage);
+    };
+  }
+
+  function renderBoundTarget(sel, pg, chipEl, bodyEl) {
+    var link = inspectorLink;
+    var stale = !!link._stale;
+    /* 状态签 */
+    if (chipEl) {
+      if (stale) {
+        chipEl.className = 'state-chip stale';
+        chipEl.textContent = '失效 · 原型已被修改';
+      } else {
+        chipEl.className = 'state-chip live';
+        chipEl.textContent = '已保存 · 即时生效';
+      }
+    }
+    var targetInfo = '→ ' + escHtml(link.target);
+    if (link.targetPage) targetInfo += ' · ' + escHtml(link.targetPage);
+    var html = '<div class="li-hint" style="font-size:12.5px;color:var(--ink)">' + targetInfo + '</div>';
+    if (stale) html += '<div class="li-hint" style="color:#DC2626">请解除后重新绑定该元素</div>';
+    html += '<div class="li-actions"><button class="docs-btn" id="liChangeJump">更换目标</button><button class="docs-btn" id="liRemoveJump" style="color:#DC2626">解除绑定</button></div>';
+    bodyEl.innerHTML = html;
+    var changeBtn = $('liChangeJump');
+    if (changeBtn) changeBtn.onclick = function () {
+      inspectorMode = 'select';
+      inspectorSelectTarget = null;
+      /* 预选现目标 */
+      for (var i = 0; i < sources.length; i++) {
+        if (sources[i].displayName === link.target) { inspectorSelectTarget = sources[i]; break; }
+      }
+      renderJumpSection(sel, pg, chipEl, bodyEl);
+    };
+    var removeBtn = $('liRemoveJump');
+    if (removeBtn) removeBtn.onclick = function () {
+      removeJumpBinding(sel, pg);
+    };
+  }
+
+  function saveJumpBinding(sel, pg, targetName, targetPage) {
+    if (!currentSource || !currentSource.sandboxDir) return;
+    var links = currentSource._links || [];
+    var btnName = (typeof extractElementText === 'function') ? extractElementText(inspectorEl) : '';
+    /* 一元素一条绑定：替换或新增 */
+    var foundIdx = -1;
+    for (var i = 0; i < links.length; i++) {
+      if (links[i].selector === sel && links[i].page === pg) {
+        links[i].btnName = btnName;
+        links[i].target = targetName;
+        links[i].targetPage = targetPage || '';
+        links[i].label = editElementLabel(inspectorEl);
+        links[i].text = '';
+        try { links[i].text = String(inspectorEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) {}
+        links[i].ts = Date.now();
+        foundIdx = i;
+        break;
+      }
+    }
+    if (foundIdx < 0) {
+      var id = 'lk_' + Date.now().toString(36) + Math.floor(Math.random() * 46656).toString(36);
+      var newLink = {
+        id: id, page: pg, selector: sel,
+        btnName: btnName,
+        label: editElementLabel(inspectorEl),
+        text: (function () { try { return String(inspectorEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { return ''; } })(),
+        target: targetName, targetPage: targetPage || '',
+        ts: Date.now()
+      };
+      links.push(newLink);
+      foundIdx = links.length - 1;
+    }
+    currentSource._links = links;
+    /* 写盘 */
+    window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
+    updateLinkBadge();
+    libStatus('已保存跳转：' + (btnName ? '【' + btnName + '】' : editElementLabel(inspectorEl)) + ' → ' + targetName + (targetPage ? ' · ' + targetPage : ''));
+    /* 切回已绑定态 */
+    inspectorLink = links[foundIdx];
+    inspectorMode = 'bound';
+    var jumpChip = $('liJumpChip');
+    var jumpBody = $('liJumpBody');
+    var sel = generateSelector(inspectorEl);
+    var pg2 = framePageKey();
+    renderJumpSection(sel, pg2, jumpChip, jumpBody);
+  }
+
+  function removeJumpBinding(sel, pg) {
+    if (!currentSource || !currentSource.sandboxDir) return;
+    var links = currentSource._links || [];
+    for (var i = links.length - 1; i >= 0; i--) {
+      if (links[i].selector === sel && links[i].page === pg) {
+        links.splice(i, 1);
+        break;
+      }
+    }
+    currentSource._links = links;
+    window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
+    updateLinkBadge();
+    libStatus('已解除跳转绑定。');
+    inspectorLink = null;
+    inspectorMode = 'view';
+    var jumpChip = $('liJumpChip');
+    var jumpBody = $('liJumpBody');
+    renderJumpSection(sel, pg, jumpChip, jumpBody);
+  }
+
+  /* ═══════ 修改需求板块 ═══════ */
+  function loadReqDraft(sel, pg) {
+    var textarea = $('liReqText');
+    if (!textarea) return;
+    /* 从 EDIT_QUEUE 中查找草稿 */
+    var draft = '';
+    for (var i = 0; i < EDIT_QUEUE.length; i++) {
+      if (EDIT_QUEUE[i].selector === sel && EDIT_QUEUE[i].page === pg) {
+        draft = EDIT_QUEUE[i].text || '';
+        break;
+      }
+    }
+    textarea.value = draft;
+  }
+  function initReqSection() {
+    var addBtn = $('liReqAdd');
+    if (addBtn) {
+      addBtn.onclick = function () {
+        var textarea = $('liReqText');
+        if (!textarea || !inspectorEl) return;
+        var text = (textarea.value || '').trim();
+        if (!text) { alert('请先输入要调整的内容。'); return; }
+        /* 调用重构后的 editQueueAdd */
+        if (typeof editQueueAdd === 'function') {
+          editQueueAdd(inspectorEl, text);
+        }
+        textarea.value = '';
+      };
+    }
+  }
+
+  /* ═══════ 折叠板块 ═══════ */
+  var FOLD_KEY = 'linkInspFold_v1';
+  function initFoldSections() {
+    var secs = [$('liSecJump'), $('liSecReq'), $('liSecAnno')];
+    for (var i = 0; i < secs.length; i++) {
+      (function (sec) {
+        if (!sec) return;
+        var hd = sec.querySelector('.li-card-hd') || sec.querySelector('.li-sec-hd');
+        if (!hd) return;
+        hd.onclick = function (e) {
+          sec.classList.toggle('open');
+          saveFoldState();
+        };
+      })(secs[i]);
+    }
+    restoreFoldState();
+  }
+  function saveFoldState() {
+    var jumpOpen = $('liSecJump') && $('liSecJump').classList.contains('open');
+    var reqOpen = $('liSecReq') && $('liSecReq').classList.contains('open');
+    var annoOpen = $('liSecAnno') && $('liSecAnno').classList.contains('open');
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify({ jump: jumpOpen, req: reqOpen, anno: annoOpen })); } catch (e) {}
+  }
+  function restoreFoldState() {
+    try {
+      var v = JSON.parse(localStorage.getItem(FOLD_KEY) || 'null');
+      if (v) {
+        if ($('liSecJump')) { if (v.jump === false) $('liSecJump').classList.remove('open'); else $('liSecJump').classList.add('open'); }
+        if ($('liSecReq')) { if (v.req === false) $('liSecReq').classList.remove('open'); else $('liSecReq').classList.add('open'); }
+        if ($('liSecAnno')) { if (v.anno === false) $('liSecAnno').classList.remove('open'); else $('liSecAnno').classList.add('open'); }
+      }
+    } catch (e) {}
+  }
+
+  /* ═══════ 跳转管理抽屉 ═══════ */
+  function openLinkMgr() {
+    closeAllDrawers();
+    /* 打开前先校验（仅沙箱源） */
+    if (currentSource && currentSource.sandboxDir) {
+      validateLinks();
+    }
+    renderLinkMgr();
+    var mask = $('linkMgrMask');
+    var drawer = $('linkMgrDrawer');
+    if (mask) mask.style.display = 'block';
+    if (drawer) drawer.classList.add('open');
+    if(window.MaskStack) window.MaskStack.push('linkMgrMask', closeLinkMgr); // P1-7 fix mask统一
+  }
+
+  function closeLinkMgr() {
+    if(window.MaskStack) window.MaskStack.pop('linkMgrMask'); // P1-7 fix
+    var mask = $('linkMgrMask');
+    var drawer = $('linkMgrDrawer');
+    if (mask) mask.style.display = 'none';
+    if (drawer) drawer.classList.remove('open');
+  }
+
+  function renderLinkMgr() {
+    var body = $('lmBody');
+    var countEl = $('lmCount');
+    var links = (currentSource && currentSource._links) || [];
+    if (countEl) countEl.textContent = links.length;
+    if (!body) return;
+    if (!links.length) {
+      body.innerHTML = '<div class="lm-empty">本原型还没有跳转交互。<br>切到编辑模式，点击原型元素即可设置。</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < links.length; i++) {
+      var l = links[i];
+      var stale = !!l._stale;
+      var staleCls = stale ? ' stale' : '';
+      var pageInfo = l.page || '首页';
+      var targetInfo = escHtml(l.target);
+      if (l.targetPage) targetInfo += ' · ' + escHtml(l.targetPage);
+      
+      // 优先显示按钮对应的中文名称
+      var btnName = l.btnName || '';
+      if (!btnName && l.label) {
+        var m = l.label.match(/「([^」]+)」/);
+        if (m) btnName = m[1];
+      }
+      if (!btnName && l.text) {
+        btnName = l.text.slice(0, 20);
+      }
+
+      var chipHtml = '';
+      if (stale) {
+        chipHtml = '<span class="state-chip stale">失效</span>';
+      } else {
+        chipHtml = '<span class="state-chip live">已生效</span>';
+      }
+
+      html += '<div class="lm-item' + staleCls + '" data-idx="' + i + '">'
+        + '<div class="lm-item-top">'
+        +   '<div class="lm-btn-info">'
+        +     '<span class="lm-btn-icon">' + lbIco('check-circle', '●') + '</span>'
+        +     (btnName ? '<span class="lm-btn-name" title="' + escAttr(btnName) + '">按钮：<b>【' + escHtml(btnName) + '】</b></span>' : '<span class="lm-btn-name">未命名的按钮/元素</span>')
+        +   '</div>'
+        +   chipHtml
+        + '</div>'
+        + '<div class="lm-item-meta">'
+        +   '<span class="lm-meta-tag">所在页面: ' + escHtml(pageInfo) + '</span>'
+        +   '<span class="lm-meta-sel" title="' + escAttr(l.selector) + '">' + escHtml(l.label || l.selector) + '</span>'
+        + '</div>'
+        + '<div class="lm-item-target-wrap">'
+        +   '<span class="lm-target-label">' + lbIco('target', '→') + ' 跳转至：</span>'
+        +   '<span class="lm-target-val">' + targetInfo + '</span>'
+        + '</div>'
+        + '<div class="lm-item-acts">'
+        +   '<button data-act="jump">试跳</button>'
+        +   '<button data-act="change">更换目标</button>'
+        +   '<button data-act="delete" class="danger">删除</button>'
+        + '</div>'
+        + '<div class="lm-replace" id="lmReplace_' + i + '" style="display:none"></div>'
+        + '</div>';
+    }
+    body.innerHTML = html;
+    /* 绑定事件 */
+    var acts = body.querySelectorAll('.lm-item-acts button');
+    for (var j = 0; j < acts.length; j++) {
+      (function (btn) {
+        btn.onclick = function (e) {
+          e.stopPropagation();
+          var act = btn.getAttribute('data-act');
+          var item = btn.closest ? btn.closest('.lm-item') : null;
+          var idx = parseInt(item ? item.getAttribute('data-idx') : btn.getAttribute('data-idx'), 10);
+          if (act === 'jump') {
+            closeAllDrawers();
+            performLink(links[idx]);
+          } else if (act === 'change') {
+            renderLinkMgrReplace(idx, links[idx]);
+          } else if (act === 'delete') {
+            removeLinkMgrItem(idx);
+          }
+        };
+      })(acts[j]);
+    }
+  }
+
+  function renderLinkMgrReplace(idx, link) {
+    var replaceDiv = $('lmReplace_' + idx);
+    if (!replaceDiv) return;
+    if (replaceDiv.style.display !== 'none') {
+      replaceDiv.style.display = 'none';
+      replaceDiv.innerHTML = '';
+      return;
+    }
+    /* 获取其他源 */
+    var others = [];
+    for (var i = 0; i < sources.length; i++) {
+      if (sources[i] !== currentSource) others.push(sources[i]);
+    }
+    if (!others.length) {
+      replaceDiv.innerHTML = '<div class="li-hint">项目内暂无其他原型可跳转。</div>';
+      replaceDiv.style.display = '';
+      return;
+    }
+    var html = '<div class="li-targets">';
+    for (var j = 0; j < others.length; j++) {
+      var s = others[j];
+      var kindCls = s.kind === 'pc' ? 'pc' : 'mobile';
+      var kindLabel = s.kind === 'pc' ? 'PC' : '移动';
+      var selCls = (s.displayName === link.target) ? ' selected' : '';
+      html += '<div class="li-target-item' + selCls + '" data-tidx="' + j + '">'
+        + '<span class="li-target-name">' + escHtml(s.displayName) + '</span>'
+        + '<span class="li-target-kind ' + kindCls + '">' + kindLabel + '</span>'
+        + '</div>';
+    }
+    html += '</div>';
+    html += '<div class="li-page-row"><label>目标页面：</label><select id="lmPageSel_' + idx + '"><option value="">打开首页</option></select></div>';
+    html += '<div class="li-actions"><button class="docs-btn primary" id="lmSaveReplace_' + idx + '">保存</button></div>';
+    replaceDiv.innerHTML = html;
+    replaceDiv.style.display = '';
+    /* 页面下拉 */
+    var selTarget = null;
+    var pageSel = $('lmPageSel_' + idx);
+    var items = replaceDiv.querySelectorAll('.li-target-item');
+    for (var k = 0; k < items.length; k++) {
+      (function (item) {
+        item.onclick = function () {
+          var ti = parseInt(item.getAttribute('data-tidx'), 10);
+          selTarget = others[ti];
+          var allItems = replaceDiv.querySelectorAll('.li-target-item');
+          for (var m = 0; m < allItems.length; m++) allItems[m].classList.remove('selected');
+          item.classList.add('selected');
+          if (pageSel) {
+            pageSel.innerHTML = '<option value="">打开首页</option>';
+            var pages = extractPages(selTarget.content || '');
+            for (var p = 0; p < pages.length; p++) {
+              var opt = document.createElement('option');
+              opt.value = pages[p];
+              opt.textContent = pages[p];
+              pageSel.appendChild(opt);
+            }
+          }
+        };
+      })(items[k]);
+    }
+    var saveBtn = $('lmSaveReplace_' + idx);
+    if (saveBtn) {
+      saveBtn.onclick = function () {
+        if (!selTarget) { alert('请先选择一个目标原型。'); return; }
+        var tp = pageSel ? pageSel.value : '';
+        link.target = selTarget.displayName;
+        link.targetPage = tp;
+        link.ts = Date.now();
+        currentSource._links = currentSource._links || [];
+        window.protoAPI.links.write(currentSource.sandboxDir, { links: currentSource._links });
+        updateLinkBadge();
+        libStatus('已更换跳转目标。');
+        renderLinkMgr();
+      };
+    }
+  }
+
+  function removeLinkMgrItem(idx) {
+    var links = currentSource._links || [];
+    if (idx < 0 || idx >= links.length) return;
+    links.splice(idx, 1);
+    currentSource._links = links;
+    window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
+    updateLinkBadge();
+    libStatus('已删除跳转绑定。');
+    renderLinkMgr();
+  }
+
+  /* ═══════ 徽标 ═══════ */
+  function updateLinkBadge() {
+    var links = (currentSource && currentSource._links) || [];
+    var n = links.length;
+    var badge = $('linkBadge');
+    if (badge) {
+      badge.textContent = n;
+      badge.style.display = n ? '' : 'none';
+      /* 有失效项时追加警示 */
+      var hasStale = links.some(function (l) { return l._stale; });
+      badge.classList.toggle('warn', hasStale);
+    }
+  }
+
+  /* ═══════ 失效校验 ═══════ */
+  function validateLinks() {
+    if (!currentSource) return;
+    var links = currentSource._links || [];
+    if (!links.length) return;
+    if (!frame || !frame.contentDocument) return;
+    var doc = frame.contentDocument;
+    var changed = false;
+    for (var i = 0; i < links.length; i++) {
+      var l = links[i];
+      try {
+        var all = doc.querySelectorAll(l.selector);
+        l._stale = (all.length !== 1);
+      } catch (e) {
+        l._stale = true;
+      }
+      changed = true;
+    }
+    if (changed) {
+      updateLinkBadge();
+      /* 如果检查器或管理抽屉打开则刷新 */
+      if ($('linkInspector') && $('linkInspector').classList.contains('open')) {
+        var sel = inspectorEl ? generateSelector(inspectorEl) : '';
+        var pg = framePageKey();
+        var jumpChip = $('liJumpChip');
+        var jumpBody = $('liJumpBody');
+        renderJumpSection(sel, pg, jumpChip, jumpBody);
+      }
+      if ($('linkMgrDrawer') && $('linkMgrDrawer').classList.contains('open')) {
+        renderLinkMgr();
+      }
+    }
+  }
+
+  /* ═══════ AI 刷新后挂钩 ═══════ */
+  function onAfterAiRefresh() {
+    if (!currentSource || !currentSource.sandboxDir) return;
+    /* 重新拉取 _links 缓存 */
+    window.protoAPI.links.read(currentSource.sandboxDir).then(function (r) {
+      if (r && r.ok && r.data) {
+        currentSource._links = (r.data && r.data.links) || [];
+      } else {
+        currentSource._links = currentSource._links || [];
+      }
+      validateLinks();
+      var links = currentSource._links || [];
+      var staleCount = links.filter(function (l) { return l._stale; }).length;
+      if (staleCount > 0) {
+        libStatus('检测到 ' + staleCount + ' 条跳转因原型修改可能失效，请点「交互」查看。');
+      }
+      updateLinkBadge();
+    }).catch(function () {});
+  }
+
+  /* ═══════ Esc 键关闭抽屉 ═══════ */
+  function initEscListener() {
+    // P1-7 fix: Esc 统一由 MaskStack 单一监听接管，此处不再重复注册
+    // 保留空实现以兼容旧调用，实际关闭逻辑由 push/pop 驱动
+  }
+
+  /* ═══════ 遮罩点击关闭（I02 统一：点击遮罩关闭对应抽屉） ═══════ */
+  function initMaskListeners() {
+    var inspMask=$('linkInspMask');
+    if(inspMask) inspMask.onclick=function(){ closeInspector(); };
+    var mgrMask=$('linkMgrMask');
+    if(mgrMask) mgrMask.onclick=function(){ closeLinkMgr(); };
+    var editMask=$('editDrawerMask');
+    if(editMask) editMask.onclick=function(){ if(typeof closeEditDrawer==='function') closeEditDrawer(); };
+    var multiMask=$('multiEditMask');
+    if(multiMask) multiMask.onclick=function(){ if(window.CTRL_PICK&&typeof CTRL_PICK.closePanel==='function'){ CTRL_PICK.closePanel(); CTRL_PICK.clear(); } };
+  }
+  function initMaskStackRegister(){
+    if(window.MaskStack && window.MaskStack.register){
+      try{ window.MaskStack.register('linkInspMask','linkInspector', closeInspector); }catch(e){}
+      try{ window.MaskStack.register('linkMgrMask','linkMgrDrawer', closeLinkMgr); }catch(e){}
+    }
+  }
+
+  /* ═══════ 抽屉关闭按钮 ═══════ */
+  function initCloseButtons() {
+    var inspClose = $('liClose');
+    var mgrClose = $('lmClose');
+    if (inspClose) inspClose.onclick = function () { closeInspector(); };
+    if (mgrClose) mgrClose.onclick = function () { closeLinkMgr(); };
+  }
+
+  /* ═══════ onFrameLoad：由 edit-entry.js 的 frame load 事件调用 ═══════ */
+  function onFrameLoad() {
+    if (pendingGoto !== null) {
+      var page = pendingGoto;
+      pendingGoto = null;
+      try {
+        var f = document.getElementById('frame') || document.querySelector('iframe');
+        if (f && f.contentWindow) {
+          f.contentWindow.postMessage({ type: 'proto-goto', page: page }, '*');
+        }
+      } catch (e) {}
+    }
+    /* 延迟 300ms 校验失效 */
+    setTimeout(function () { validateLinks(); }, 300);
+  }
+
+  /* ═══════ 管理抽屉按钮绑定 ═══════ */
+  function initLinkMgrButton() {
+    var btn = $('btnLinkMgr');
+    if (btn) btn.onclick = function () { openLinkMgr(); };
+  }
+
+  /* ═══════ 初始化 ═══════ */
+  function init() {
+    initMessageListener();
+    initEscListener();
+    initMaskListeners();
+    initMaskStackRegister();
+    initCloseButtons();
+    initReqSection();
+    initFoldSections();
+    initLinkMgrButton();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  /* 公开 API */
+  return {
+    wrapProtoHtml: wrapProtoHtml,
+    performLink: performLink,
+    broadcastMode: broadcastMode,
+    closeAllDrawers: closeAllDrawers,
+    openInspector: openInspector,
+    closeInspector: closeInspector,
+    openLinkMgr: openLinkMgr,
+    closeLinkMgr: closeLinkMgr,
+    updateLinkBadge: updateLinkBadge,
+    validateLinks: validateLinks,
+    onAfterAiRefresh: onAfterAiRefresh,
+    onFrameLoad: onFrameLoad
+  };
+})();

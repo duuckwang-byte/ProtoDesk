@@ -1,0 +1,48 @@
+{
+  "name": "proto-viewer",
+  "version": "1.0.0",
+  "description": "原型预览工具 · 投融资录入工作流",
+  "main": "main.js",
+  "author": "local",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "test:ui": "node tests/run.js"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "local.proto.viewer",
+    "productName": "原型工具",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "app.css",
+      "js/**",
+      "原型+文档.html",
+      "toolPrompt.md"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "directories": {
+      "output": "桌面端"
+    }
+  }
+}
