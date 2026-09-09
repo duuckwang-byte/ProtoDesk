@@ -32,7 +32,6 @@ contextBridge.exposeInMainWorld('protoAPI', {
     list: (project) => ipcRenderer.invoke('sandbox:list', project),
     write: (o) => ipcRenderer.invoke('sandbox:write', o),
     readFile: (o) => ipcRenderer.invoke('sandbox:read-file', o),
-    read: (o) => ipcRenderer.invoke('sandbox:read-file', o),
     create: (o) => ipcRenderer.invoke('sandbox:create', o),
     adopt: (o) => ipcRenderer.invoke('sandbox:adopt', o),
     rename: (o) => ipcRenderer.invoke('sandbox:rename', o),
@@ -50,9 +49,7 @@ contextBridge.exposeInMainWorld('protoAPI', {
     getConfig: () => ipcRenderer.invoke('ai:get-config'),
     saveConfig: (cfg) => ipcRenderer.invoke('ai:save-config', cfg),
     testConnection: (cfg) => ipcRenderer.invoke('ai:test-connection', cfg),
-    listModels: () => ipcRenderer.invoke('ai:models'),
-    sessionDirs: (oids) => ipcRenderer.invoke('ai:session-dirs', oids),
-    setCliPath: (p) => ipcRenderer.invoke('ai:set-path', p),
+    listModels: (hint) => ipcRenderer.invoke('ai:models', hint),
     pickCli: () => ipcRenderer.invoke('ai:pick'),
     ask: (prompt, sessionId, sandboxDir, model, extra) => ipcRenderer.invoke('ai:ask', prompt, sessionId, sandboxDir, model, extra),
     cancel: () => ipcRenderer.invoke('ai:cancel'),
@@ -68,6 +65,7 @@ contextBridge.exposeInMainWorld('protoAPI', {
     save: (dir, annotations) => ipcRenderer.invoke('proto:annotations:save', Array.isArray(annotations) ? { dir, annotations } : (typeof dir === 'object' ? dir : { dir, annotations }))
   },
   git: {
+    // P0：getConfig 返回已脱敏（无 token 字段，仅 hasToken/tokenMasked）；签名不变
     getConfig: (project) => ipcRenderer.invoke('git:config-get', project),
     saveConfig: (o) => ipcRenderer.invoke('git:config-save', o),
     testConnection: (cfg) => ipcRenderer.invoke('git:test-connection', cfg),
@@ -75,6 +73,9 @@ contextBridge.exposeInMainWorld('protoAPI', {
     getStatus: (projectOrOpts) => ipcRenderer.invoke('git:status', projectOrOpts),
     push: (o) => ipcRenderer.invoke('git:push', o),
     fetchDiff: (projectOrOpts) => ipcRenderer.invoke('git:fetch-diff', projectOrOpts),
-    pull: (o) => ipcRenderer.invoke('git:pull', o)
+    pull: (o) => ipcRenderer.invoke('git:pull', o),
+    isBusy: () => ipcRenderer.invoke('git:is-busy'),
+    cancel: () => ipcRenderer.invoke('git:cancel'),
+    healRepair: (o) => ipcRenderer.invoke('git:heal-repair', o)
   }
 });

@@ -1,7 +1,24 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
+/* L4 统一IPC割接：收敛至 runtimes/engine + providers，删除旧手写 CLI/API 双轨 */
+const { detectAllAgents } = require('./runtimes/detection');
+const { getAgentDef, getAllAgentDefs } = require('./runtimes/registry');
+const { resolveAgentExecutable } = require('./runtimes/resolution');
+const { startAgentExecution } = require('./runtimes/engine');
+const { buildOpenCodeByokProviderConfig } = require('./runtimes/byok-opencode');
+const { testProviderConnection } = require('./providers/connection-test');
+const { fetchProviderModels } = require('./providers/model-fetcher');
+const { killProcessTree } = require('./platform/process');
+const { createCommandInvocation } = require('./platform/command');
+const { applyAgentLaunchEnv } = require('./platform/env');
+/* P0 Git止血：安全原语 + 凭据分离存储（只增 require，不改旧逻辑） */
+const gitAuth = require('./git/auth');
+const gitConfigStore = require('./git/config-store');
+const os = require('node:os');
+
+let activeExecution = null;
 
 /* P0-1 fix: 移除全局 allow-file-access-from-files，改为 webPreferences 精细控制（保留 webSecurity:true） */
 // app.commandLine.appendSwitch('allow-file-access-from-files');
@@ -366,48 +383,7 @@ function extractJsonArray(s, startIdx) {
 }
 /* 识别本工具导出的单文件 HTML（含 __EXPORT_BOOT__ 标记与内嵌原型库）并拆解：
    返回 [{ name, displayName, kind, html(原型), md(文档, 由各页文档合并) }]，非导出文件返回 null */
-/* 受限解析器：仅从「无引号 key + 双引号字符串值」的 JS 对象数组文本中提取
-    name / content / kind / displayName 四个字段的字符串字面量（处理 \" \\ 转义），
-    不执行任何代码；其余字段忽略；解析失败返回 null */
-// @deprecated 旧导出兼容 懒加载 - parseExportArrLoose 仅在 extractExportedProtos JSON.parse 失败时调用，避免常驻解析开销
-function parseExportArrLoose(text) {
-  try {
-    const re = /\{\s*("?name"?|"?content"?|"?kind"?|"?displayName"?)\s*:\s*"((?:[^"\\]|\\.)*)"\s*[,}]/g;
-    const raw = [];
-    let m;
-    while ((m = re.exec(text))) raw.push([m[1].replace(/["]/g, ''), m[2]]);
-    if (!raw.length) return null;
-    const objs = [];
-    let cur = {};
-    raw.forEach(([key, val]) => {
-      if (key === 'name' && cur.name !== undefined) { if (cur.content !== undefined) objs.push(cur); cur = {}; }
-      cur[key] = parseLooseStr(val);
-    });
-    if (cur.content !== undefined) objs.push(cur);
-    if (!objs.length) return null;
-    return objs;
-  } catch (e) { return null; }
-}
-function parseLooseStr(s) {
-  /* 解码 JS 字符串字面量转义（\" → "，\\ → \，\n \t，\uXXXX）；非法转义原样保留 */
-  try { return JSON.parse('"' + s + '"'); } catch (e) {
-    let out = '';
-    for (let i = 0; i < s.length; i++) {
-      const ch = s[i];
-      if (ch !== '\\') { out += ch; continue; }
-      const n = s[++i];
-      if (n === '"') out += '"';
-      else if (n === '\\') out += '\\';
-      else if (n === 'n') out += '\n';
-      else if (n === 't') out += '\t';
-      else if (n === 'r') out += '\r';
-      else if (n === 'u' && /^[0-9a-fA-F]{4}$/.test(s.slice(i + 1, i + 5))) {
-        out += String.fromCharCode(parseInt(s.slice(i + 1, i + 5), 16)); i += 4;
-      } else { out += n; }
-    }
-    return out;
-  }
-}
+/* T4.4: 导出解析只接受标准 JSON 数组，非标旧格式直接返回 null（单文件导入兜底） */
 function extractExportedProtos(content) {
   try {
     const s = String(content || '');
@@ -419,7 +395,7 @@ function extractExportedProtos(content) {
     /* 只接受 JSON 数组；旧格式（无引号 key 的 JS 字面量）用受限解析器兜底，
        不执行任何代码（导入文件完全用户可控，禁止 eval / new Function） */
     let arr = null;
-    try { arr = JSON.parse(arrText); } catch (e) { arr = parseExportArrLoose(arrText); /* 旧导出兼容 懒加载 */ }
+    try { arr = JSON.parse(arrText); } catch (e) { return null; }
     if (!arr) return null;
     if (!Array.isArray(arr) || !arr.length) return null;
     /* 解析 boot 中的 __EXPORT_LINKS__（失败静默＝退化为无链接） */
@@ -665,6 +641,9 @@ const aiCfgFile = () => path.join(app.getPath('userData'), 'ai-config.json');
 function defaultAiCfg() {
   return {
     cliPath: '',
+    cliPaths: {},
+    agentId: 'opencode',
+    mainAgent: 'opencode',
     engine: 'cli', // 'cli' | 'api'
     api: {
       provider: 'deepseek',
@@ -674,6 +653,7 @@ function defaultAiCfg() {
       customModels: ['deepseek-chat', 'deepseek-reasoner'],
       enableTools: true
     },
+    customModelsCli: [],
     visibleModels: [],
     visibleModelsCli: null,
     visibleModelsApi: null
@@ -686,6 +666,10 @@ function loadAiCfg() {
     const res = Object.assign(def, raw, { api: Object.assign(def.api, raw && raw.api) });
     if (raw && Array.isArray(raw.visibleModelsCli)) res.visibleModelsCli = raw.visibleModelsCli;
     if (raw && Array.isArray(raw.visibleModelsApi)) res.visibleModelsApi = raw.visibleModelsApi;
+    if (raw && Array.isArray(raw.customModelsCli)) res.customModelsCli = raw.customModelsCli;
+    if (raw && typeof raw.agentId === 'string' && raw.agentId) res.agentId = raw.agentId;
+    if (raw && typeof raw.mainAgent === 'string' && raw.mainAgent) res.mainAgent = raw.mainAgent;
+    if (raw && typeof raw.cliPaths === 'object' && raw.cliPaths) res.cliPaths = raw.cliPaths;
     return res;
   } catch (e) {
     return defaultAiCfg();
@@ -693,110 +677,7 @@ function loadAiCfg() {
 }
 function saveAiCfg(c) { try { fs.writeFileSync(aiCfgFile(), JSON.stringify(c, null, 2)); } catch (e) {} }
 
-/* .cmd/.bat 包装脚本 -> 解析出真实可执行文件（如 npm 的 opencode.cmd -> opencode.exe） */
-function shimToExe(p) {
-  try {
-    const t = fs.readFileSync(p, 'utf8').slice(0, 8192);
-    let m = t.match(/"([^"]+\.exe)"/i);
-    if (!m) m = t.match(/([A-Za-z]:[\\/][^)\r\n]*\.exe)/i);
-    if (!m) return null;
-    let cand = m[1].replace(/%~?dp0%[\\/]?/gi, '');
-    if (!path.isAbsolute(cand)) cand = path.resolve(path.dirname(p), cand);
-    if (fs.existsSync(cand) && isValidExe(cand)) return cand;
-  } catch (e) {}
-  return null;
-}
-
-function candidateList() {
-  const c = loadAiCfg();
-  const list = [];
-  if (c.cliPath) list.push(c.cliPath);
-  list.push(path.join(process.env.APPDATA || '', 'npm', 'node_modules', 'opencode-ai', 'bin', 'opencode.exe'));
-  list.push(path.join(process.env.APPDATA || '', 'npm', 'opencode.cmd'));
-  list.push(path.join(process.env.USERPROFILE || '', '.opencode', 'bin', 'opencode.exe'));
-  list.push(path.join(process.env.USERPROFILE || '', 'scoop', 'shims', 'opencode.exe'));
-  list.push('C:\\ProgramData\\chocolatey\\bin\\opencode.exe');
-  list.push('opencode'); /* PATH 兜底 */
-  return list;
-}
-
-// @deprecated 同步阻塞，F03 async 改用 resolveCliAsync + Promise.race 3s 超时
-function resolveCli() {
-  for (const p of candidateList()) {
-    try {
-      if (p === 'opencode') {
-        const r = spawnSync('where', ['opencode'], { encoding: 'utf8' });
-        if (r.status === 0 && r.stdout) {
-          const lines = r.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-          for (const line of lines) {
-            if (/\.exe$/i.test(line) && isValidExe(line)) return line;
-            if (/\.(cmd|bat)$/i.test(line)) {
-              const exe = shimToExe(line);
-              if (exe) return exe;
-              return line;
-            }
-          }
-        }
-        continue;
-      }
-      if (fs.existsSync(p)) {
-        if (/\.(cmd|bat)$/i.test(p)) { const e = shimToExe(p); return e || p; }
-        if (!isValidExe(p)) continue; /* 跳过损坏/无效的 exe（如 postinstall 未跑的占位脚本） */
-        return p;
-      }
-    } catch (e) {}
-  }
-  return null;
-}
-
-// F03 async: 异步解析 CLI 路径，避免 spawnSync(where) 阻塞主进程（ai:check 场景）
-async function resolveCliAsync() {
-  for (const p of candidateList()) {
-    try {
-      if (p === 'opencode') {
-        try {
-          const r = await Promise.race([ // P1-4 fix F03 async 超时保护 3000ms
-            runCliAsync('where', ['opencode'], 10000),
-            new Promise(res=> setTimeout(()=> { try{ console.log('[F03 async] where timeout 3000ms'); }catch(e){} res(null); }, 3000))
-          ]);
-          if (r && r.status === 0 && r.stdout) {
-            const lines = String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-            for (const line of lines) {
-              if (/\.exe$/i.test(line) && isValidExe(line)) return line;
-              if (/\.(cmd|bat)$/i.test(line)) {
-                const exe = shimToExe(line);
-                if (exe) return exe;
-                return line;
-              }
-            }
-          }
-        } catch (e) {}
-        continue;
-      }
-      if (fs.existsSync(p)) {
-        if (/\.(cmd|bat)$/i.test(p)) { const e = shimToExe(p); return e || p; }
-        if (!isValidExe(p)) continue;
-        return p;
-      }
-    } catch (e) {}
-  }
-  return null;
-}
-
-/* PE 有效性检查：前 2 字节必须为 MZ，防止命中 npm 静默升级失败留下的占位脚本 */
-function isValidExe(p) {
-  try {
-    const fd = fs.openSync(p, 'r');
-    const buf = Buffer.alloc(2);
-    fs.readSync(fd, buf, 0, 2, 0);
-    fs.closeSync(fd);
-    return buf[0] === 0x4d && buf[1] === 0x5a; /* 'MZ' */
-  } catch (e) { return false; }
-}
-
-/* CLI 版本检测缓存：同一 exe 只检测一次（F03 async 改造为 Promise 缓存，避免 spawnSync --version 并发阻塞）
-   手动更换 CLI 路径后（ai:set-path / ai:pick）需清空缓存重新检测 */
-let cliVerCache = { exe: null, version: null, promise: null };
+/* L4: 旧 CLI 发现/版本探测已删除，统一走 runtimes/resolution + runtimes/detection */
 
 /* ═══════ 「最新需求」文档：每个沙箱目录一个（sandbox/<原型文件夹>/最新需求.md），跟随原型；
    目录无效/沙箱外时回退工具级 %APPDATA%/原型工具/最新需求.md ═══════ */
@@ -826,163 +707,9 @@ ipcMain.handle('doc:write-latest', (ev, dir, content) => {
     return { ok: true, path: f };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
-// @deprecated 同步阻塞，F03 async 改用 cliVersionAsync + Promise.race 3s 超时
-function cliVersion(exe) {
-  if (!exe) return null;
-  if (cliVerCache.exe === exe && cliVerCache.version) return cliVerCache.version;
-  let v = null;
-  try {
-    const r = spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 10000 });
-    if (r.status === 0 && r.stdout) v = String(r.stdout).trim().split(/\r?\n/)[0];
-  } catch (e) {}
-  cliVerCache = { exe, version: v, promise: cliVerCache.promise };
-  return v;
-}
+/* L4: 旧 cliVersion/withToolPrompt/isolate 已删除，统一走 runtimes/engine + byok-opencode */
 
-// F03 async: 异步版本检测，使用 runCliAsync 替代 spawnSync(--version)，Promise 缓存避免并发阻塞
-async function cliVersionAsync(exe) {
-  if (!exe) return null;
-  if (cliVerCache.exe === exe && cliVerCache.promise) return cliVerCache.promise;
-  const p = (async () => {
-    try {
-      const r = await Promise.race([ // P1-4 fix F03 async 超时保护 3000ms
-        runCliAsync(exe, ['--version'], 10000),
-        new Promise(res=> setTimeout(()=> { try{ console.log('[F03 async] cliVersion timeout 3000ms'); }catch(e){} res(null); }, 3000))
-      ]);
-      if (r.status === 0 && r.stdout) return String(r.stdout).trim().split(/\r?\n/)[0];
-      return null;
-    } catch (e) { return null; }
-  })();
-  cliVerCache = { exe, promise: p, version: cliVerCache.version };
-  const v = await p;
-  cliVerCache.version = v;
-  return v;
-}
-// F03 async TODO: 上述 Promise 缓存确保 ai:check 不阻塞主进程
-
-let aiChild = null;
-let aiCancelRequested = false;
-
-/* 隔离配置：禁用全部第三方 MCP 与插件，避免模型擅自联网查企查查/天眼查等，
-   答非所问或与沙箱外内容混杂；工具版 AI 只保留 opencode 本体内置工具命中。 */
-const AI_ISOLATE_MCPS = ['browsermcp', 'caihui_mcp', 'tyc-mcp', 'bing-search', 'metaso-mcp', 'qcc-document', 'qcc-document-mcp'];
-const AI_ISOLATE_FILE = path.join(app.getPath('userData'), 'ai-opencode-isolate.json');
-function ensureAiIsolateFile() {
-  try {
-    const mcp = {};
-    for (const k of AI_ISOLATE_MCPS) mcp[k] = { enabled: false };
-    fs.writeFileSync(AI_ISOLATE_FILE, JSON.stringify({ mcp, plugin: [] }, null, 2), 'utf8');
-  } catch (e) {}
-  return AI_ISOLATE_FILE;
-}
-
-/* ═══════ 工具内置提示词：随包分发（toolPrompt.md），每次 AI 对话自动前置。
-   要求模型生成原型 html 与文档 md 时写入「原型绑定」注释，保证点击交互后文档定位联动 ═══════ */
-const TOOL_PROMPT = (() => {
-  try { return fs.readFileSync(path.join(__dirname, 'toolPrompt.md'), 'utf8'); } catch (e) { return ''; }
-})();
-function withToolPrompt(p, isApi) {
-  const t = String(p || '');
-  if (!TOOL_PROMPT) return t;
-  if (isApi === false) return t;
-  return TOOL_PROMPT + '\n\n【本次用户需求】\n' + t;
-}
-
-/* 启动一次 opencode run：onStart 成功启动、onReasoning 流式思考、onChunk 流式回答、
-   onError 失败、onClose 结束、onSession 回传 opencode 会话 ID；cwd=沙箱目录（模型创建
-   html/md 即在当前原型文件夹内）
-   --format json：每行一个 JSON 事件（reasoning=思考块 / text=回答），便于区分流式输出
-   sessionId：非空时追加 --session <id> 续接该会话，使模型保留前文记忆 */
-function startAiRun(exe, model, handlers, cwd, sessionId, prompt) {
-  const isCmdShim = /\.(cmd|bat)$/i.test(exe);
-  /* 默认推理档位：--variant default（快速响应，不做 high/max 深度推理）；--thinking 显示思考块 */
-  const args = ['run', '--format', 'json', '--thinking', '--variant', 'default'];
-  if (model) args.push('-m', model);
-  const sid = String(sessionId || '').trim();
-  if (sid) { args.push('--session', sid); }
-  args.push(String(prompt));
-  const env = Object.assign({}, process.env, {
-    OPENCODE_CONFIG: ensureAiIsolateFile(),
-    NODE_TLS_REJECT_UNAUTHORIZED: process.env.NODE_TLS_REJECT_UNAUTHORIZED || '0'
-  });
-  const base = { cwd: (cwd && fs.existsSync(cwd)) ? cwd : undefined, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env };
-  let child;
-  try {
-    if (isCmdShim) {
-      child = spawn(exe, args, Object.assign({}, base, { shell: true }));
-    } else {
-      child = spawn(exe, args, base);
-    }
-  } catch (e) {
-    handlers.onError(e);
-    return;
-  }
-  aiChild = child;
-  handlers.onStart();
-  let gotChunk = false;
-  let gotError = false;
-  let errorMsg = '';
-  let errBuf = '';
-  let jsonBuf = '';
-  const emitJsonLine = (line) => {
-    if (!line.trim()) return;
-    let ev = null;
-    try { ev = JSON.parse(line); } catch (e) {}
-    if (ev && ev.sessionID && handlers.onSession) handlers.onSession(ev.sessionID);
-    if (ev && ev.type === 'error') {
-      gotError = true;
-      errorMsg = (ev.error && (ev.error.data && ev.error.data.message || ev.error.message || ev.error.name)) || (ev.message) || JSON.stringify(ev);
-      if (/certificate verification error/i.test(errorMsg)) {
-        errorMsg += '（SSL证书校验失败，通常由系统代理/VPN抓包工具引起，请检查网络代理设置）';
-      }
-      return;
-    }
-    if (ev && ev.type === 'reasoning' && ev.part && typeof ev.part.text === 'string') {
-      handlers.onReasoning(ev.part.text);
-    } else if (ev && ev.type === 'text' && ev.part && typeof ev.part.text === 'string') {
-      gotChunk = true;
-      handlers.onChunk(ev.part.text);
-    } else if (!ev) {
-      gotChunk = true; /* 非 JSON 输出（旧格式回退）：原样流式显示 */
-      handlers.onChunk(line + '\n');
-    }
-  };
-  child.stdout.on('data', (b) => {
-    jsonBuf += Buffer.from(b).toString('utf8');
-    let nl;
-    while ((nl = jsonBuf.indexOf('\n')) >= 0) {
-      const line = jsonBuf.slice(0, nl); jsonBuf = jsonBuf.slice(nl + 1);
-      emitJsonLine(line);
-    }
-  });
-  child.stderr.on('data', (b) => { /* 流式期间忽略；进程异常退出时作为错误来源 */ errBuf += Buffer.from(b).toString('utf8'); if (errBuf.length > 8192) errBuf = errBuf.slice(-8192); });
-  child.on('error', (e) => { aiChild = null; handlers.onError(new Error('CLI 启动失败：' + (e.message || e))); });
-  child.on('close', (code) => {
-    aiChild = null;
-    if (jsonBuf.trim()) emitJsonLine(jsonBuf.trim()); /* 处理末尾无换行的残余行 */
-    if (aiCancelRequested) { aiCancelRequested = false; handlers.onClose(); return; }
-    if (gotError && errorMsg) { handlers.onError(new Error(errorMsg)); return; }
-    if (gotChunk) { handlers.onClose(); return; }
-    const msg = extractCliError(errBuf, code);
-    if (msg) handlers.onError(new Error(msg));
-    else if (code !== 0) handlers.onError(new Error('CLI 异常退出（退出码 ' + code + '）'));
-    else handlers.onClose();
-  });
-}
-
-/* 从进程退出时的 stderr 中提取可读错误（去掉 ANSI 转义与前后噪音） */
-function extractCliError(buf, code) {
-  if (!buf) return null;
-  let t = buf.replace(/\x1b\[[0-9;]*m/g, '').trim();
-  const i = t.indexOf('Error:');
-  if (i >= 0) t = t.slice(i + 6).trim();
-  t = t.split(/\r?\n/).slice(0, 4).join(' ');
-  t = t.replace(/^\{\s*/,'').replace(/\s*\}$/,'');
-  t = t.replace(/^"name":\s*"(\w+)"/, '$1');
-  if (!t) return null;
-  const prefix = code === 0 ? '回答为空' : '调用失败（退出码 ' + code + '）';
-  return prefix + '：' + t.slice(0, 400) + '（若为模型服务错误，请稍后重试或检查网络）';
-}
+/* L4: 旧 startAiRun/extractCliError 已删除，统一走 runtimes/engine */
 
 /* 计算 opencode 实际工作目录：sandboxDir 必须位于沙箱根内，否则回退沙箱根，
    保证 AI 运行始终限定在本地沙箱，不会越权读写沙箱外路径 */
@@ -1056,6 +783,65 @@ function takeSnapshot(dir) {
     return null;
   }
 }
+
+/**
+ * 快速扫描原型目录内全部文件的元数据（mtime + size）签名映射表
+ * 毫秒级耗时，用于无感检测 AI 任务期间是否有真实物理文件被修改
+ */
+function getProtoFileSignature(dirPath) {
+  const sig = new Map();
+  if (!dirPath || !fs.existsSync(dirPath)) return sig;
+
+  function scan(currentDir, relBase = '') {
+    try {
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        const full = path.join(currentDir, entry.name);
+        const rel = path.join(relBase, entry.name).replace(/\\/g, '/');
+        if (entry.isDirectory()) {
+          scan(full, rel);
+        } else if (entry.isFile()) {
+          try {
+            const stat = fs.statSync(full);
+            sig.set(rel, { size: stat.size, mtimeMs: Math.round(stat.mtimeMs) });
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
+  scan(dirPath);
+  return sig;
+}
+
+/**
+ * 对比任务前后的文件签名，返回真实修改的文件清单
+ */
+function diffFileSignatures(beforeMap, afterMap) {
+  const changes = [];
+  if (!beforeMap || !afterMap) return changes;
+
+  for (const [relPath, beforeStat] of beforeMap.entries()) {
+    if (!afterMap.has(relPath)) {
+      changes.push({ path: relPath, action: 'deleted' });
+    } else {
+      const afterStat = afterMap.get(relPath);
+      if (beforeStat.size !== afterStat.size || Math.abs(beforeStat.mtimeMs - afterStat.mtimeMs) > 20) {
+        changes.push({ path: relPath, action: 'modified' });
+      }
+    }
+  }
+
+  for (const [relPath] of afterMap.entries()) {
+    if (!beforeMap.has(relPath)) {
+      changes.push({ path: relPath, action: 'created' });
+    }
+  }
+
+  return changes;
+}
+
 ipcMain.handle('snapshot:list', (ev, dir) => {
   const dn = validProtoDir(dir);
   if (!dn) return { ok: true, items: [] };
@@ -1069,7 +855,7 @@ ipcMain.handle('snapshot:list', (ev, dir) => {
 });
 ipcMain.handle('snapshot:restore', (ev, o) => {
   const o2 = o || {};
-  if (aiChild && aiChild.exitCode === null && aiChild.signalCode === null && !aiChild.killed) {
+  if (typeof activeExecution!=='undefined' && activeExecution) {
     return { ok: false, error: 'AI 正在生成中，请先停止再恢复历史版本' };
   }
   const dn = validProtoDir(o2.dir);
@@ -1150,143 +936,32 @@ function handleAnnoSave(ev, arg1, arg2) {
     return { ok: true };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
-ipcMain.handle('annotations:read', handleAnnoRead);
 ipcMain.handle('proto:annotations:read', handleAnnoRead);
-ipcMain.handle('annotations:write', handleAnnoSave);
-ipcMain.handle('annotations:save', handleAnnoSave);
 ipcMain.handle('proto:annotations:save', handleAnnoSave);
 
-/* 渲染进程会话：一次性问答，事件经 ai:event 回传；sandboxDir=沙箱工作目录 */
-// F03 async: 改为异步，不阻塞主进程（原 spawnSync where/--version 会卡 UI 10s）
+/* L4 统一IPC：ai:check → detectAllAgents 并发探测，兼容旧前端 {found,path,version} */
 ipcMain.handle('ai:check', async () => {
-  // P1-4 fix F03 async 加 3000ms 超时保护
-  let exe = null;
-  try{ exe = await Promise.race([ resolveCliAsync(), new Promise(res=> setTimeout(()=> { try{ console.log('[F03 async] ai:check resolveCli timeout 3000ms'); }catch(e){} res(null); }, 3000)) ]); }catch(e){ try{ console.log('[F03 async] ai:check error', e); }catch(ee){} exe=null; }
-  if (!exe) return { found: false, path: null, version: null };
-  let ver = null;
-  try{ ver = await Promise.race([ cliVersionAsync(exe), new Promise(res=> setTimeout(()=> { try{ console.log('[F03 async] ai:check cliVersion timeout 3000ms'); }catch(e){} res(null); }, 3000)) ]); }catch(e){ ver=null; }
-  return { found: true, path: exe, version: ver };
+  try {
+    const aiCfg = loadAiCfg();
+    const customPaths = {};
+    try {
+      if (aiCfg && typeof aiCfg.cliPaths === 'object' && aiCfg.cliPaths) {
+        for (const k of Object.keys(aiCfg.cliPaths)) { if (aiCfg.cliPaths[k]) customPaths[k] = aiCfg.cliPaths[k]; }
+      }
+      if (aiCfg && aiCfg.cliPath) customPaths.opencode = customPaths.opencode || aiCfg.cliPath;
+    } catch (e) {}
+    const agents = await detectAllAgents(customPaths);
+    const oc = (agents || []).find(a => a && a.id === 'opencode') || null;
+    if (oc && oc.available) return { found: true, path: oc.path, version: oc.version, agents };
+    const anyOk = (agents || []).find(a => a && a.available) || null;
+    if (anyOk) return { found: true, path: anyOk.path, version: anyOk.version, agents };
+    return { found: false, path: null, version: null, agents: agents || [] };
+  } catch (e) {
+    return { found: false, path: null, version: null, agents: [] };
+  }
 });
 
-/* ═══════ 模型列表：opencode models 输出（每行 provider/model），按供应商分组 ═══════
-   结果反映 opencode 当前配置（含内置 provider 与用户自定义，禁用/不可用的不出现）；
-   供应商显示名优先取全局配置 opencode.json[c] 中 provider.<key>.name，取不到则用 key。 */
-const DEFAULT_AI_MODEL = 'opencode/deepseek-v4-flash-free';
-function stripAnsi(s) { return String(s || '').replace(/\x1b\[[0-9;]*m/g, ''); }
-/* 异步执行 opencode CLI（不阻塞主进程）：处理 .cmd/.bat shim，超时自动 kill */
-function runCliAsync(exe, args, timeoutMs, cwd) {
-  return new Promise((resolve) => {
-    const env = Object.assign({}, process.env, { OPENCODE_CONFIG: ensureAiIsolateFile() });
-    const isCmdShim = /\.(cmd|bat)$/i.test(exe);
-    const base = { windowsHide: true, env, cwd: (cwd && fs.existsSync(cwd)) ? cwd : undefined };
-    let child;
-    try {
-      if (isCmdShim) {
-        const quote = (a) => '"' + String(a).replace(/"/g, '""') + '"';
-        child = spawn('cmd.exe', ['/d', '/s', '/c', quote(exe) + ' ' + args.map(quote).join(' ')], base);
-      } else {
-        child = spawn(exe, args, base);
-      }
-    } catch (e) {
-      resolve({ status: -1, stdout: '', stderr: String(e && e.message || e) });
-      return;
-    }
-    let stdout = '', stderr = '', done = false;
-    const finish = (status) => { if (done) return; done = true; clearTimeout(timer); resolve({ status, stdout, stderr }); };
-    const timer = setTimeout(() => { try { child.kill(); } catch (e) {} finish(-1); }, timeoutMs || 20000);
-    child.stdout.on('data', (b) => { stdout += Buffer.from(b).toString('utf8'); if (stdout.length > 2e6) stdout = stdout.slice(-2e6); });
-    child.stderr.on('data', (b) => { stderr += Buffer.from(b).toString('utf8'); if (stderr.length > 2e6) stderr = stderr.slice(-2e6); });
-    child.on('error', (e) => { if (!stderr) stderr = String(e && e.message || e); finish(-1); });
-    child.on('close', (code) => { finish(code == null ? -1 : code); });
-  });
-}
-function providerDisplayNames(providerKeys) {
-  const out = {};
-  if (!providerKeys || !providerKeys.length) return out;
-  const dir = path.join(process.env.USERPROFILE || '', '.config', 'opencode');
-  for (const f of ['opencode.json', 'opencode.jsonc']) {
-    const p = path.join(dir, f);
-    if (!fs.existsSync(p)) continue;
-    let t = '';
-    try { t = fs.readFileSync(p, 'utf8'); } catch (e) { continue; }
-    /* 仅解析 JSONC 文本中的 provider 块（配置允许注释，JSON.parse 不一定可用） */
-    const pm = t.match(/"provider"\s*:\s*\{([\s\S]*)\}/);
-    if (!pm) continue;
-    const block = pm[1];
-    for (const k of providerKeys) {
-      if (out[k]) continue;
-      const re = new RegExp('"' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*\\{\\s*"name"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"');
-      const mm = block.match(re);
-      if (mm) out[k] = mm[1];
-    }
-  }
-  return out;
-}
-let apiAbortController = null;
-
-function getCompletionsUrl(baseUrl) {
-  let u = String(baseUrl || '').trim().replace(/\/+$/, '');
-  if (/\/chat\/completions$/i.test(u)) return u;
-  if (/\/v1$/i.test(u)) return u + '/chat/completions';
-  return u + '/chat/completions';
-}
-
-function findSandboxHtmlFile(sandboxDir) {
-  if (!sandboxDir || !fs.existsSync(sandboxDir)) return null;
-  const baseName = path.basename(sandboxDir);
-  const direct = path.join(sandboxDir, `${baseName}.html`);
-  if (fs.existsSync(direct)) return direct;
-  try {
-    const files = fs.readdirSync(sandboxDir);
-    const htmls = files.filter(f => f.endsWith('.html'));
-    if (htmls.length > 0) return path.join(sandboxDir, htmls[0]);
-  } catch (e) {}
-  return path.join(sandboxDir, `${baseName}.html`);
-}
-
-function pruneHtmlContext(html) {
-  try {
-    let s = String(html || '');
-    if (s.length > 9000) {
-      return s.slice(0, 6000) + '\n<!-- ... truncated middle ... -->\n' + s.slice(-3000);
-    }
-    return s;
-  } catch (e) { return String(html || '').slice(0, 9000); }
-}
-function hashStr(str) {
-  let h = 0;
-  const s = String(str || '');
-  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
-  return (h >>> 0).toString(16).padStart(8, '0');
-}
-function makeDiff(prev, cur) {
-  try {
-    const a = String(prev || '').split('\n');
-    const b = String(cur || '').split('\n');
-    let out = [];
-    const max = Math.max(a.length, b.length);
-    for (let i = 0; i < max; i++) {
-      const av = a[i];
-      const bv = b[i];
-      if (av === bv) continue;
-      if (av !== undefined) out.push('- ' + av);
-      if (bv !== undefined) out.push('+ ' + bv);
-      if (out.length > 400) break;
-    }
-    if (out.length === 0) return '';
-    return out.join('\n');
-  } catch (e) { return ''; }
-}
-const lastHashMem = new Map();
-const prevHtmlMem = new Map();
-const LRU_LIMIT = 50;
-function lruSet(map, key, val) {
-  try {
-    if (map.has(key)) map.delete(key);
-    map.set(key, val);
-    while (map.size > LRU_LIMIT) { const first = map.keys().next().value; map.delete(first); }
-  } catch (e) {}
-}
+/* L4: 旧 runCliAsync/stripAnsi/providerDisplayNames/getCompletionsUrl/findSandboxHtml/prune/makeDiff/hash/lru 已删除 */
 
 function isSubPath(candidate, base) {
   try {
@@ -1329,805 +1004,13 @@ function isSafeGitRel(rel){
   return isSubPath(path.join(SANDBOX_ROOT, rel), SANDBOX_ROOT);
 }
 function isValidBranch(b){ return /^[a-zA-Z0-9._\/-]+$/.test(b) && b.length<=60 && !b.includes('..'); }
-function countOccurrences(haystack, needle) {
-  if (!needle) return 0;
-  let count = 0;
-  let pos = 0;
-  const s = String(haystack || '');
-  const n = String(needle || '');
-  while (true) {
-    const idx = s.indexOf(n, pos);
-    if (idx === -1) break;
-    count++;
-    if (count > 1) break;
-    pos = idx + n.length;
-  }
-  return count;
-}
-function buildTools() {
-  return [
-    {
-      type: 'function',
-      function: {
-        name: 'read_file',
-        description: '读取沙箱内指定HTML文件内容（多块原子操作前置探查，15k截断预览，返回hash）',
-        parameters: {
-          type: 'object',
-          properties: {
-            file: { type: 'string', description: '相对沙箱根的文件路径，如 index.html 或 sub/page.html' }
-          },
-          required: ['file']
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'list_files',
-        description: '列出沙箱目录下的HTML文件与子页面（多块原子前引导）',
-        parameters: {
-          type: 'object',
-          properties: {
-            dir: { type: 'string', description: '相对沙箱根的目录，可选，默认为沙箱根目录' }
-          },
-          required: []
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'get_skeleton',
-        description: '获取指定HTML文件的骨架预览（经pruneHtmlContext压缩，适合大文件多块原子规划）',
-        parameters: {
-          type: 'object',
-          properties: {
-            file: { type: 'string', description: '相对沙箱根的文件路径' }
-          },
-          required: ['file']
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'apply_patch',
-        description: '对沙箱内HTML文件执行多块原子SEARCH/REPLACE补丁（多块原子，tmp→rename原子写入，唯一性校验）',
-        parameters: {
-          type: 'object',
-          properties: {
-            file: { type: 'string', description: '相对沙箱根的文件路径' },
-            patches: {
-              type: 'array',
-              description: '多块原子补丁数组，每块含search与replace',
-              items: {
-                type: 'object',
-                properties: {
-                  search: { type: 'string', description: '需被替换的原文片段，需在文件中唯一' },
-                  replace: { type: 'string', description: '替换后的新片段' }
-                },
-                required: ['search', 'replace']
-              }
-            }
-          },
-          required: ['file', 'patches']
-        }
-      }
-    }
-  ];
-}
-async function runTool(name, args, sandboxDir) {
-  const toolName = String(name || '');
-  const a = args && typeof args === 'object' ? args : {};
-  const baseDir = String(sandboxDir || SANDBOX_ROOT);
-  function resolveSecure(relativeOrAbs) {
-    let abs;
-    if (path.isAbsolute(relativeOrAbs)) abs = path.normalize(relativeOrAbs);
-    else abs = path.normalize(path.join(baseDir, relativeOrAbs));
-    if (!isSubPath(abs, SANDBOX_ROOT)) {
-      throw new Error('越权访问：路径不在沙箱范围内');
-    }
-    return abs;
-  }
-  switch (toolName) {
-    case 'read_file': {
-      let fileArg = String(a.file || a.path || '').trim();
-      if (!fileArg) return { ok: false, error: 'file 不能为空', code: 'MISSING_FILE' };
-      let absPath;
-      try { absPath = resolveSecure(fileArg); } catch (e) { return { ok: false, error: String(e.message), code: 'FORBIDDEN' }; }
-      if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
-        return { ok: false, error: '文件不存在: ' + fileArg, code: 'NOT_FOUND' };
-      }
-      let content;
-      try { content = fs.readFileSync(absPath, 'utf8'); } catch (e) { return { ok: false, error: String(e.message) }; }
-      const h = hashStr(content);
-      const truncated = content.length > 15000;
-      const preview = truncated ? content.slice(0, 15000) + '\n...TRUNCATED ' + (content.length - 15000) + ' chars...' : content;
-      const previewHash = truncated ? hashStr(preview) : h;
-      return { ok: true, file: fileArg, content: preview, hash: h, previewHash, truncated, length: content.length };
-    }
-    case 'list_files': {
-      let dirArg = String(a.dir || '').trim();
-      let absDir;
-      try {
-        if (!dirArg) absDir = path.normalize(baseDir);
-        else absDir = resolveSecure(dirArg);
-      } catch (e) { return { ok: false, error: String(e.message), code: 'FORBIDDEN' }; }
-      if (!isSubPath(absDir, SANDBOX_ROOT)) {
-        return { ok: false, error: '越权访问', code: 'FORBIDDEN' };
-      }
-      if (!fs.existsSync(absDir) || !fs.statSync(absDir).isDirectory()) {
-        return { ok: false, error: '目录不存在: ' + (dirArg || baseDir), code: 'NOT_FOUND' };
-      }
-      let entries;
-      try { entries = fs.readdirSync(absDir, { withFileTypes: true }); } catch (e) { return { ok: false, error: String(e.message) }; }
-      const htmlFiles = entries.filter(e => e.isFile() && /\.html?$/i.test(e.name)).map(e => e.name);
-      const subPages = entries.filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== '.git').map(e => e.name);
-      const allFiles = entries.filter(e => e.isFile()).map(e => e.name);
-      return { ok: true, dir: dirArg || '.', htmlFiles, subPages, allFiles, count: htmlFiles.length + subPages.length };
-    }
-    case 'get_skeleton': {
-      let fileArg = String(a.file || a.path || '').trim();
-      if (!fileArg) return { ok: false, error: 'file 不能为空', code: 'MISSING_FILE' };
-      let absPath;
-      try { absPath = resolveSecure(fileArg); } catch (e) { return { ok: false, error: String(e.message), code: 'FORBIDDEN' }; }
-      if (!fs.existsSync(absPath)) return { ok: false, error: '文件不存在: ' + fileArg, code: 'NOT_FOUND' };
-      let content;
-      try { content = fs.readFileSync(absPath, 'utf8'); } catch (e) { return { ok: false, error: String(e.message) }; }
-      const skeleton = pruneHtmlContext(content);
-      const h = hashStr(content);
-      const sh = hashStr(skeleton);
-      return { ok: true, file: fileArg, skeleton, hash: h, skeletonHash: sh, length: content.length, skeletonLength: skeleton.length };
-    }
-    case 'apply_patch': {
-      let fileArg = String(a.file || a.path || '').trim();
-      if (!fileArg) {
-        try {
-          const fb = findSandboxHtmlFile(baseDir);
-          if (fb) fileArg = path.basename(fb);
-          else fileArg = 'index.html';
-        } catch (e) { fileArg = 'index.html'; }
-      }
-      let patches = a.patches;
-      if (!Array.isArray(patches) || patches.length === 0) {
-        if (a.search !== undefined) {
-          patches = [{ search: String(a.search), replace: String(a.replace || '') }];
-        } else {
-          return { ok: false, error: 'patches 不能为空', code: 'MISSING_PATCHES' };
-        }
-      }
-      const cleanPatches = [];
-      for (let i = 0; i < patches.length; i++) {
-        const p = patches[i];
-        if (!p || typeof p.search !== 'string') return { ok: false, error: `patches[${i}].search 不能为空`, code: 'MISSING_SEARCH' };
-        cleanPatches.push({ search: String(p.search), replace: String(p.replace || '') });
-      }
-      let absPath;
-      try { absPath = resolveSecure(fileArg); } catch (e) { return { ok: false, error: String(e.message), code: 'FORBIDDEN' }; }
-      if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
-        return { ok: false, error: '文件不存在: ' + fileArg, code: 'NOT_FOUND' };
-      }
-      let original;
-      try { original = fs.readFileSync(absPath, 'utf8'); } catch (e) { return { ok: false, error: String(e.message) }; }
-      let modified = original;
-      // anchor fix P0: 空白漂移归一化二次判（精确优先，仅空白/换行差异时放宽）
-      function normAnchor(s){return String(s||'').replace(/\r\n/g,'\n').replace(/[ \t]+$/gm,'');}
-      for (let i = 0; i < cleanPatches.length; i++) {
-        const pat = cleanPatches[i];
-        let cnt = countOccurrences(modified, pat.search);
-        // anchor fix P0 NORM_HIT 二次判
-        if(cnt===0){
-          const nMod = normAnchor(modified), nSearch = normAnchor(pat.search);
-          if(countOccurrences(nMod, nSearch)===1){
-            modified = nMod.replace(nSearch, normAnchor(pat.replace));
-            cnt=1;
-            // TAG='NORM_HIT' 空白归一命中
-          }
-        }
-        if (cnt === 0) {
-          return { ok: false, error: `SEARCH_NOT_FOUND: patches[${i}] 未在文件中找到匹配`, code: 'SEARCH_NOT_FOUND', index: i, searchPreview: pat.search.slice(0, 120) };
-        }
-        if (cnt !== 1) {
-          return { ok: false, error: `SEARCH_NOT_UNIQUE: patches[${i}] 匹配到 ${cnt} 处，需保证唯一`, code: 'SEARCH_NOT_UNIQUE', index: i, count: cnt };
-        }
-        if(cnt===1 && modified.includes(pat.search)){
-          modified = modified.replace(pat.search, pat.replace);
-        } else if(cnt===1){
-          // 已在归一分支完成替换，无需二次精确替换
-        }
-      }
-      const tmpPath = absPath + '.tmp.' + Date.now() + '.' + Math.random().toString(36).slice(2, 6);
-      try {
-        fs.writeFileSync(tmpPath, modified, 'utf8');
-        fs.renameSync(tmpPath, absPath);
-      } catch (e) {
-        try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (ee) {}
-        return { ok: false, error: '写入失败: ' + String(e.message), code: 'WRITE_FAIL' };
-      }
-      try {
-        const fileKey = path.basename(absPath);
-        const newHash = hashStr(modified);
-        lruSet(lastHashMem, fileKey, newHash);
-        lruSet(prevHtmlMem, fileKey, modified);
-        const scopedKey = baseDir + '\0' + fileKey;
-        lruSet(lastHashMem, scopedKey, newHash);
-        lruSet(prevHtmlMem, scopedKey, modified);
-      } catch (e) {}
-      return { ok: true, file: fileArg, patched: cleanPatches.length, length: modified.length, hash: hashStr(modified) };
-    }
-    default:
-      return { ok: false, error: '未知工具: ' + toolName, code: 'UNKNOWN_TOOL' };
-  }
-}
 
+/* L4 old code removed, unified to startAgentExecution */
 
-/**
- * 解析并应用 SEARCH/REPLACE 差量补丁到原代码（三级容错）
- * @param {string} originalCode 原始 HTML 文本
- * @param {string} diffText 大模型回复的包含 diff 块的文本
- * @returns {{ ok: boolean, modified: string, count: number, failedBlocks: string[] }}
- */
-function applySearchReplace(originalCode, diffText) {
-  if (!originalCode || !diffText) return { ok: false, modified: originalCode, count: 0, failedBlocks: [] };
-
-  const pattern = /<<<<<<< SEARCH\r?\n([\s\S]*?)\r?\n=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE/g;
-  let modified = originalCode;
-  let count = 0;
-  let match;
-  const failedBlocks = [];
-
-  while ((match = pattern.exec(diffText)) !== null) {
-    const searchRaw = match[1];
-    const replaceRaw = match[2];
-
-    // 1. 原文字符串精确匹配
-    if (modified.includes(searchRaw)) {
-      modified = modified.replace(searchRaw, replaceRaw);
-      count++;
-      continue;
-    }
-
-    // 2. 换行符归一化重试 (\r\n 与 \n 互换)
-    const normModified = modified.replace(/\r\n/g, '\n');
-    const normSearch = searchRaw.replace(/\r\n/g, '\n');
-    const normReplace = replaceRaw.replace(/\r\n/g, '\n');
-    if (normModified.includes(normSearch)) {
-      modified = normModified.replace(normSearch, normReplace);
-      count++;
-      continue;
-    }
-
-    // 3. 逐行首尾空白修剪模糊对齐（Fuzzy Line Trim Matching）
-    const searchLines = normSearch.split('\n').map(l => l.trim()).filter(Boolean);
-    if (searchLines.length > 0) {
-      const docLines = modified.replace(/\r\n/g, '\n').split('\n');
-      let foundStart = -1;
-      for (let i = 0; i <= docLines.length - searchLines.length; i++) {
-        let allMatch = true;
-        for (let j = 0; j < searchLines.length; j++) {
-          if (docLines[i + j].trim() !== searchLines[j]) {
-            allMatch = false;
-            break;
-          }
-        }
-        if (allMatch) {
-          foundStart = i;
-          break;
-        }
-      }
-      if (foundStart >= 0) {
-        docLines.splice(foundStart, searchLines.length, normReplace);
-        modified = docLines.join('\n');
-        count++;
-        continue;
-      }
-    }
-
-    failedBlocks.push(searchRaw.slice(0, 100));
-  }
-
-  return {
-    ok: count > 0 && failedBlocks.length === 0,
-    modified: modified,
-    count: count,
-    failedBlocks: failedBlocks
-  };
-}
-
-async function startDirectApiRun(apiCfg, modelWanted, handlers, sandboxDir, promptText, extraOpts) {
-  extraOpts = extraOpts || {};
-  const url = getCompletionsUrl(apiCfg.baseUrl);
-  let rawKey = String(apiCfg.apiKey || '');
-  let key = rawKey.trim();
-  // 兼容用户粘贴 "Bearer sk-..." 或带引号的情况
-  if (/^Bearer\s+/i.test(key)) key = key.replace(/^Bearer\s+/i, '').trim();
-  key = key.replace(/^["']|["']$/g, '').trim();
-  const model = modelWanted || apiCfg.model || 'deepseek-chat';
-  // 放开工具：移除 !/mimo|reasoner/ 硬禁，由 enableTools 开关决定（400 时自动回退）
-  let shouldUseTools = (extraOpts.enableTools !== undefined ? !!extraOpts.enableTools : (apiCfg.enableTools !== undefined ? !!apiCfg.enableTools : true));
-
-  if (!url) { handlers.onError(new Error('未配置 API Base URL')); return; }
-  if (!key) { handlers.onError(new Error('未配置 API Key')); return; }
-  if (key.length < 10) { handlers.onError(new Error('API Key 过短（仅 '+key.length+' 字符），请检查是否复制完整')); return; }
-
-  const masked = key.length > 12 ? (key.slice(0, 6) + '...' + key.slice(-4)) : (key.slice(0,3)+'...');
-  handlers.onTrace({ tag: 'API_INIT', level: 'info', text: `引擎: Direct API (${apiCfg.provider || 'custom'}) -> ${url}, 模型: ${model}, Key: ${masked} (${key.length} chars)` });
-  if (rawKey !== key) {
-    handlers.onTrace({ tag: 'API_KEY_NORM', level: 'info', text: `Key已自动去除Bearer/引号/空格 (原${rawKey.length}→${key.length})` });
-  }
-
-  let targetHtmlPath = null;
-  if (extraOpts && extraOpts.targetFile) {
-    const specifiedPath = path.join(sandboxDir, String(extraOpts.targetFile).trim());
-    if (fs.existsSync(specifiedPath) && isSubPath(specifiedPath, SANDBOX_ROOT)) targetHtmlPath = specifiedPath;
-  }
-  if (!targetHtmlPath) targetHtmlPath = findSandboxHtmlFile(sandboxDir);
-  let existingHtml = '';
-  if (targetHtmlPath && fs.existsSync(targetHtmlPath)) {
-    try { existingHtml = fs.readFileSync(targetHtmlPath, 'utf8'); } catch (e) {}
-  }
-
-  if (existingHtml) {
-    handlers.onTrace({ tag: 'CONTEXT', level: 'info', text: `载入当前原型 HTML 上下文 (${(existingHtml.length / 1024).toFixed(1)} KB)` });
-  }
-
-  // === hash/锚点 契约 ===
-  const fileKey = targetHtmlPath ? (path.relative(SANDBOX_ROOT, targetHtmlPath).replace(/\\/g,'/') || path.basename(targetHtmlPath)) : (extraOpts.targetFile ? String(extraOpts.targetFile).replace(/\\/g,'/').replace(/^\//,'') || path.basename(String(extraOpts.targetFile)) : 'index.html');
-  const sid = String(extraOpts.sessionId || '').trim();
-  const lastKey = sid + '\0' + fileKey;
-  const legacyFileKey = targetHtmlPath ? path.basename(targetHtmlPath) : (extraOpts.targetFile ? path.basename(String(extraOpts.targetFile)) : 'index.html');
-  const legacyLastKey = sid + '\0' + legacyFileKey;
-  const curHash = existingHtml ? hashStr(existingHtml) : '';
-  let lastHash = '';
-  try {
-    if (lastHashMem.has(lastKey)) lastHash = lastHashMem.get(lastKey);
-    else if (lastHashMem.has(fileKey)) lastHash = lastHashMem.get(fileKey);
-    else if (lastHashMem.has(legacyLastKey)) lastHash = lastHashMem.get(legacyLastKey);
-    else if (lastHashMem.has(legacyFileKey)) lastHash = lastHashMem.get(legacyFileKey);
-    else if (targetHtmlPath && lastHashMem.has(sid + '\0' + targetHtmlPath)) lastHash = lastHashMem.get(sid + '\0' + targetHtmlPath);
-    else if (targetHtmlPath && lastHashMem.has(targetHtmlPath)) lastHash = lastHashMem.get(targetHtmlPath);
-    else if (extraOpts.lastHash && typeof extraOpts.lastHash === 'object' && extraOpts.lastHash[fileKey]) lastHash = String(extraOpts.lastHash[fileKey]);
-    else if (extraOpts.lastHash && typeof extraOpts.lastHash === 'object' && extraOpts.lastHash[legacyFileKey]) lastHash = String(extraOpts.lastHash[legacyFileKey]);
-    else if (extraOpts.lastHash && typeof extraOpts.lastHash === 'object' && targetHtmlPath && extraOpts.lastHash[targetHtmlPath]) lastHash = String(extraOpts.lastHash[targetHtmlPath]);
-  } catch (e) {}
-  const isUnchangedRaw = !!existingHtml && !!lastHash && curHash === lastHash;
-  const isUnchanged = isUnchangedRaw && shouldUseTools;
-  let htmlToSend = '';
-  let htmlAnchor = '';
-  let useDiff = false;
-  if (existingHtml) {
-    if (isUnchanged) {
-      handlers.onTrace({ tag: 'HTML_CACHE_HIT', level: 'info', text: `[${fileKey}] 未改动，跳过锚点 (hash=${curHash.slice(0,8)})` });
-      htmlToSend = '';
-    } else if (existingHtml.length < 3000) {
-      // anchor fix P0 小文件直通：<3k 不做 diff/prune，直接全量发送（简单页成功率提升）
-      htmlToSend = existingHtml;
-      useDiff = false;
-      handlers.onTrace({ tag: 'HTML_FULL_SMALL', level: 'info', text: `微型页全量直通 (${existingHtml.length} chars, ${existingHtml.split('\n').length} lines)` });
-    } else {
-      let prevHtml = prevHtmlMem.get(lastKey) || '';
-      if (!prevHtml && prevHtmlMem.has(fileKey)) prevHtml = prevHtmlMem.get(fileKey) || '';
-      if (!prevHtml && prevHtmlMem.has(legacyLastKey)) prevHtml = prevHtmlMem.get(legacyLastKey) || '';
-      if (!prevHtml && prevHtmlMem.has(legacyFileKey)) prevHtml = prevHtmlMem.get(legacyFileKey) || '';
-      if (!prevHtml && targetHtmlPath && prevHtmlMem.has(sid + '\0' + targetHtmlPath)) prevHtml = prevHtmlMem.get(sid + '\0' + targetHtmlPath) || '';
-      if (!prevHtml && targetHtmlPath && prevHtmlMem.has(targetHtmlPath)) prevHtml = prevHtmlMem.get(targetHtmlPath) || '';
-      let diff = makeDiff(prevHtml, existingHtml);
-      if (diff && (diff.length > 8000 || diff.split('\n').length > 200)) {
-        handlers.onTrace({ tag: 'SKELETON', level: 'info', text: `Diff过大 (${diff.length} chars/${diff.split('\n').length} lines)，回退骨架` });
-        htmlToSend = pruneHtmlContext(existingHtml);
-      } else if (diff) {
-        handlers.onTrace({ tag: 'DIFF_SENT', level: 'info', text: `发送行级Diff (${diff.length} chars)` });
-        htmlToSend = diff;
-        useDiff = true;
-      } else {
-        if (existingHtml.length > 8000) {
-          handlers.onTrace({ tag: 'SKELETON', level: 'info', text: `首次发送，HTML过大回退骨架 (${existingHtml.length} -> ${pruneHtmlContext(existingHtml).length})` });
-          htmlToSend = pruneHtmlContext(existingHtml);
-        } else {
-          htmlToSend = existingHtml;
-          handlers.onTrace({ tag: 'HTML_ANCHOR', level: 'info', text: `首次发送全量HTML (${htmlToSend.length} chars)` });
-        }
-      }
-    }
-    if (htmlToSend) {
-      if (useDiff) {
-        htmlAnchor = `【当前原型 HTML Diff (${fileKey}) vs 上次】\n\`\`\`diff\n${htmlToSend}\n\`\`\``;
-      } else {
-        htmlAnchor = `【当前原型 HTML 上下文 (${fileKey})】\n\`\`\`html\n${htmlToSend}\n\`\`\``;
-      }
-    }
-  }
-
-  let sysPrompt = '';
-  let userContent = promptText;
-  if (existingHtml) {
-    // anchor fix P0 动态化 SEARCH 上下文：微型页<3k或<40行仅需1~3行且必须含唯一文本/属性
-    const isSmallProto = existingHtml.length < 3000 || existingHtml.split('\n').length < 40;
-    const searchContextRule = isSmallProto
-      ? '2. 每个 SEARCH 块仅需包含 1~3 行且必须含唯一文本/属性（如 id、标题文案、特征类名）以便精准定位，简单页无需冗余 2~5 行上下文；'
-      : '2. 每个 SEARCH 块请包含 2~5 行具有唯一特征的上下文代码，以便系统精准定位；';
-    const basePrompt = withToolPrompt(`你是一个专业的高保真前端线框原型设计专家。
-用户会向你提出原型的修改需求。
-【强制输出规范 - 局部差量修改协议】：
-当前原型已有完整 HTML 代码。为了极大降低 Token 成本并光速响应，【严禁返回完整 HTML 文件】，必须只输出需要变动的局部代码块（SEARCH/REPLACE 块）：
-
-格式规范：
-<<<<<<< SEARCH
-[原 HTML 中需要被替换的代码片段，请保持与原代码完全一致以便精确查找定位]
-=======
-[修改后的新代码片段]
->>>>>>> REPLACE
-
-核心要求：
-1. 仅包含发生变动的局部代码（如微调样式、修改文案、增删组件、修改交互等）；
-${searchContextRule}
-3. 一次回复中可以输出多个独立的 SEARCH/REPLACE 块；
-4. 严禁在 SEARCH/REPLACE 块中包含无关的整千行代码，严禁使用省略号（如 <!-- 省略其他 -->）；
-5. 仅当用户明确要求“彻底重写整个原型”时，才允许在 \`\`\`html ... \`\`\` 中输出完整代码；
-6. 代码块之外，请用 1~2 句简要中文说明修改要点。`, true);
-    const rawSys = basePrompt;
-    sysPrompt = htmlAnchor ? (htmlAnchor + '\n\n' + rawSys) : rawSys;
-    if (isUnchanged) {
-      userContent = `【本次修改需求】：\n${promptText}\n\n（提示：HTML 未变化，已省略上下文锚点）`;
-    } else if (htmlAnchor) {
-      userContent = `【本次修改需求】：\n${promptText}`;
-    } else {
-      userContent = `【当前原型现有的完整 HTML 代码】：\n\`\`\`html\n${existingHtml}\n\`\`\`\n\n【本次修改需求】：\n${promptText}\n\n请仔细阅读现有 HTML，使用 <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE 块只输出需要修改的局部代码片段。`;
-    }
-  } else {
-    sysPrompt = withToolPrompt(`你是一个专业的高保真前端线框原型设计专家。
-用户会向你提出新建原型的需求。
-【输出规范】：
-请在 \`\`\`html ... \`\`\` 代码块中输出完整的、开箱即用的前端线框原型 HTML 代码。
-页面默认采用现代极简灰阶线框图规范，结构清晰扁平。
-除代码块外，请用简要中文说明设计要点。`, true);
-    userContent = promptText;
-  }
-
-  const historyList = Array.isArray(extraOpts.history) ? extraOpts.history.slice(-12) : [];
-  const historyMsgs = historyList.map((h) => {
-    if (!h) return null;
-    if (h.role && h.content !== undefined) return { role: h.role, content: String(h.content) };
-    const r = h.r;
-    const t = String(h.t ?? h.content ?? '');
-    if (r === 'u') return { role: 'user', content: t };
-    if (r === 'a') return { role: 'assistant', content: t };
-    if (r === 'tool') return null;
-    if (h.role) return { role: h.role, content: t };
-    return null;
-  }).filter(Boolean);
-
-  const messages = [
-    { role: 'system', content: sysPrompt },
-    ...historyMsgs,
-    { role: 'user', content: userContent }
-  ];
-
-  let estTokens = messages.reduce((s, m) => s + Math.ceil(String(m.content || '').length / 4), 0);
-  while (estTokens > 110000 && messages.length > 2) {
-    messages.splice(1, 1);
-    estTokens = messages.reduce((s, m) => s + Math.ceil(String(m.content || '').length / 4), 0);
-    handlers.onTrace({ tag: 'TRUNCATE', level: 'warn', text: `estTokens ${estTokens} 超限，移除历史保留锚点` });
-  }
-
-  apiAbortController = new AbortController();
-  handlers.onStart();
-  handlers.onTrace({ tag: 'HTTP_REQ', level: 'info', text: `POST ${url} (Stream: true) | history:${historyList.length} fileKey:${fileKey} isUnchanged:${isUnchanged} anchor:${htmlAnchor?htmlAnchor.length:0} estTokens:${estTokens}` });
-
-  let toolPatched = false;
-  let curMessages = messages.slice();
-  let http500Retries = 0;
-  // shouldUseTools 已在上方按 enableTools 计算（放开 mimo 硬禁），此处不重复声明
-  let lastFullContent = '';
-  let lastFullReasoning = '';
-  const startTime = Date.now();
-  let firstTokenTime = 0;
-
-  let toolErrStreak = 0, emptyStreak = 0;
-  try {
-    for (let round = 0; ; round++) {
-      apiAbortController = new AbortController();
-      // 已移除 20s 自动掐断（用户要求：不自动超时，由前端点停止手动 abort）
-      let curFullContent = '';
-      let curFullReasoning = '';
-      let curFinishReason = '';
-      let toolCallBuffer = new Map();
-      let autoIdx = 0;
-      try {
-        const payload = { model: model, messages: curMessages, stream: true, temperature: 0.3, tools: shouldUseTools ? buildTools() : undefined, tool_choice: shouldUseTools ? "auto" : undefined };
-        handlers.onTrace({ tag: 'ROUND', level: 'info', text: `Round ${round+1} shouldUseTools:${shouldUseTools} msgs:${curMessages.length} toolErrStreak:${toolErrStreak} emptyStreak:${emptyStreak}` });
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${key}`
-          },
-          body: JSON.stringify(payload),
-          signal: apiAbortController.signal
-        });
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '');
-          const status = res.status;
-          if (status === 401) {
-            const hint = `Key无效或与 BaseURL/模型不匹配 (provider=${apiCfg.provider||'custom'}, url=${url}, model=${model}, key=${masked})。请确认已点"保存并应用"且Key属于该服务商 (DeepSeek/阿里/硅基/OpenRouter)`;
-            throw new Error(`API 认证失败 HTTP 401: ${hint} 原始返回: ${errText.slice(0, 200)}`);
-          }
-          const isFallbackStatus = status === 500 || status === 400 || status === 429;
-          if (isFallbackStatus && shouldUseTools) {
-            handlers.onTrace({ tag: 'TOOL_FALLBACK', level: 'warn', text: `HTTP ${status} 触发工具回退，关闭工具重试` });
-            shouldUseTools = false;
-            curMessages = messages.slice();
-            toolCallBuffer.clear();
-            continue;
-          }
-          if (isFallbackStatus && !shouldUseTools && http500Retries < 2) {
-            http500Retries++;
-            handlers.onTrace({ tag: 'HTTP_RETRY', level: 'warn', text: `HTTP ${status} 极简重试 ${http500Retries}/2` });
-            const basePromptRetry = withToolPrompt('你是一个专业的高保真前端线框原型设计专家。用户会向你提出需求。', true);
-            curMessages = [{ role: 'system', content: basePromptRetry }, { role: 'user', content: promptText }];
-            toolCallBuffer.clear();
-            continue;
-          }
-          throw new Error(`API 返回错误 HTTP ${status}: ${errText.slice(0, 300)}`);
-        }
-        if (!res.body) {
-          throw new Error('API 返回了空响应体');
-        }
-        handlers.onTrace({ tag: 'HTTP_200', level: 'success', text: `Round ${round+1} 连接建立成功，开始接收流式响应...` });
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder('utf8');
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith(':')) continue;
-            if (trimmed === 'data: [DONE]') { curFinishReason = curFinishReason || 'stop'; break; }
-            if (trimmed.startsWith('data: ')) {
-              const jsonStr = trimmed.slice(6);
-              try {
-                const data = JSON.parse(jsonStr);
-                const choice = data.choices && data.choices[0];
-                if (!choice) continue;
-                if (choice.finish_reason) curFinishReason = String(choice.finish_reason);
-                const delta = choice.delta;
-                if (!delta) continue;
-                if (!firstTokenTime) {
-                  firstTokenTime = Date.now();
-                  handlers.onTrace({ tag: 'TTFT', level: 'info', text: `收到首包 Token (握手耗时: ${firstTokenTime - startTime}ms)` });
-                }
-                const reasoning = delta.reasoning_content || delta.thought || delta.reasoning || '';
-                if (reasoning) {
-                  curFullReasoning += reasoning;
-                  handlers.onReasoning(reasoning);
-                }
-                const content = delta.content || '';
-                if (content) {
-                  curFullContent += content;
-                  handlers.onChunk(content);
-                }
-                const toolCallsDelta = delta.tool_calls || delta.toolCalls || [];
-                if (Array.isArray(toolCallsDelta) && toolCallsDelta.length) {
-                  for (const tc of toolCallsDelta) {
-                    const idxKey = (tc.index != null && tc.index !== undefined) ? String(tc.index) : (tc.idx != null ? String(tc.idx) : '');
-                    const rawId = tc.id || tc.tool_call_id || '';
-                    const autoKey = 'auto_' + (autoIdx++);
-                    const key = idxKey || rawId || autoKey;
-                    let entry = toolCallBuffer.get(key);
-                    if (!entry) entry = { id: rawId || key, name: '', arguments: '' };
-                    const fnName = tc.function && tc.function.name ? String(tc.function.name) : (tc.name ? String(tc.name) : '');
-                    if (fnName) {
-                      if (!entry.name) entry.name = fnName;
-                      else if (entry.name !== fnName) entry.name += fnName;
-                    }
-                    const fnArgs = tc.function && tc.function.arguments ? String(tc.function.arguments) : (tc.arguments ? String(tc.arguments) : '');
-                    if (fnArgs) entry.arguments += fnArgs;
-                    if (rawId) entry.id = rawId;
-                    if (tc.tool_call_id) entry.id = tc.tool_call_id;
-                    toolCallBuffer.set(key, entry);
-                  }
-                }
-                if (delta.function_call) {
-                  const fc = delta.function_call;
-                  const key = 'func_' + (fc.name || 'unknown');
-                  let entry = toolCallBuffer.get(key);
-                  if (!entry) entry = { id: key, name: '', arguments: '' };
-                  if (fc.name) entry.name = (entry.name || '') + String(fc.name);
-                  if (fc.arguments) entry.arguments = (entry.arguments || '') + String(fc.arguments);
-                  toolCallBuffer.set(key, entry);
-                }
-              } catch (e) {}
-            }
-          }
-        }
-        if (buffer && buffer.trim().startsWith('data: ')) {
-          try {
-            const jsonStr = buffer.trim().slice(6);
-            if (jsonStr && jsonStr !== '[DONE]') {
-              const data = JSON.parse(jsonStr);
-              const choice = data.choices && data.choices[0];
-              if (choice) {
-                if (choice.finish_reason) curFinishReason = String(choice.finish_reason);
-                const d = choice.delta;
-                if (d) {
-                  if (d.content) { curFullContent += d.content; handlers.onChunk(d.content); }
-                  if (d.tool_calls) {
-                    for (const tc of d.tool_calls) {
-                      const idxKey = tc.index != null ? String(tc.index) : (tc.idx != null ? String(tc.idx) : '');
-                      const rawId = tc.id || '';
-                      const key = idxKey || rawId || 'auto_' + (autoIdx++);
-                      let entry = toolCallBuffer.get(key);
-                      if (!entry) entry = { id: rawId || key, name: '', arguments: '' };
-                      if (tc.function && tc.function.name) entry.name = (entry.name || '') + tc.function.name;
-                      if (tc.function && tc.function.arguments) entry.arguments += tc.function.arguments;
-                      toolCallBuffer.set(key, entry);
-                    }
-                  }
-                }
-              }
-            }
-          } catch (e) {}
-        }
-        handlers.onTrace({ tag: 'STREAM_DONE', level: 'success', text: `流式传输完成 round ${round+1} 耗时: ${((Date.now() - startTime) / 1000).toFixed(2)}s finish_reason:${curFinishReason || 'none'} toolCalls:${toolCallBuffer.size} content:${curFullContent.length}` });
-        const normFinish = String(curFinishReason || '').toLowerCase().replace(/_/g, '');
-        let calls = [];
-        for (const [k, v] of toolCallBuffer.entries()) {
-          if (!v.name || !String(v.name).trim()) {
-            handlers.onTrace({ tag: 'TOOL_SKIP', level: 'warn', text: `跳过空名工具调用 key=${k}` });
-            continue;
-          }
-          let argsObj;
-          try {
-            const argStr = String(v.arguments || '').trim();
-            argsObj = argStr ? JSON.parse(argStr) : {};
-          } catch (e) {
-            handlers.onTrace({ tag: 'TOOL_FIX', level: 'warn', text: `tool ${v.name} JSON 解析失败，尝试修复` });
-            try { argsObj = JSON.parse(String(v.arguments || '').trim() + '}'); } catch (ee) { argsObj = {}; }
-          }
-          calls.push({ id: String(v.id || k), name: String(v.name).trim(), args: argsObj || {}, rawArgs: String(v.arguments || '') });
-        }
-        if (calls.length > 0) {
-          curMessages.push({ role: 'assistant', content: curFullContent || '', tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } })) });
-          const readLike = calls.filter(c => ['read_file', 'list_files', 'get_skeleton'].includes(c.name));
-          const patchLike = calls.filter(c => c.name === 'apply_patch');
-          const toolResults = [];
-          if (readLike.length) {
-            const promises = readLike.map(async c => {
-              if ((c.name === 'read_file' || c.name === 'get_skeleton') && !c.args.file) {
-                const fallback = (extraOpts.targetFile ? String(extraOpts.targetFile) : '') || (targetHtmlPath ? path.basename(targetHtmlPath) : 'index.html');
-                c.args.file = fallback;
-                handlers.onTrace({ tag: 'TOOL_FIX', level: 'info', text: `${c.name} 缺 file 自动补 ${fallback}` });
-              }
-              const r = await runTool(c.name, c.args, sandboxDir);
-              return { call: c, res: r };
-            });
-            const settled = await Promise.all(promises);
-            toolResults.push(...settled);
-          }
-          for (const c of patchLike) {
-            if (!c.args.file) {
-              const fallback = (extraOpts.targetFile ? String(extraOpts.targetFile) : '') || (targetHtmlPath ? path.basename(targetHtmlPath) : 'index.html');
-              c.args.file = fallback;
-              handlers.onTrace({ tag: 'TOOL_FIX', level: 'info', text: `apply_patch 缺 file 自动补 ${fallback}` });
-            }
-            if (!Array.isArray(c.args.patches) || c.args.patches.length === 0) {
-              if (c.args.search !== undefined) {
-                c.args.patches = [{ search: String(c.args.search), replace: String(c.args.replace || '') }];
-                handlers.onTrace({ tag: 'TOOL_FIX', level: 'info', text: 'patches 兼容单块 {search,replace}' });
-              }
-            }
-            const r = await runTool(c.name, c.args, sandboxDir);
-            toolResults.push({ call: c, res: r });
-            if (r && r.ok) toolPatched = true;
-          }
-          let hasToolErr = false;
-          for (const { call, res } of toolResults) {
-            const contentStr = JSON.stringify(res);
-            curMessages.push({ role: 'tool', tool_call_id: call.id, content: contentStr });
-            const tag = 'TOOL_' + call.name.toUpperCase();
-            handlers.onTrace({ tag, level: res.ok ? 'success' : 'warn', text: `${call.name} ${res.ok ? 'OK' : 'FAIL'}: ${contentStr.slice(0, 400)}` });
-            if (call.name === 'apply_patch' && res.ok) toolPatched = true;
-            if (!res.ok && res.code && String(res.code).startsWith('SEARCH_')) hasToolErr = true;
-            if (!res.ok && call.name === 'apply_patch') hasToolErr = true;
-          }
-          if (hasToolErr) {
-            toolErrStreak++;
-            handlers.onTrace({ tag: 'TOOL_ERR_STREAK', level: 'warn', text: `工具异常 ${toolErrStreak}/10` });
-            if (toolErrStreak >= 10) { handlers.onTrace({ tag: 'TOOL_ERR_LIMIT', level: 'error', text: `连续10次工具异常，已停止` }); handlers.onError(new Error('连续10次工具调用异常（定位失败），已停止，请检查 SEARCH 是否2-5行唯一或附上更多上下文')); break; }
-          } else {
-            toolErrStreak = 0;
-          }
-          emptyStreak = 0;
-          lastFullContent = curFullContent;
-          lastFullReasoning = curFullReasoning;
-          continue;
-        } else {
-          if (!String(curFullContent||'').trim() || String(curFullContent).trim().length < 20) {
-            emptyStreak++;
-            if (emptyStreak >= 10) { handlers.onTrace({ tag: 'EMPTY_LIMIT', level: 'warn', text: `连续10轮空内容，已停止` }); break; }
-          } else {
-            emptyStreak = 0;
-          }
-          toolErrStreak = 0;
-          lastFullContent = curFullContent;
-          lastFullReasoning = curFullReasoning;
-          break;
-        }
-      } catch (innerErr) {
-        if (innerErr && innerErr.name === 'AbortError') {
-          handlers.onTrace({ tag: 'ABORT', level: 'warn', text: `已由用户停止（round ${round+1}）` });
-          break;
-        }
-        throw innerErr;
-      } finally {
-        // roundTimeout 已移除，无需 clear
-      }
-    }
-    let fullContent = lastFullContent || '';
-    let saved = toolPatched;
-    if (existingHtml && fullContent.includes('<<<<<<< SEARCH') && fullContent.includes('>>>>>>> REPLACE')) {
-      const patchRes = applySearchReplace(existingHtml, fullContent);
-      if (patchRes.count > 0 && targetHtmlPath) {
-        fs.writeFileSync(targetHtmlPath, patchRes.modified, 'utf8');
-        takeSnapshot(sandboxDir);
-        saved = true;
-        handlers.onTrace({ tag: 'DIFF_APPLY', level: 'success', text: `已成功应用 ${patchRes.count} 处局部差量修改到原型文件: ${path.basename(targetHtmlPath)}` });
-        if (patchRes.failedBlocks.length > 0) {
-          handlers.onTrace({ tag: 'DIFF_WARN', level: 'warn', text: `有 ${patchRes.failedBlocks.length} 处修改未能在原 HTML 中定位锚点，可能未完全生效` });
-        }
-      }
-    }
-    if (!saved) {
-      const htmlMatch = fullContent.match(/\`\`\`html\s*([\s\S]*?)\`\`\`/i);
-      let extractedHtml = htmlMatch ? htmlMatch[1].trim() : '';
-      if (!extractedHtml && (fullContent.includes('<!DOCTYPE html>') || fullContent.includes('<html'))) {
-        extractedHtml = fullContent.trim();
-      }
-      if (extractedHtml && targetHtmlPath) {
-        fs.writeFileSync(targetHtmlPath, extractedHtml, 'utf8');
-        takeSnapshot(sandboxDir);
-        saved = true;
-        handlers.onTrace({ tag: 'FS_SAVE', level: 'success', text: `已自动提取并全量覆盖写入原型文件: ${path.basename(targetHtmlPath)} (${(extractedHtml.length / 1024).toFixed(1)} KB)` });
-      }
-    }
-    if (!saved && !toolPatched && targetHtmlPath) {
-      handlers.onTrace({ tag: 'FS_WARN', level: 'warn', text: `大模型未输出有效的 SEARCH/REPLACE 差量块或完整 html 代码块，未修改文件` });
-    }
-    if ((saved || toolPatched) && targetHtmlPath) {
-      try {
-        let finalHtml = '';
-        try { finalHtml = fs.readFileSync(targetHtmlPath, 'utf8'); } catch (e) { finalHtml = existingHtml; }
-        const newHash = hashStr(finalHtml);
-        lruSet(lastHashMem, lastKey, newHash);
-        lruSet(prevHtmlMem, lastKey, finalHtml);
-        lruSet(lastHashMem, fileKey, newHash);
-        lruSet(prevHtmlMem, fileKey, finalHtml);
-        const scopedKey = sandboxDir + '\0' + fileKey;
-        lruSet(lastHashMem, scopedKey, newHash);
-        lruSet(prevHtmlMem, scopedKey, finalHtml);
-        const payload = {};
-        payload[fileKey] = newHash;
-        handlers.onTrace({ tag: 'LAST_HASH', level: 'info', text: JSON.stringify(payload) });
-      } catch (e) {}
-    }
-    handlers.onClose();
-  } catch (err) {
-    if (err.name === 'AbortError' || (apiAbortController && apiAbortController.signal.aborted)) {
-      handlers.onTrace({ tag: 'ABORT', level: 'warn', text: `用户已中断当前生成请求` });
-      handlers.onClose();
-    } else {
-      handlers.onTrace({ tag: 'ERROR', level: 'error', text: String(err && err.message || err) });
-      handlers.onError(err);
-    }
-  } finally {
-    apiAbortController = null;
-  }
-}
 ipcMain.handle('ai:get-config', () => loadAiCfg());
+/* 模型显示管理重构：CLI 动态模型探测 + 10分钟内存缓存 + customModelsCli 融合 */
+const cliModelsCache = new Map(); /* key -> { ts, items:[{id,label}] } */
+const CLI_MODELS_CACHE_TTL = 10 * 60 * 1000;
 ipcMain.handle('ai:save-config', (ev, cfg) => {
   const cur = loadAiCfg();
   const next = Object.assign(cur, cfg || {});
@@ -2135,138 +1018,206 @@ ipcMain.handle('ai:save-config', (ev, cfg) => {
   if (cfg && Array.isArray(cfg.visibleModelsCli)) next.visibleModelsCli = cfg.visibleModelsCli;
   if (cfg && Array.isArray(cfg.visibleModelsApi)) next.visibleModelsApi = cfg.visibleModelsApi;
   if (cfg && Array.isArray(cfg.visibleModels)) next.visibleModels = cfg.visibleModels;
+  if (cfg && Array.isArray(cfg.customModelsCli)) next.customModelsCli = cfg.customModelsCli;
+  if (cfg && typeof cfg.agentId === 'string') next.agentId = cfg.agentId;
+  if (cfg && typeof cfg.mainAgent === 'string') next.mainAgent = cfg.mainAgent;
+  if (cfg && typeof cfg.cliPaths === 'object' && cfg.cliPaths) next.cliPaths = cfg.cliPaths;
+  /* 引擎显式切换时同步清理历史遗留字段，避免 mode/providerType 残留导致 isApi 误判 */
+  if (cfg && (cfg.engine === 'cli' || cfg.engine === 'api')) {
+    next.engine = cfg.engine;
+    if (cfg.engine === 'cli') { delete next.mode; delete next.providerType; }
+    else { next.mode = 'api'; next.providerType = 'api'; }
+  }
   saveAiCfg(next);
-  cliVerCache = { exe: null, version: null, promise: null };
+  try { cliModelsCache.clear(); } catch (e) {}
   return { ok: true, config: next };
 });
 
+/* 模型动态探测辅助函数 */
+function stripFreeSuffix(s) {
+  let v = String(s || '').trim();
+  if (/[-_]free$/i.test(v)) v = v.replace(/[-_]free$/i, '').trim();
+  return v;
+}
+function normalizeCliModelIds(rawList) {
+  const seen = new Set(); const out = [];
+  (Array.isArray(rawList) ? rawList : []).forEach((m) => {
+    let id = '';
+    if (typeof m === 'string') id = m;
+    else if (m && typeof m === 'object') id = m.id || m.name || m.model || '';
+    id = stripFreeSuffix(id);
+    if (!id || id === 'default') return;
+    if (/embed|tts\b|text-to-speech|stt\b|whisper|dall-?e|text-embedding|image-?gen/i.test(id)) return;
+    if (id.length > 128 || /\s/.test(id)) return;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({ id, label: (m && typeof m === 'object' && (m.label || m.name)) || id });
+  });
+  return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+function execCliListModels(resolvedBin, def) {
+  return new Promise((resolve) => {
+    try {
+      const args = (def && def.listModels && Array.isArray(def.listModels.args)) ? def.listModels.args : ['models'];
+      const timeoutMs = (def && def.listModels && def.listModels.timeoutMs) || 5000;
+      const invocation = createCommandInvocation({ command: resolvedBin, args, env: applyAgentLaunchEnv() });
+      const child = spawn(invocation.command, invocation.args, { cwd: os.tmpdir(), windowsVerbatimArguments: invocation.windowsVerbatimArguments });
+      let out = ''; let err = '';
+      let done = false;
+      const finish = (items) => { if (!done) { done = true; try { child.kill(); } catch (e) {} resolve(items); } };
+      const timer = setTimeout(() => finish(null), timeoutMs);
+      child.stdout.on('data', (d) => { out += d.toString('utf8'); });
+      child.stderr.on('data', (d) => { err += d.toString('utf8'); });
+      child.on('error', () => { clearTimeout(timer); finish(null); });
+      child.on('close', () => {
+        clearTimeout(timer);
+        if (done) return;
+        done = true;
+        try {
+          const parse = def && def.listModels && typeof def.listModels.parse === 'function' ? def.listModels.parse : null;
+          let items = parse ? parse(out, err) : [];
+          if (!Array.isArray(items)) items = [];
+          resolve(items);
+        } catch (e) { resolve(null); }
+      });
+    } catch (e) { resolve(null); }
+  });
+}
+
+/* L4统一IPC：ai:test-connection -> testProviderConnection（兼容旧前端 {ok,latency,error}） */
 ipcMain.handle('ai:test-connection', async (ev, apiCfg) => {
-  if (!apiCfg) return { ok: false, error: '未提供 API 配置' };
-  const url = getCompletionsUrl(apiCfg.baseUrl);
-  let key = String(apiCfg.apiKey || '').trim();
-  if (/^Bearer\s+/i.test(key)) key = key.replace(/^Bearer\s+/i, '').trim();
-  key = key.replace(/^["']|["']$/g, '').trim();
-  const model = (apiCfg.model || 'deepseek-chat').trim();
-  if (!url) return { ok: false, error: 'Base URL 不能为空' };
-  if (!key) return { ok: false, error: 'API Key 不能为空' };
-  if (key.length < 10) return { ok: false, error: 'API Key 过短（仅 '+key.length+' 字符），请检查是否复制完整' };
   try {
-    const t0 = Date.now();
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [{ role: 'user', content: 'hi' }],
-        max_tokens: 5,
-        stream: false
-      })
-    });
-    const latency = Date.now() - t0;
-    if (!res.ok) {
-      const t = await res.text();
-      if (res.status === 401) {
-        return { ok: false, error: `HTTP 401 认证失败: Key无效或与 BaseURL/模型不匹配 (provider=${apiCfg.provider||'custom'}, url=${url}, model=${model})。原始: ${t.slice(0,200)}。请确认已"保存并应用"且Key属于该服务商`, latency };
-      }
-      return { ok: false, error: `HTTP ${res.status}: ${t.slice(0, 200)}`, latency };
-    }
-    return { ok: true, latency };
-  } catch (e) {
-    return { ok: false, error: String(e && e.message || e) };
-  }
-});
-
-ipcMain.handle('ai:models', async () => {
-  const cfg = loadAiCfg();
-  const engine = cfg.engine || 'cli';
-  let visible = null;
-  if (engine === 'api') {
-    visible = Array.isArray(cfg.visibleModelsApi) ? cfg.visibleModelsApi : (Array.isArray(cfg.visibleModels) && cfg.visibleModels.length ? cfg.visibleModels : null);
-  } else {
-    visible = Array.isArray(cfg.visibleModelsCli) ? cfg.visibleModelsCli : (Array.isArray(cfg.visibleModels) && cfg.visibleModels.length ? cfg.visibleModels : null);
-  }
-
-  if (engine === 'api') {
-    const apiCfg = cfg.api || {};
-    const custom = Array.isArray(apiCfg.customModels) && apiCfg.customModels.length
-      ? apiCfg.customModels
-      : ['deepseek-chat', 'deepseek-reasoner'];
-    const prov = apiCfg.provider || 'custom';
-    const provNames = {
-      deepseek: 'DeepSeek 官方',
-      ali: '阿里百炼 DashScope',
-      siliconflow: '硅基流动 SiliconFlow',
-      openrouter: 'OpenRouter',
-      custom: '自定义 API'
+    const stored = loadAiCfg();
+    const src = (apiCfg && typeof apiCfg === 'object') ? apiCfg : {};
+    const rawProv = src.protocol || src.provider
+      || (stored.byok && stored.byok.protocol) || (stored.apiConfig && stored.apiConfig.protocol)
+      || (stored.api && stored.api.provider) || 'openai';
+    const known = ['openai', 'anthropic', 'google', 'ollama', 'azure'];
+    const protocol = known.includes(String(rawProv)) ? String(rawProv) : 'openai';
+    const apiKey = String(
+      src.apiKey != null ? src.apiKey
+      : (stored.byok && stored.byok.apiKey) || (stored.apiConfig && stored.apiConfig.apiKey)
+      || (stored.api && stored.api.apiKey) || ''
+    ).trim();
+    const baseUrl = String(
+      src.baseUrl != null ? src.baseUrl
+      : (stored.byok && stored.byok.baseUrl) || (stored.apiConfig && stored.apiConfig.baseUrl)
+      || (stored.api && stored.api.baseUrl) || ''
+    ).trim();
+    const model = String(src.model != null ? src.model : (stored.api && stored.api.model) || '').trim() || 'deepseek-chat';
+    const r = await testProviderConnection({ protocol, apiKey, baseUrl, model, timeoutMs: 8000 });
+    return {
+      ok: !!r.success, success: !!r.success, kind: r.kind,
+      latency: r.latencyMs, latencyMs: r.latencyMs, status: r.status,
+      error: r.success ? undefined : r.message, message: r.message
     };
-    const provLabel = provNames[prov] || '自定义 API';
-    const modelsList = custom.map(m => ({ id: m, name: m }));
-    const groups = [{
-      provider: prov,
-      label: provLabel,
-      models: modelsList
-    }];
-    return { ok: true, groups, default: apiCfg.model || (custom[0] || 'deepseek-chat'), engine: 'api', visibleModels: visible || [] };
-  }
-
-  // P1-4 fix F03 async 改用异步解析并加 3000ms 超时保护
-  let exe = null;
-  try{ exe = await Promise.race([ resolveCliAsync(), new Promise(res=> setTimeout(()=> { try{ console.log('[F03 async] ai:models resolveCli timeout 3000ms'); }catch(e){} res(null); }, 3000)) ]); }catch(e){ try{ console.log('[F03 async] ai:models resolveCli error', e); }catch(ee){} exe=null; }
-  if (!exe) return { ok: false, error: '未找到 opencode CLI', engine: 'cli', visibleModels: visible || [] };
-  try {
-    const r = await runCliAsync(exe, ['models'], 20000);
-    if (r.status !== 0) return { ok: false, error: extractCliError(r.stderr, r.status) || 'opencode models 执行失败', engine: 'cli', visibleModels: visible || [] };
-    const ids = stripAnsi(r.stdout).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const byProv = {};
-    ids.forEach((id) => {
-      const i = id.indexOf('/');
-      const provider = i > 0 ? id.slice(0, i) : '';
-      const model = i > 0 ? id.slice(i + 1) : id;
-      if (!provider || !model) return;
-      (byProv[provider] = byProv[provider] || []).push({ id, name: model });
-    });
-    const keys = Object.keys(byProv);
-    const names = providerDisplayNames(keys);
-    const groups = keys.map((k) => ({
-      provider: k,
-      label: names[k] ? names[k] + '（' + k + '）' : k,
-      models: byProv[k]
-    })).sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
-    return { ok: true, groups, default: process.env.PROTO_AI_MODEL || DEFAULT_AI_MODEL, engine: 'cli', visibleModels: visible || [] };
   } catch (e) {
-    return { ok: false, error: String(e && e.message || e), engine: 'cli', visibleModels: visible || [] };
+    return { ok: false, success: false, kind: 'unknown', error: String((e && e.message) || e) };
   }
 });
 
-/* 查询指定 opencode 会话 ID 所属的工作目录（session list --format json，cwd=沙箱根以列出全部）。
-   工具用它校验 localStorage 中缓存的会话 oid 是否属于当前沙箱目录——
-   cwd 与会话目录不一致会让 opencode 卡死（不输出、不退出）。 */
-ipcMain.handle('ai:session-dirs', async (ev, oids) => {
-  if (!Array.isArray(oids) || !oids.length) return {};
-  // P1-4 fix F03 async 改用异步并加 3000ms 超时保护
-  let exe = null;
-  try{ exe = await Promise.race([ resolveCliAsync(), new Promise(res=> setTimeout(()=> { try{ console.log('[F03 async] ai:session-dirs resolveCli timeout 3000ms'); }catch(e){} res(null); }, 3000)) ]); }catch(e){ try{ console.log('[F03 async] ai:session-dirs error', e); }catch(ee){} exe=null; }
-  if (!exe) return {};
+/* L4统一IPC：ai:models -> CLI读def.fallbackModels / API调fetchProviderModels（兼容旧前端 {ok,groups,default,engine,visibleModels}） */
+ipcMain.handle('ai:models', async (ev, hint) => {
+  const cfg = loadAiCfg();
+  /* 设置面板按当前UI引擎预览：显式hint优先，仅无hint时回退落盘判定（兼容旧前端与对话下拉） */
+  const h = (hint && typeof hint === 'object') ? hint : (typeof hint === 'string' ? { engine: hint } : {});
+  const hintEngine = (h.engine === 'cli' || h.engine === 'api') ? h.engine : null;
+  const isApi = hintEngine ? hintEngine === 'api' : (cfg.mode === 'api' || cfg.providerType === 'api' || cfg.engine === 'api');
+  let visible = null;
+  if (isApi) {
+    visible = Array.isArray(cfg.visibleModelsApi) ? cfg.visibleModelsApi
+      : (Array.isArray(cfg.visibleModels) && cfg.visibleModels.length ? cfg.visibleModels : null);
+  } else {
+    visible = Array.isArray(cfg.visibleModelsCli) ? cfg.visibleModelsCli
+      : (Array.isArray(cfg.visibleModels) && cfg.visibleModels.length ? cfg.visibleModels : null);
+  }
+  if (isApi) {
+    try {
+      const src = h.api || h.byok || h.apiConfig || cfg.byok || cfg.apiConfig || cfg.api || {};
+      const rawProv = src.protocol || src.provider || 'openai';
+      const known = ['openai', 'anthropic', 'google', 'ollama', 'azure'];
+      const protocol = known.includes(String(rawProv)) ? String(rawProv) : 'openai';
+      const apiKey = String(src.apiKey || '').trim();
+      const baseUrl = String(src.baseUrl || '').trim();
+      const list = await fetchProviderModels({ protocol, apiKey, baseUrl, timeoutMs: 10000 });
+      const dispProv = String(src.provider || protocol);
+      const labelMap = {
+        deepseek: 'DeepSeek 官方', ali: '阿里百炼 DashScope',
+        siliconflow: '硅基流动 SiliconFlow', openrouter: 'OpenRouter',
+        custom: '自定义 API', openai: 'OpenAI', anthropic: 'Anthropic',
+        google: 'Google', ollama: 'Ollama', azure: 'Azure'
+      };
+      const label = labelMap[dispProv] || dispProv;
+      const defModel = String(src.model || cfg.model || ((Array.isArray(list) && list[0] && list[0].id) || 'default'));
+      return { ok: true, groups: [{ provider: dispProv, label, models: list }], default: defModel, engine: 'api', visibleModels: visible || [] };
+    } catch (e) {
+      const fb = [{ id: 'deepseek-chat', label: 'deepseek-chat' }, { id: 'deepseek-reasoner', label: 'deepseek-reasoner' }];
+      return { ok: true, groups: [{ provider: 'custom', label: '自定义 API', models: fb }], default: 'deepseek-chat', engine: 'api', visibleModels: visible || [] };
+    }
+  }
+  const agentId = cfg.agentId || cfg.mainAgent || 'opencode';
+  const def = getAgentDef(agentId) || getAgentDef('opencode');
+  if (!def) return { ok: false, error: '未找到 Agent 适配器', engine: 'cli', visibleModels: visible || [] };
+  const fms = Array.isArray(def.fallbackModels) ? def.fallbackModels : [];
+  /* 动态执行 def.listModels（如 opencode models），5s熔断+10分钟缓存，失败降级fallback */
+  let dynItems = [];
   try {
-    const r = await runCliAsync(exe, ['session', 'list', '--format', 'json'], 30000, SANDBOX_ROOT);
-    if (r.status !== 0) return {};
-    const t = stripAnsi(r.stdout);
-    const i = t.indexOf('[');
-    if (i < 0) return {};
-    const arr = JSON.parse(t.slice(i));
-    if (!Array.isArray(arr)) return {};
-    const map = {};
-    arr.forEach((s) => { if (s && s.id && s.directory) map[s.id] = s.directory; });
-    const out = {};
-    oids.forEach((o) => { if (map[o]) out[o] = map[o]; });
-    return out;
-  } catch (e) { return {}; }
+    let customPath = cfg.cliPath;
+    try { if (cfg.cliPaths && cfg.cliPaths[def.id]) customPath = cfg.cliPaths[def.id]; } catch (e) {}
+    const resolvedBin = await resolveAgentExecutable(def, customPath);
+    if (resolvedBin && def.listModels && Array.isArray(def.listModels.args)) {
+      const cacheKey = def.id + ':' + resolvedBin;
+      const now = Date.now();
+      const hit = cliModelsCache.get(cacheKey);
+      if (hit && (now - hit.ts) < CLI_MODELS_CACHE_TTL && Array.isArray(hit.items) && hit.items.length) {
+        dynItems = hit.items;
+      } else {
+        const raw = await execCliListModels(resolvedBin, def);
+        if (Array.isArray(raw) && raw.length) {
+          dynItems = normalizeCliModelIds(raw);
+          if (dynItems.length) cliModelsCache.set(cacheKey, { ts: now, items: dynItems });
+          else dynItems = [];
+        }
+      }
+    }
+  } catch (e) { dynItems = []; }
+  /* 融合：fallback default项 + 动态全量 + 用户customModelsCli（每次合并，不进缓存） */
+  const merged = [];
+  const seenIds = new Set();
+  const pushM = (m) => {
+    const id0 = String((m && m.id) || '').trim();
+    if (!id0) return;
+    const id = stripFreeSuffix(id0);
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+    merged.push({ id, label: String((m && m.label) || id) });
+  };
+  fms.forEach(pushM);
+  (Array.isArray(dynItems) ? dynItems : []).forEach(pushM);
+  (Array.isArray(cfg.customModelsCli) ? cfg.customModelsCli : []).forEach((id) => pushM({ id, label: id }));
+  const useList = merged.length ? merged : fms.map((m) => ({ id: stripFreeSuffix(m.id), label: m.label || m.id })).filter((m) => m.id);
+  const byProv = {};
+  useList.forEach((m) => {
+    const id = String((m && m.id) || '').trim();
+    if (!id) return;
+    const label = String((m && m.label) || id);
+    const i = id.indexOf('/');
+    const provider = i > 0 ? id.slice(0, i) : def.id;
+    const name = i > 0 ? id.slice(i + 1) : label;
+    (byProv[provider] = byProv[provider] || []).push({ id, name });
+  });
+  const groups = Object.keys(byProv).map((k) => ({ provider: k, label: k, models: byProv[k] }))
+    .sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+  let defId = 'default';
+  try {
+    const d0 = fms.find((m) => m && m.default) || fms[0];
+    if (d0 && d0.id) defId = d0.id;
+  } catch (e) {}
+  return {
+    ok: true, groups, default: process.env.PROTO_AI_MODEL || cfg.model || defId,
+    engine: 'cli', visibleModels: visible || [], agentId: def.id
+  };
 });
-
-ipcMain.handle('ai:set-path', (ev, p) => { const c = loadAiCfg(); c.cliPath = p || ''; saveAiCfg(c); cliVerCache = { exe: null, version: null, promise: null }; return 'ok'; });
 
 ipcMain.handle('ai:pick', async () => {
   const win = BrowserWindow.getFocusedWindow();
@@ -2276,121 +1227,276 @@ ipcMain.handle('ai:pick', async () => {
   });
   if (r.canceled || !r.filePaths.length) return null;
   const c = loadAiCfg(); c.cliPath = r.filePaths[0]; saveAiCfg(c);
-  cliVerCache = { exe: null, version: null, promise: null };
   return { path: r.filePaths[0] };
 });
 
-ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraOpts) => {
-  extraOpts = extraOpts || {};
-  if (extraOpts && typeof extraOpts === 'object') {
-    if (!extraOpts.sessionId && sessionId) extraOpts.sessionId = sessionId;
+/* L4统一分流器：ai:ask -> startAgentExecution（BYOK走opencode桥接，CLI走对应def；Stdin管道注入；事件经ai:event推送） */
+ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraOpts = {}) => {
+  if (activeExecution) {
+    return { ok: false, success: false, error: 'busy' };
   }
-  const cfg = loadAiCfg();
-  const engine = cfg.engine || 'cli';
-
-  if (aiChild || apiAbortController) {
-    if (aiChild && (aiChild.exitCode !== null || aiChild.signalCode !== null || aiChild.killed)) { aiChild = null; }
-    else if (!aiChild && !apiAbortController) {}
-    else return { ok: false, error: 'busy' };
+  const aiCfg = loadAiCfg();
+  const webContents = ev.sender;
+  const isApiMode = aiCfg.mode === 'api' || aiCfg.providerType === 'api' || aiCfg.engine === 'api';
+  let def = null;
+  let resolvedBin = null;
+  const rawModel = String(model || '').trim();
+  let normModel = (!rawModel || rawModel === '__none__') ? '' : rawModel;
+  if (normModel.endsWith('-free')) normModel = normModel.slice(0, -5);
+  let targetModel = normModel || String(aiCfg.model || '').trim() || 'default';
+  if (targetModel.endsWith('-free')) targetModel = targetModel.slice(0, -5);
+  if (targetModel === '__none__') targetModel = 'default';
+  // 严格区分：positional 参数 sessionId 代表 Agent 远端/CLI 会话标识（如 OpenCode 的 ses_...）
+  // extraOpts.uiSessionId 代表前端 Tab 标识（s_...），严禁侵入底层执行选项 options.sessionId
+  let agentSessionToken = (typeof sessionId === 'string' && sessionId.trim()) ? sessionId.trim() : null;
+  if (!agentSessionToken && typeof extraOpts.agentSessionId === 'string' && extraOpts.agentSessionId.trim()) {
+    agentSessionToken = extraOpts.agentSessionId.trim();
   }
-  aiCancelRequested = false;
-  takeSnapshot(sandboxDir);
-  const win = BrowserWindow.fromWebContents(ev.sender);
-  const send = (payload) => { if (win && !win.isDestroyed()) win.webContents.send('ai:event', payload); };
+  let executionOptions = { ...extraOpts };
+  delete executionOptions.sessionId; // 坚决剔除前端 Tab ID，杜绝同名覆盖
+  if (agentSessionToken && !agentSessionToken.startsWith('s_')) {
+    executionOptions.sessionId = agentSessionToken;
+  }
+  try { takeSnapshot(sandboxDir); } catch (e) {}
+  const cwd = aiWorkDir(sandboxDir);
+  if (isApiMode) {
+    def = getAgentDef('opencode');
+    if (!def) throw new Error('未找到 OpenCode 适配器，BYOK 模式依赖本地 OpenCode CLI');
+    resolvedBin = await resolveAgentExecutable(def, aiCfg.cliPath);
+    if (!resolvedBin) {
+      webContents.send('ai:event', {
+        type: 'error', code: 'CLI_NOT_FOUND', title: '缺少 OpenCode CLI',
+        message: '大模型 API 模式需要本地安装 OpenCode 负责执行文件修改，请先安装或指定路径。'
+      });
+      return { ok: false, success: false, error: '缺少 OpenCode CLI' };
+    }
+    const legacyApi = aiCfg.api || {};
+    let legacyProtocol = 'openai';
+    try {
+      const pv = String(legacyApi.provider || 'openai');
+      legacyProtocol = ['openai', 'anthropic', 'google', 'ollama', 'azure'].includes(pv) ? pv : 'openai';
+    } catch (e) {}
+    const byokSrc = aiCfg.byok || aiCfg.apiConfig || {
+      protocol: legacyProtocol,
+      apiKey: legacyApi.apiKey || '',
+      baseUrl: legacyApi.baseUrl || '',
+      apiVersion: legacyApi.apiVersion || undefined,
+      model: legacyApi.model || undefined
+    };
+    const byokModel = (targetModel && targetModel !== 'default') ? targetModel : String(byokSrc.model || '').trim();
+    const byokConfig = buildOpenCodeByokProviderConfig(byokSrc, byokModel);
+    if (!byokConfig) {
+      webContents.send('ai:event', {
+        type: 'error', code: 'INVALID_BYOK_CONFIG', title: 'API 配置不完整',
+        message: '请在设置中心检查 API Key、BaseURL 及模型名称是否已正确配置。'
+      });
+      return { ok: false, success: false, error: 'API 配置不完整' };
+    }
+    executionOptions.env = byokConfig.env;
+    executionOptions.model = byokConfig.modelId;
+  } else {
+    const agentId = aiCfg.agentId || 'opencode';
+    def = getAgentDef(agentId) || getAgentDef('opencode');
+    if (!def) {
+      webContents.send('ai:event', { type: 'error', code: 'AGENT_NOT_FOUND', title: '未找到 Agent', message: String(agentId) });
+      return { ok: false, success: false, error: '未找到 Agent 适配器' };
+    }
+    let customPath = aiCfg.cliPath;
+    try {
+      if (aiCfg.cliPaths && aiCfg.cliPaths[def.id]) customPath = aiCfg.cliPaths[def.id];
+    } catch (e) {}
+    resolvedBin = await resolveAgentExecutable(def, customPath);
+    if (!resolvedBin) {
+      webContents.send('ai:event', {
+        type: 'error', code: 'CLI_NOT_FOUND', title: ('未检测到 ' + def.name),
+        message: ('未找到 ' + def.name + ' 可执行文件，请在终端执行安装或在设置中心指定路径。')
+      });
+      return { ok: false, success: false, error: '未检测到 ' + def.name };
+    }
+    executionOptions.model = (targetModel && targetModel !== '__none__') ? targetModel : 'default';
+  }
 
-  if (engine === 'api') {
-    const apiCfg = cfg.api || {};
-    return new Promise((resolve) => {
-      startDirectApiRun(apiCfg, model, {
-        onStart: () => resolve({ ok: true }),
-        onReasoning: (text) => send({ type: 'thinking', text }),
-        onChunk: (text) => send({ type: 'chunk', text }),
-        onTrace: (trace) => send({ type: 'trace', trace }),
-        onError: (err) => send({ type: 'error', message: String(err && err.message || err) }),
-        onClose: () => send({ type: 'done' })
-      }, aiWorkDir(sandboxDir), prompt, extraOpts);
+  const beforeSignature = getProtoFileSignature(cwd);
+
+  function runAgentProcess(opts, isRetry = false) {
+    return startAgentExecution({
+      def,
+      resolvedBin,
+      prompt,
+      cwd,
+      options: opts,
+      handlers: {
+        onThinking: (text) => webContents.send('ai:event', { type: 'thinking', text: String((text && text.text) || text || '') }),
+        onChunk: (text) => webContents.send('ai:event', { type: 'chunk', text: String((text && text.text) || text || '') }),
+        onToolCall: (data) => webContents.send('ai:event', { type: 'tool_call', ...data }),
+        onSession: (id) => {
+          const sid = String((id && (id.sessionId || id.id || id.sessionID || id.session_id || id.session)) || (typeof id === 'string' ? id : '') || '');
+          webContents.send('ai:event', { type: 'session', id: sid, sessionId: sid });
+        },
+        onError: (diag) => {
+          const d = (diag && typeof diag === 'object') ? diag : { message: String((diag && diag.message) || diag || '未知错误') };
+          // 自愈降级：若因携带失效的 sessionId 导致 SESSION_NOT_FOUND，自动抹除并无感重试一次全新会话
+          if (d.code === 'SESSION_NOT_FOUND' && opts.sessionId && !isRetry) {
+            try { webContents.send('ai:event', { type: 'session', id: '', sessionId: '' }); } catch (e) {}
+            const retryOpts = { ...opts };
+            delete retryOpts.sessionId;
+            activeExecution = runAgentProcess(retryOpts, true);
+            return;
+          }
+          activeExecution = null;
+          try {
+            webContents.send('ai:event', { type: 'error', code: d.code || 'EXECUTION_FAILURE', title: d.title || '调用失败', message: d.message || '调用失败', action: d.action || 'retry' });
+          } catch (e) {
+            try { webContents.send('ai:event', { type: 'error', message: String((diag && diag.message) || diag || '未知错误') }); } catch (ee) {}
+          }
+        },
+        onClose: ({ cancelled, code } = {}) => {
+          activeExecution = null;
+          let fileChanges = [];
+          try {
+            const afterSignature = getProtoFileSignature(cwd);
+            fileChanges = diffFileSignatures(beforeSignature, afterSignature);
+          } catch (err) {
+            fileChanges = [];
+          }
+          try {
+            webContents.send('ai:event', {
+              type: 'done',
+              cancelled: !!cancelled,
+              code,
+              fileChanges
+            });
+          } catch (e) {}
+        }
+      }
     });
   }
 
-  // P1-4 fix F03 async 改用异步解析并加 3000ms 超时保护
-  let exe = null;
-  try{ exe = await Promise.race([ resolveCliAsync(), new Promise(res=> setTimeout(()=> { try{ console.log('[F03 async] ai:ask resolveCli timeout 3000ms'); }catch(e){} res(null); }, 3000)) ]); }catch(e){ try{ console.log('[F03 async] ai:ask resolveCli error', e); }catch(ee){} exe=null; }
-  if (!exe) return { ok: false, error: '未找到 opencode，请先在系统安装（npm/scoop/choco），或在「设置」中切换为 API 直连模式或指定 CLI 路径。' };
-  
-  const want = String(model || '').trim();
-  const modelsFinal = (want && want !== '__none__') ? [want] : [null];
-  sessionId = String(sessionId || '').trim() || null;
-  
-  send({ type: 'trace', trace: { tag: 'CLI_START', level: 'info', text: `启动 OpenCode CLI 任务 (模型: ${want || '默认'})` } });
-
-  return new Promise((resolve) => {
-    let resolved = false;
-    let settled = false;
-    const attempt = (idx) => {
-      if (settled) return;
-      if (idx >= modelsFinal.length) {
-        if (!resolved) { resolved = true; settled = true; resolve({ ok: false, error: 'opencode 未能输出任何结果，请检查 CLI 与网络后重试。' }); }
-        return;
-      }
-      let gotChunk = false;
-      startAiRun(exe, modelsFinal[idx], {
-        onStart: () => { if (!resolved) { resolved = true; resolve({ ok: true }); } },
-        onSession: (id) => { if (id && typeof id === 'string') { sessionId = id; send({ type: 'session', id }); send({ type: 'trace', trace: { tag: 'SESSION', level: 'info', text: `会话 ID: ${id}` } }); } },
-        onReasoning: (text) => { send({ type: 'thinking', text }); },
-        onChunk: (text) => { gotChunk = true; send({ type: 'chunk', text }); },
-        onError: (err) => {
-          if (settled) return;
-          const msg = String(err && err.message || err);
-          send({ type: 'trace', trace: { tag: 'CLI_ERR', level: 'error', text: msg } });
-          if (gotChunk) { settled = true; send({ type: 'error', message: msg }); return; }
-          if (/Session not found/i.test(msg) && sessionId) {
-            sessionId = null;
-            send({ type: 'session', id: '' });
-            attempt(idx);
-            return;
-          }
-          if (want && want !== '__none__') {
-            settled = true;
-            if (!resolved) { resolved = true; resolve({ ok: false, error: '指定模型 [' + want + '] 调用失败：' + msg }); }
-            send({ type: 'error', message: '指定模型 [' + want + '] 调用失败：' + msg });
-            return;
-          }
-          if (idx + 1 < modelsFinal.length) { attempt(idx + 1); return; }
-          settled = true;
-          if (!resolved) { resolved = true; resolve({ ok: false, error: msg }); }
-          send({ type: 'error', message: msg });
-        },
-        onClose: () => {
-          if (settled) return;
-          settled = true;
-          send({ type: 'trace', trace: { tag: 'CLI_DONE', level: 'success', text: `OpenCode 进程已正常退出` } });
-          send({ type: 'done' });
-        }
-      }, aiWorkDir(sandboxDir), sessionId, withToolPrompt(prompt, false));
-    };
-    attempt(0);
-  });
+  activeExecution = runAgentProcess(executionOptions, false);
+  return { ok: true, success: true, pid: activeExecution ? activeExecution.pid : null };
 });
 
-ipcMain.handle('ai:cancel', (ev) => {
-  aiCancelRequested = true;
-  if (aiChild) { try { aiChild.kill(); } catch (e) {} aiChild = null; }
-  if (apiAbortController) { try { apiAbortController.abort(); } catch (e) {} apiAbortController = null; }
-  const win = BrowserWindow.fromWebContents(ev.sender);
-  if (win && !win.isDestroyed()) win.webContents.send('ai:event', { type: 'done' });
+ipcMain.handle('ai:cancel', async () => {
+  try {
+    if (activeExecution) {
+      try { await activeExecution.cancel(); } catch (e) {}
+      try { if (activeExecution && activeExecution.pid) await killProcessTree(activeExecution.pid); } catch (e) {}
+    }
+  } catch (e) {}
+  activeExecution = null;
   return 'ok';
 });
 
-ipcMain.handle('ai:is-busy', () => {
-  if (aiChild) {
-    if (aiChild.exitCode !== null || aiChild.signalCode !== null || aiChild.killed) { aiChild = null; }
-  }
-  return !!(aiChild || apiAbortController);
-});
+ipcMain.handle('ai:is-busy', () => { return !!activeExecution; });
 
 /* ═══════ Git 协同与多项目自动建库体系（基于沙箱总根目录 SANDBOX_ROOT） ═══════ */
 const GIT_CONFIG_PATH = path.join(app.getPath('userData'), 'git-config.json');
 
+/* P0 Git止血：独立 gitState（与 AI activeExecution 同构，互不干扰）+ 读写锁 + 自愈/备份辅助 */
+const gitState = { busy: null }; // {op, startedAt}
+let gitCurrentChild = null;
+function gitIsBusy() { return !!gitState.busy; }
+async function withGitLock(mode, opName, fn) {
+  if (mode === 'write') {
+    if (gitState.busy) return { ok: false, error: 'git-busy', currentOp: gitState.busy.op };
+    gitState.busy = { op: opName, startedAt: Date.now() };
+    try { return await fn(); } finally { gitState.busy = null; }
+  }
+  // read：写忙时最多等待 2s，否则返回 git-busy（避免 UI 卡死）
+  if (gitState.busy) {
+    const t0 = Date.now();
+    while (gitState.busy && (Date.now() - t0) < 2000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (gitState.busy) return { ok: false, error: 'git-busy', currentOp: gitState.busy.op };
+  }
+  return await fn();
+}
+function detectNestedGit() {
+  const nested = [];
+  try {
+    const entries = fs.readdirSync(SANDBOX_ROOT, { withFileTypes: true });
+    for (const d of entries) {
+      try {
+        if (!d.isDirectory()) continue;
+        if (d.name === '.git' || d.name === '.heal-backup' || d.name === '.pull-backup') continue;
+        const p = path.join(SANDBOX_ROOT, d.name, '.git');
+        if (fs.existsSync(p)) nested.push(d.name + '/.git');
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return nested;
+}
+async function checkSandboxRepoHealth() {
+  const gitDir = path.join(SANDBOX_ROOT, '.git');
+  try {
+    if (!fs.existsSync(gitDir)) return { healthy: false, reason: 'missing' };
+  } catch (e) { return { healthy: false, reason: 'missing' }; }
+  try {
+    const r = await runGit(SANDBOX_ROOT, ['rev-parse', '--git-dir'], 5000);
+    if (r && r.status === 0) return { healthy: true };
+    let detail = '';
+    try { detail = gitAuth.redactSecrets(String((r && (r.stderr || r.stdout)) || '')); } catch (e) {}
+    return { healthy: false, reason: 'broken', detail };
+  } catch (e) {
+    return { healthy: false, reason: 'broken', detail: String((e && e.message) || e) };
+  }
+}
+function fmtGitTs(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+/** P0-D4 自愈检查：嵌套 .git / 缺库 / 坏库统一收口，调用方据此返回 NEED_HEAL（不做任何删除） */
+async function checkGitHealNeeded() {
+  let nested = [];
+  try { nested = detectNestedGit(); } catch (e) {}
+  if (nested && nested.length) return { needHeal: true, reason: 'nested', nested };
+  try {
+    const h = await checkSandboxRepoHealth();
+    if (!h.healthy) return { needHeal: true, reason: h.reason || 'missing', nested: [], detail: h.detail || '' };
+  } catch (e) {}
+  return { needHeal: false, nested: [] };
+}
+/** P0-D3 拉取备份：把本次 files 中本地现存文件拷贝到 sandbox/.pull-backup/<时间>-<branch>/ */
+function backupPullFiles(files, branch) {
+  const safeBranch = String(branch || 'main').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 40) || 'main';
+  const backupDir = path.join(SANDBOX_ROOT, '.pull-backup', fmtGitTs(new Date()) + '-' + safeBranch);
+  try { fs.mkdirSync(backupDir, { recursive: true }); } catch (e) {}
+  try {
+    for (const rel of (files || [])) {
+      try {
+        if (!rel || typeof rel !== 'string') continue;
+        const src = path.join(SANDBOX_ROOT, rel);
+        let st = null;
+        try { st = fs.statSync(src); } catch (e) { continue; }
+        if (!st || !st.isFile()) continue;
+        const dst = path.join(backupDir, rel);
+        try { fs.mkdirSync(path.dirname(dst), { recursive: true }); } catch (e) {}
+        try { fs.copyFileSync(src, dst); } catch (e) {}
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return backupDir;
+}
+/** 取项目凭据（同步优先，兼容新旧两套入参：o.username/o.token 显式覆盖 > 安全存储） */
+function resolveGitCredentials(projName, o) {
+  let username = '';
+  let token = '';
+  try {
+    const saved = gitConfigStore.getProjectGitCredentialsSync(projName);
+    if (saved) { username = String(saved.username || ''); token = String(saved.token || ''); }
+  } catch (e) {}
+  try {
+    if (o && o.username != null && String(o.username) !== '') username = String(o.username);
+    if (o && o.token != null && String(o.token) !== '') token = String(o.token);
+  } catch (e) {}
+  return { username, token };
+}
+
+/**
+ * @deprecated 旧直读写保留（回滚影子），新代码请走 git/config-store.js
+ * 保留签名，仅用于存量迁移兜底；正常链路不再调用本函数写 token。
+ */
 function loadGitConfig() {
   try {
     if (fs.existsSync(GIT_CONFIG_PATH)) {
@@ -2400,6 +1506,9 @@ function loadGitConfig() {
   return { defaultConfig: {}, projects: {} };
 }
 
+/**
+ * @deprecated 旧明文落盘保留（回滚影子），新链路禁止调用；请走 gitConfigStore.saveProjectGitConfig
+ */
 function saveGitConfig(cfg) {
   try {
     fs.mkdirSync(path.dirname(GIT_CONFIG_PATH), { recursive: true });
@@ -2410,7 +1519,14 @@ function saveGitConfig(cfg) {
   }
 }
 
+/**
+ * @deprecated 保留签名，内部已代理到 git/config-store 脱敏视图（无 token 字段）。
+ * 新链路直接调 gitConfigStore.getProjectGitConfig；此处保留供旧调用方兼容。
+ */
 function getProjectGitConfig(projectName) {
+  try {
+    return gitConfigStore.getProjectGitConfig(projectName);
+  } catch (e) {}
   const all = loadGitConfig();
   const def = all.defaultConfig || {};
   const proj = (projectName && all.projects && all.projects[projectName]) || {};
@@ -2424,6 +1540,10 @@ function getProjectGitConfig(projectName) {
   };
 }
 
+/**
+ * @deprecated Token 拼 URL 已废止（进程可见风险），新链路须走 gitAuth.buildGitAuthEnv + 裸 URL。
+ * 保留签名仅供回滚对比，禁止新调用。
+ */
 function buildGitAuthUrl(remoteUrl, username, token) {
   if (!remoteUrl) return '';
   let url = remoteUrl.trim();
@@ -2442,7 +1562,11 @@ function buildGitAuthUrl(remoteUrl, username, token) {
   }
 }
 
+/**
+ * @deprecated 保留签名，内部已代理到 git/auth.sanitizeGitError（先脱敏+超时124分支）。
+ */
 function sanitizeGitError(errText) {
+  try { return gitAuth.sanitizeGitError(errText); } catch (e) {}
   if (!errText) return '操作失败';
   let t = String(errText).trim();
   t = t.replace(/https:\/\/[^:@]+:[^@]+@/g, 'https://***:***@');
@@ -2487,7 +1611,31 @@ function decodeGitOctal(str) {
   return s;
 }
 
-function runGit(cwd, args, timeoutMs = 30000) {
+function runGit(cwd, args, timeoutMs = 30000, extraEnv) {
+  // 兼容新签名：第三参可为 {timeoutMs, envAdd}，第四参可为 envAdd
+  let timeout = 30000;
+  let envAdd = {};
+  try {
+    if (timeoutMs && typeof timeoutMs === 'object') {
+      timeout = (timeoutMs.timeoutMs != null ? timeoutMs.timeoutMs : 30000);
+      envAdd = timeoutMs.envAdd || timeoutMs.extraEnv || {};
+    } else {
+      timeout = (timeoutMs == null ? 30000 : timeoutMs);
+      if (extraEnv && typeof extraEnv === 'object') envAdd = extraEnv;
+    }
+  } catch (e) {}
+  // P0 安全红线：argv 含凭据 URL 直接抛错（倒逼上层走 extraHeader + 裸 URL）
+  try {
+    const list = Array.isArray(args) ? args : [];
+    const hit = list.some((a) => typeof a === 'string' && /https?:\/\/[^\s]*@[^\s]*/.test(a));
+    if (hit) {
+      const err = new Error('AUTH_URL_BLOCKED: argv 中禁止携带凭据 URL，须走 http.extraHeader');
+      err.code = 'AUTH_URL_BLOCKED';
+      return Promise.reject(err);
+    }
+  } catch (e) {
+    if (e && e.code === 'AUTH_URL_BLOCKED') return Promise.reject(e);
+  }
   return new Promise((resolve) => {
     try {
       const gitArgs = ['-c', 'core.quotepath=false', ...args];
@@ -2496,71 +1644,76 @@ function runGit(cwd, args, timeoutMs = 30000) {
         env: Object.assign({}, process.env, {
           GIT_TERMINAL_PROMPT: '0',
           LC_ALL: 'C.UTF-8'
-        }),
+        }, envAdd || {}),
         windowsHide: true
       });
+      try { gitCurrentChild = child; } catch (e) {}
       let stdout = '', stderr = '';
       let timer = null;
-      if (timeoutMs > 0) {
-        timer = setTimeout(() => {
+      let settled = false;
+      const done = (obj) => { if (settled) return; settled = true; try { if (timer) clearTimeout(timer); } catch (e) {} try { if (gitCurrentChild === child) gitCurrentChild = null; } catch (e) {} resolve(obj); };
+      if (timeout > 0) {
+        timer = setTimeout(async () => {
+          if (settled) return;
+          try { await killProcessTree(child.pid); } catch (e) {}
           try { child.kill('SIGKILL'); } catch (e) {}
-          resolve({ status: 124, stdout, stderr: 'Git 操作超时 (' + timeoutMs + 'ms)' });
-        }, timeoutMs);
+          done({ status: 124, stdout, stderr: 'Git 操作超时 (' + timeout + 'ms，已整树终止)', timedOut: true });
+        }, timeout);
       }
       child.stdout.on('data', (d) => { stdout += d.toString('utf8'); });
       child.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
       child.on('error', (err) => {
-        if (timer) clearTimeout(timer);
-        resolve({ status: -1, stdout, stderr: String(err && err.message || err) });
+        done({ status: -1, stdout, stderr: String(err && err.message || err), timedOut: false });
       });
       child.on('close', (status) => {
-        if (timer) clearTimeout(timer);
-        resolve({ status: status != null ? status : 0, stdout, stderr });
+        done({ status: status != null ? status : 0, stdout, stderr, timedOut: false });
       });
     } catch (e) {
-      resolve({ status: -1, stdout: '', stderr: String(e && e.message || e) });
+      resolve({ status: -1, stdout: '', stderr: String(e && e.message || e), timedOut: false });
     }
   });
 }
 
-// 确保沙箱总根目录的 Git 仓库健全，并清理子项目历史遗留的嵌套 .git
+/**
+ * @deprecated 静默 rm -rf 已废止（P0-D4）。保留签名，内部改为检测上报，不做任何删除。
+ * 新链路：先 checkGitHealNeeded()，需修复走 git:heal-repair（备份后隔离）。
+ */
 async function ensureSandboxGitRepo(cfg) {
   try{
   if (!fs.existsSync(SANDBOX_ROOT)) fs.mkdirSync(SANDBOX_ROOT, { recursive: true });
 
-  // 清理子项目内旧版遗留的嵌套 .git 文件夹
+  // P0-D4：不再 rm -rf 嵌套 .git，仅检测上报（调用方据此返回 NEED_HEAL）
+  let nested = [];
+  try { nested = detectNestedGit(); } catch (e) {}
+  if (nested && nested.length) {
+    try { console.warn('[git] detect nested .git (no auto delete):', nested.join(',')); } catch (e) {}
+    return { ok: false, needHeal: true, reason: 'nested', nested };
+  }
+  // 缺库 / 坏库同样上报，不自动 init（由 git:heal-repair 经确认后修复）
   try {
-    const entries = fs.readdirSync(SANDBOX_ROOT, { withFileTypes: true });
-    entries.forEach((d) => {
-      if (d.isDirectory() && d.name !== '.git') {
-        const nestedGit = path.join(SANDBOX_ROOT, d.name, '.git');
-        if (fs.existsSync(nestedGit)) {
-          try { fs.rmSync(nestedGit, { recursive: true, force: true }); } catch (e) {}
-        }
-      }
-    });
+    const h = await checkSandboxRepoHealth();
+    if (!h.healthy) return { ok: false, needHeal: true, reason: h.reason || 'missing', nested: [], detail: h.detail || '' };
   } catch (e) {}
 
-  const gitDir = path.join(SANDBOX_ROOT, '.git');
   const branch = (cfg && cfg.branch) || 'main';
+  const gitDir = path.join(SANDBOX_ROOT, '.git');
   if (!fs.existsSync(gitDir)) {
-    await runGit(SANDBOX_ROOT, ['init', '-b', branch]);
-    const gitignorePath = path.join(SANDBOX_ROOT, '.gitignore');
-    if (!fs.existsSync(gitignorePath)) {
-      try {
-        fs.writeFileSync(gitignorePath, ".DS_Store\nThumbs.db\ndesktop.ini\n*.tmp\ntemp/\n", 'utf8');
-      } catch (e) {}
-    }
+    // 健康检查已拦截缺库，此处仅为极端竞态兜底：仍需确认才 init，故直接返回 NEED_HEAL
+    return { ok: false, needHeal: true, reason: 'missing', nested: [] };
   }
 
   await runGit(SANDBOX_ROOT, ['config', 'core.quotepath', 'false']);
 
   if (cfg && cfg.remoteUrl) {
+    // P0 安全：改写 origin 前先过白名单
+    try { gitAuth.assertAllowedRemoteUrl(String(cfg.remoteUrl)); } catch (e) {
+      throw Object.assign(new Error(String((e && e.message) || e)), { code: (e && e.code) || 'GIT_URL_BLOCKED' });
+    }
     const remotes = await runGit(SANDBOX_ROOT, ['remote']);
     if (remotes.stdout.indexOf('origin') >= 0) {
-      await runGit(SANDBOX_ROOT, ['remote', 'set-url', 'origin', cfg.remoteUrl.trim()]);
+      await runGit(SANDBOX_ROOT, ['remote', 'set-url', 'origin', String(cfg.remoteUrl).trim()]);
     } else {
-      await runGit(SANDBOX_ROOT, ['remote', 'add', 'origin', cfg.remoteUrl.trim()]);
+      await runGit(SANDBOX_ROOT, ['remote', 'add', 'origin', String(cfg.remoteUrl).trim()]);
     }
   }
   if (cfg && cfg.authorName) {
@@ -2569,10 +1722,12 @@ async function ensureSandboxGitRepo(cfg) {
   if (cfg && cfg.authorEmail) {
     await runGit(SANDBOX_ROOT, ['config', 'user.email', cfg.authorEmail]);
   }
-  }catch(e){ try{ dialog.showMessageBoxSync({type:'error', title:'Git初始化失败', message:String(e.message)}); }catch(_e){} throw e; }
+  return { ok: true, nested: [] };
+  }catch(e){ try{ dialog.showMessageBoxSync({type:'error', title:'Git初始化失败', message: gitAuth.redactSecrets(String(e.message))}); }catch(_e){} throw e; }
 }
 
 ipcMain.handle('git:config-get', (ev, projectName) => {
+  // P0：返回脱敏视图（无 token 字段，token 已脱敏；签名不变）
   const cfg = getProjectGitConfig(projectName);
   return { ok: true, config: cfg };
 });
@@ -2580,40 +1735,114 @@ ipcMain.handle('git:config-get', (ev, projectName) => {
 ipcMain.handle('git:config-save', async (ev, o) => {
   const projName = (o && o.project) || '';
   const cfg = (o && o.config) || {};
-  const all = loadGitConfig();
-  all.defaultConfig = Object.assign(all.defaultConfig || {}, cfg);
-  if (projName) {
-    all.projects = all.projects || {};
-    all.projects[projName] = Object.assign(all.projects[projName] || {}, cfg);
+  // P0 安全：入口先过 URL 白名单（含 remoteUrl 时）
+  try {
+    if (cfg.remoteUrl != null && String(cfg.remoteUrl).trim() !== '') {
+      gitAuth.assertAllowedRemoteUrl(String(cfg.remoteUrl));
+    }
+  } catch (e) {
+    return { ok: false, code: (e && e.code) || 'GIT_URL_BLOCKED', error: String((e && e.message) || e) };
   }
-  saveGitConfig(all);
+  // P0 凭据分离：非敏感走 config-store 剥离落盘；凭据走 safeStorage/内存（空提交=不更新）
+  try {
+    await gitConfigStore.saveProjectGitConfig(projName, cfg);
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+  try {
+    if ((cfg.token != null && String(cfg.token) !== '') || (cfg.username != null && String(cfg.username) !== '')) {
+      await gitConfigStore.saveProjectGitCredentials(projName, { username: cfg.username, token: cfg.token });
+    }
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
 
-  await ensureSandboxGitRepo(cfg);
+  const effCfg = getProjectGitConfig(projName);
+  // 自愈：嵌套/缺库/坏库返回 NEED_HEAL（不自动修）
+  try {
+    const heal = await checkGitHealNeeded();
+    if (heal && heal.needHeal) {
+      return { ok: false, code: 'NEED_HEAL', reason: heal.reason, nested: heal.nested || [], detail: heal.detail || '', config: effCfg };
+    }
+  } catch (e) {}
+  try {
+    await ensureSandboxGitRepo(effCfg);
+  } catch (e) {
+    if (e && (e.code === 'GIT_URL_BLOCKED')) return { ok: false, code: 'GIT_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: gitAuth.sanitizeGitError(String((e && e.message) || e)) };
+  }
   return { ok: true, config: getProjectGitConfig(projName) };
 });
 
 ipcMain.handle('git:list-branches', async (ev, o) => {
   const projName = (o && o.project) || '';
   const cfg = getProjectGitConfig(projName);
-  const remoteUrl = (o && o.remoteUrl) || cfg.remoteUrl;
-  const username = (o && o.username) != null ? o.username : cfg.username;
-  const token = (o && o.token) != null ? o.token : cfg.token;
+  const remoteUrl = String((o && o.remoteUrl) || cfg.remoteUrl || '').trim();
+  const cred = resolveGitCredentials(projName, o);
+  const username = cred.username;
+  const token = cred.token;
   const branches = new Set();
   if (cfg.branch) branches.add(cfg.branch);
   branches.add('main');
   branches.add('master');
 
-  if (remoteUrl) {
-    const authUrl = buildGitAuthUrl(remoteUrl, username, token);
-    const remRes = await runGit(SANDBOX_ROOT, ['ls-remote', '--heads', authUrl], 15000);
-    if (remRes.status === 0 && remRes.stdout) {
-      remRes.stdout.split(/\r?\n/).forEach((line) => {
-        const parts = line.split(/\s+/);
-        const ref = parts[1] || '';
-        if (ref.startsWith('refs/heads/')) {
-          branches.add(ref.replace('refs/heads/', '').trim());
+  // P1-1（顺带）：无远端返回本地分支 + remoteConfigured:false（不调远端）
+  if (!remoteUrl) {
+    if (fs.existsSync(path.join(SANDBOX_ROOT, '.git'))) {
+      try {
+        const locRes = await runGit(SANDBOX_ROOT, ['branch', '--list']);
+        if (locRes.status === 0 && locRes.stdout) {
+          locRes.stdout.split(/\r?\n/).forEach((b) => {
+            const name = b.replace(/^[\*\s]+/, '').trim();
+            if (name && name !== '(HEAD' && !name.startsWith('(')) branches.add(name);
+          });
         }
-      });
+      } catch (e) {}
+    }
+    return { ok: true, branches: Array.from(branches).filter(Boolean), currentBranch: cfg.branch || 'main', remoteConfigured: false };
+  }
+  // P0 安全：远端先过白名单
+  try { gitAuth.assertAllowedRemoteUrl(remoteUrl); } catch (e) {
+    return { ok: false, code: (e && e.code) || 'GIT_URL_BLOCKED', error: String((e && e.message) || e) };
+  }
+  // P0-D4：嵌套/坏库上报（list-branches 同样守门，但无远端时已提前返回本地分支）
+  try {
+    const heal = await checkGitHealNeeded();
+    if (heal && heal.needHeal) {
+      // 仍附带本地分支，便于前端展示；主体 code 为 NEED_HEAL
+      if (fs.existsSync(path.join(SANDBOX_ROOT, '.git'))) {
+        try {
+          const locRes = await runGit(SANDBOX_ROOT, ['branch', '--list']);
+          if (locRes.status === 0 && locRes.stdout) {
+            locRes.stdout.split(/\r?\n/).forEach((b) => {
+              const name = b.replace(/^[\*\s]+/, '').trim();
+              if (name && name !== '(HEAD' && !name.startsWith('(')) branches.add(name);
+            });
+          }
+        } catch (e) {}
+      }
+      return { ok: false, code: 'NEED_HEAL', reason: heal.reason, nested: heal.nested || [], branches: Array.from(branches).filter(Boolean), currentBranch: cfg.branch || 'main', remoteConfigured: true };
+    }
+  } catch (e) {}
+
+  if (remoteUrl) {
+    // P0：extraHeader + 裸 URL（特殊字符 Token 免编码，绝不拼 Token URL）
+    const auth = gitAuth.buildGitAuthEnv({ username, token });
+    const plainUrl = remoteUrl;
+    try {
+      const remRes = await runGit(SANDBOX_ROOT, [...auth.argsPrefix, 'ls-remote', '--heads', plainUrl], { timeoutMs: 15000, envAdd: auth.envAdd });
+      if (remRes.status === 0 && remRes.stdout) {
+        remRes.stdout.split(/\r?\n/).forEach((line) => {
+          const parts = line.split(/\s+/);
+          const ref = parts[1] || '';
+          if (ref.startsWith('refs/heads/')) {
+            branches.add(ref.replace('refs/heads/', '').trim());
+          }
+        });
+      }
+    } catch (e) {
+      if (e && e.code === 'AUTH_URL_BLOCKED') return { ok: false, code: 'AUTH_URL_BLOCKED', error: String(e.message) };
+      throw e;
     }
   }
 
@@ -2627,27 +1856,56 @@ ipcMain.handle('git:list-branches', async (ev, o) => {
     }
   }
 
-  return { ok: true, branches: Array.from(branches).filter(Boolean), currentBranch: cfg.branch || 'main' };
+  return { ok: true, branches: Array.from(branches).filter(Boolean), currentBranch: cfg.branch || 'main', remoteConfigured: true };
 });
 
 ipcMain.handle('git:test-connection', async (ev, cfg) => {
   if (!cfg || !cfg.remoteUrl) return { ok: false, error: '请先填写远程仓库地址' };
-  const authUrl = buildGitAuthUrl(cfg.remoteUrl, cfg.username, cfg.token);
+  const remoteUrl = String(cfg.remoteUrl).trim();
+  try { gitAuth.assertAllowedRemoteUrl(remoteUrl); } catch (e) {
+    return { ok: false, code: (e && e.code) || 'GIT_URL_BLOCKED', error: String((e && e.message) || e) };
+  }
+  // 兼容：显式传入优先，否则回读安全存储（特殊字符免编码）
+  let username = (cfg.username != null ? String(cfg.username) : '');
+  let token = (cfg.token != null ? String(cfg.token) : '');
+  try {
+    const projName = (cfg && cfg.project) || '';
+    const saved = gitConfigStore.getProjectGitCredentialsSync(projName);
+    if ((username === '' || username == null) && saved && saved.username) username = String(saved.username);
+    if ((token === '' || token == null) && saved && saved.token) token = String(saved.token);
+  } catch (e) {}
+  const auth = gitAuth.buildGitAuthEnv({ username, token });
   const t0 = Date.now();
-  const res = await runGit(process.cwd(), ['ls-remote', '--heads', authUrl], 15000);
+  let res = null;
+  try {
+    res = await runGit(process.cwd(), [...auth.argsPrefix, 'ls-remote', '--heads', remoteUrl], { timeoutMs: 15000, envAdd: auth.envAdd });
+  } catch (e) {
+    if (e && e.code === 'AUTH_URL_BLOCKED') return { ok: false, code: 'AUTH_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
   const latency = Date.now() - t0;
   if (res.status === 0) {
     return { ok: true, latency };
   }
+  if (res.timedOut) return { ok: false, code: 'TIMEOUT', error: sanitizeGitError(res.stderr || res.stdout) };
   return { ok: false, error: sanitizeGitError(res.stderr || res.stdout) };
 });
 
 ipcMain.handle('git:status', async (ev, o) => {
+  return withGitLock('read', 'status', async () => {
   const projName = (typeof o === 'string' ? o : (o && o.project)) || '';
   const targetBranch = (o && o.branch) || (getProjectGitConfig(projName).branch) || 'main';
   if (!isValidBranch(targetBranch)) return { ok: false, error: '非法分支名' };
   const cfg = getProjectGitConfig(projName);
-  await ensureSandboxGitRepo(cfg);
+  // P0-D4：嵌套/缺库/坏库直接返回 NEED_HEAL（不自动修）
+  try {
+    const heal = await checkGitHealNeeded();
+    if (heal && heal.needHeal) return { ok: false, code: 'NEED_HEAL', reason: heal.reason, nested: heal.nested || [], detail: heal.detail || '' };
+  } catch (e) {}
+  try { await ensureSandboxGitRepo(cfg); } catch (e) {
+    if (e && e.code === 'GIT_URL_BLOCKED') return { ok: false, code: 'GIT_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
 
   const handledPaths = new Set();
   const tree = {};
@@ -2752,9 +2010,11 @@ ipcMain.handle('git:status', async (ev, o) => {
   });
 
   return { ok: true, projects: projectList, totalCount, branch: targetBranch };
+  });
 });
 
 ipcMain.handle('git:push', async (ev, o) => {
+  return withGitLock('write', 'push', async () => {
   const projName = (o && o.project) || '';
   const files = (o && Array.isArray(o.files)) ? o.files : [];
   const message = (o && o.message && o.message.trim()) || '更新原型与文档数据';
@@ -2763,11 +2023,22 @@ ipcMain.handle('git:push', async (ev, o) => {
   if (!isValidBranch(branch)) return { ok: false, error: '非法分支名' };
   const force = !!(o && o.force);
 
-  if (!cfg.remoteUrl) return { ok: false, error: '未配置 Git 远程仓库地址，请先进行仓库设置' };
+  if (!cfg.remoteUrl) return { ok: false, code: 'NEED_CONFIG', error: '未配置 Git 远程仓库地址，请先进行仓库设置' };
   if (!files.length) return { ok: false, error: '请勾选需要上传的文件' };
-
-  await ensureSandboxGitRepo(cfg);
-  const authUrl = buildGitAuthUrl(cfg.remoteUrl, cfg.username, cfg.token);
+  try { gitAuth.assertAllowedRemoteUrl(String(cfg.remoteUrl)); } catch (e) {
+    return { ok: false, code: (e && e.code) || 'GIT_URL_BLOCKED', error: String((e && e.message) || e) };
+  }
+  try {
+    const heal = await checkGitHealNeeded();
+    if (heal && heal.needHeal) return { ok: false, code: 'NEED_HEAL', reason: heal.reason, nested: heal.nested || [], detail: heal.detail || '' };
+  } catch (e) {}
+  try { await ensureSandboxGitRepo(cfg); } catch (e) {
+    if (e && e.code === 'GIT_URL_BLOCKED') return { ok: false, code: 'GIT_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
+  const cred = resolveGitCredentials(projName, o);
+  const auth = gitAuth.buildGitAuthEnv(cred);
+  const plainUrl = String(cfg.remoteUrl).trim();
 
   // 1. 重置当前暂存区
   await runGit(SANDBOX_ROOT, ['reset']);
@@ -2805,11 +2076,19 @@ ipcMain.handle('git:push', async (ev, o) => {
   }
 
   // 4. 推送到远程分支（HEAD:refs/heads/${branch}，支持 --force 覆盖远程清空/分叉）
-  const pushArgs = ['push', '-u'];
+  // P0：extraHeader + 裸 URL（特殊字符 Token 免编码）
+  const pushArgs = [...auth.argsPrefix, 'push', '-u'];
   if (force) pushArgs.push('--force');
-  pushArgs.push(authUrl, `HEAD:refs/heads/${branch}`);
+  pushArgs.push(plainUrl, `HEAD:refs/heads/${branch}`);
 
-  const pushRes = await runGit(SANDBOX_ROOT, pushArgs, 35000);
+  let pushRes = null;
+  try {
+    pushRes = await runGit(SANDBOX_ROOT, pushArgs, { timeoutMs: 35000, envAdd: auth.envAdd });
+  } catch (e) {
+    if (e && e.code === 'AUTH_URL_BLOCKED') return { ok: false, code: 'AUTH_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
+  if (pushRes.timedOut) return { ok: false, code: 'TIMEOUT', error: sanitizeGitError(pushRes.stderr || pushRes.stdout) };
   if (pushRes.status !== 0) {
     const rawErr = pushRes.stderr || pushRes.stdout;
     const needPull = /fetch first|non-fast-forward|Updates were rejected/i.test(rawErr);
@@ -2822,21 +2101,42 @@ ipcMain.handle('git:push', async (ev, o) => {
   }
 
   return { ok: true, message: force ? '强制覆盖发布成功' : '发布成功', filesCount: files.length, branch, forced: force };
+  });
 });
 
 ipcMain.handle('git:fetch-diff', async (ev, o) => {
+  return withGitLock('read', 'fetch-diff', async () => {
   const projName = (typeof o === 'string' ? o : (o && o.project)) || '';
   const cfg = getProjectGitConfig(projName);
   const branch = (o && o.branch && o.branch.trim()) || cfg.branch || 'main';
   if (!isValidBranch(branch)) return { ok: false, error: '非法分支名' };
 
-  if (!cfg.remoteUrl) return { ok: false, error: '未配置 Git 远程仓库地址，请先进行仓库设置' };
-
-  await ensureSandboxGitRepo(cfg);
-  const authUrl = buildGitAuthUrl(cfg.remoteUrl, cfg.username, cfg.token);
+  // P1-1：无远端返回 NEED_CONFIG（不调远端，避免误以为已同步）
+  if (!cfg.remoteUrl) return { ok: false, code: 'NEED_CONFIG', error: '未配置 Git 远程仓库地址，请先进行仓库设置' };
+  try { gitAuth.assertAllowedRemoteUrl(String(cfg.remoteUrl)); } catch (e) {
+    return { ok: false, code: (e && e.code) || 'GIT_URL_BLOCKED', error: String((e && e.message) || e) };
+  }
+  try {
+    const heal = await checkGitHealNeeded();
+    if (heal && heal.needHeal) return { ok: false, code: 'NEED_HEAL', reason: heal.reason, nested: heal.nested || [], detail: heal.detail || '' };
+  } catch (e) {}
+  try { await ensureSandboxGitRepo(cfg); } catch (e) {
+    if (e && e.code === 'GIT_URL_BLOCKED') return { ok: false, code: 'GIT_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
+  const cred = resolveGitCredentials(projName, o);
+  const auth = gitAuth.buildGitAuthEnv(cred);
+  const plainUrl = String(cfg.remoteUrl).trim();
 
   // 静默 Fetch 目标分支
-  const fetchRes = await runGit(SANDBOX_ROOT, ['fetch', authUrl, branch], 30000);
+  let fetchRes = null;
+  try {
+    fetchRes = await runGit(SANDBOX_ROOT, [...auth.argsPrefix, 'fetch', plainUrl, branch], { timeoutMs: 30000, envAdd: auth.envAdd });
+  } catch (e) {
+    if (e && e.code === 'AUTH_URL_BLOCKED') return { ok: false, code: 'AUTH_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
+  if (fetchRes.timedOut) return { ok: false, code: 'TIMEOUT', error: sanitizeGitError(fetchRes.stderr || fetchRes.stdout) };
   if (fetchRes.status !== 0) {
     return { ok: false, error: sanitizeGitError(fetchRes.stderr || fetchRes.stdout) };
   }
@@ -2906,29 +2206,56 @@ ipcMain.handle('git:fetch-diff', async (ev, o) => {
   });
 
   return { ok: true, projects: projectList, totalCount, branch };
+  });
 });
 
 ipcMain.handle('git:pull', async (ev, o) => {
+  return withGitLock('write', 'pull', async () => {
   const projName = (o && o.project) || '';
   const files = (o && Array.isArray(o.files)) ? o.files : null;
+  const wantBackup = !!(o && o.backup);
   const cfg = getProjectGitConfig(projName);
   const branch = (o && o.branch && o.branch.trim()) || cfg.branch || 'main';
   if (!isValidBranch(branch)) return { ok: false, error: '非法分支名' };
 
-  if (!cfg.remoteUrl) return { ok: false, error: '未配置 Git 远程仓库地址，请先进行仓库设置' };
-
-  await ensureSandboxGitRepo(cfg);
-  const authUrl = buildGitAuthUrl(cfg.remoteUrl, cfg.username, cfg.token);
+  if (!cfg.remoteUrl) return { ok: false, code: 'NEED_CONFIG', error: '未配置 Git 远程仓库地址，请先进行仓库设置' };
+  try { gitAuth.assertAllowedRemoteUrl(String(cfg.remoteUrl)); } catch (e) {
+    return { ok: false, code: (e && e.code) || 'GIT_URL_BLOCKED', error: String((e && e.message) || e) };
+  }
+  try {
+    const heal = await checkGitHealNeeded();
+    if (heal && heal.needHeal) return { ok: false, code: 'NEED_HEAL', reason: heal.reason, nested: heal.nested || [], detail: heal.detail || '' };
+  } catch (e) {}
+  try { await ensureSandboxGitRepo(cfg); } catch (e) {
+    if (e && e.code === 'GIT_URL_BLOCKED') return { ok: false, code: 'GIT_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
+  const cred = resolveGitCredentials(projName, o);
+  const auth = gitAuth.buildGitAuthEnv(cred);
+  const plainUrl = String(cfg.remoteUrl).trim();
 
   // 1. Fetch
-  const fetchRes = await runGit(SANDBOX_ROOT, ['fetch', authUrl, branch], 30000);
+  let fetchRes = null;
+  try {
+    fetchRes = await runGit(SANDBOX_ROOT, [...auth.argsPrefix, 'fetch', plainUrl, branch], { timeoutMs: 30000, envAdd: auth.envAdd });
+  } catch (e) {
+    if (e && e.code === 'AUTH_URL_BLOCKED') return { ok: false, code: 'AUTH_URL_BLOCKED', error: String(e.message) };
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
+  }
+  if (fetchRes.timedOut) return { ok: false, code: 'TIMEOUT', error: sanitizeGitError(fetchRes.stderr || fetchRes.stdout) };
   if (fetchRes.status !== 0) {
     return { ok: false, error: sanitizeGitError(fetchRes.stderr || fetchRes.stdout) };
   }
 
   const affectedProjects = new Set();
+  const failed = [];
+  let backupPath = null;
+  // P0-D3：o.backup=true 时先备份本次 files 交集的本地现存文件
+  if (wantBackup && files && files.length) {
+    try { backupPath = backupPullFiles(files, branch); } catch (e) { backupPath = null; }
+  }
 
-  // 2. 选择性检出指定的目录/文件
+  // 2. 选择性检出指定的目录/文件（逐文件判 status，不吞错）
   if (files && files.length) {
     for (const rel of files) {
       const fullPath = path.join(SANDBOX_ROOT, rel);
@@ -2942,22 +2269,47 @@ ipcMain.handle('git:pull', async (ev, o) => {
           fs.appendFileSync(path.join(dir, 'app-' + ymd + '.log'), '[' + hms + '][WARN][git:pull] skip unsafe rel: ' + String(rel) + '\n', 'utf8');
         } catch (e) {}
         try { console.warn('[WARN][git:pull] skip unsafe rel', rel); } catch (e) {}
+        failed.push({ path: rel, error: '非法路径，已跳过' });
         continue;
       }
       // 保证本地沙箱父级文件夹递归自动创建
-      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      try { fs.mkdirSync(path.dirname(fullPath), { recursive: true }); } catch (e) {}
 
       const parts = rel.split('/');
       if (parts.length > 0) affectedProjects.add(parts[0]);
 
       // 从 FETCH_HEAD 检出该文件
-      await runGit(SANDBOX_ROOT, ['checkout', 'FETCH_HEAD', '--', rel]);
+      try {
+        const co = await runGit(SANDBOX_ROOT, ['checkout', 'FETCH_HEAD', '--', rel]);
+        if (co.timedOut) { failed.push({ path: rel, error: sanitizeGitError(co.stderr || co.stdout), code: 'TIMEOUT' }); continue; }
+        if (co.status !== 0) failed.push({ path: rel, error: sanitizeGitError(co.stderr || co.stdout) });
+      } catch (e) {
+        if (e && e.code === 'AUTH_URL_BLOCKED') failed.push({ path: rel, error: String(e.message), code: 'AUTH_URL_BLOCKED' });
+        else failed.push({ path: rel, error: sanitizeGitError(String((e && e.message) || e)) });
+      }
+    }
+    if (failed.length) {
+      return {
+        ok: false,
+        error: '部分文件拉取失败（' + failed.length + '/' + files.length + '），未失败文件已检出，详见 failed 清单',
+        failed,
+        backupPath,
+        affectedProjects: Array.from(affectedProjects),
+        branch,
+        filesCount: (files && files.length) || 0
+      };
     }
   } else {
     // 全量合并拉取
-    const mergeRes = await runGit(SANDBOX_ROOT, ['merge', 'FETCH_HEAD']);
+    let mergeRes = null;
+    try {
+      mergeRes = await runGit(SANDBOX_ROOT, ['merge', 'FETCH_HEAD']);
+    } catch (e) {
+      return { ok: false, error: sanitizeGitError(String((e && e.message) || e)), backupPath, branch };
+    }
+    if (mergeRes.timedOut) return { ok: false, code: 'TIMEOUT', error: sanitizeGitError(mergeRes.stderr || mergeRes.stdout), backupPath, branch };
     if (mergeRes.status !== 0) {
-      return { ok: false, error: sanitizeGitError(mergeRes.stderr || mergeRes.stdout) };
+      return { ok: false, error: sanitizeGitError(mergeRes.stderr || mergeRes.stdout), backupPath, branch };
     }
   }
 
@@ -2966,8 +2318,105 @@ ipcMain.handle('git:pull', async (ev, o) => {
     message: '同步完成',
     filesCount: (files && files.length) || 0,
     affectedProjects: Array.from(affectedProjects),
-    branch
+    branch,
+    failed,
+    backupPath
   };
+  });
+});
+
+/* P0 新增：git 忙态查询 / 取消 / 自愈修复（通道名新增，旧通道不变） */
+ipcMain.handle('git:is-busy', () => {
+  return { busy: gitIsBusy(), currentOp: (gitState.busy && gitState.busy.op) || null };
+});
+ipcMain.handle('git:cancel', async () => {
+  try {
+    if (!gitState.busy) return { ok: true, cancelled: false };
+    const op = gitState.busy.op;
+    try { if (gitCurrentChild && gitCurrentChild.pid) await killProcessTree(gitCurrentChild.pid); } catch (e) {}
+    try { if (gitCurrentChild) gitCurrentChild.kill('SIGKILL'); } catch (e) {}
+    gitState.busy = null;
+    try { gitCurrentChild = null; } catch (e) {}
+    return { ok: true, cancelled: true, op };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+ipcMain.handle('git:heal-repair', async (ev, o) => {
+  const projName = (o && o.project) || '';
+  const cfg = getProjectGitConfig(projName);
+  const branch = (o && o.branch && String(o.branch).trim()) || cfg.branch || 'main';
+  let nested = [];
+  try { nested = detectNestedGit(); } catch (e) {}
+  const ts = fmtGitTs(new Date());
+  const backupRoot = path.join(SANDBOX_ROOT, '.heal-backup', ts);
+  const healed = [];
+  try { fs.mkdirSync(backupRoot, { recursive: true }); } catch (e) {}
+  // 先备份嵌套 .git 到 sandbox/.heal-backup/<时间>/ 再隔离（改名，不 rm -rf）
+  for (const rel of (nested || [])) {
+    try {
+      const src = path.join(SANDBOX_ROOT, rel);
+      const dst = path.join(backupRoot, rel);
+      try { fs.mkdirSync(path.dirname(dst), { recursive: true }); } catch (e) {}
+      try {
+        if (fs.existsSync(src)) {
+          const st = fs.statSync(src);
+          if (st.isDirectory()) fs.cpSync(src, dst, { recursive: true });
+          else fs.copyFileSync(src, dst);
+        }
+      } catch (e) {}
+      try {
+        if (fs.existsSync(src)) {
+          const bakName = src + '.bak-' + ts;
+          try { fs.renameSync(src, bakName); healed.push(rel); } catch (e) {
+            // 改名失败（如跨盘）则在已备份前提下删除原目录
+            try { fs.rmSync(src, { recursive: true, force: true }); healed.push(rel); } catch (ee) {}
+          }
+        }
+      } catch (e) {}
+    } catch (e) {}
+  }
+  // 再重建总根库（缺库/坏库修复）
+  try {
+    const gitDir = path.join(SANDBOX_ROOT, '.git');
+    let needInit = false;
+    try { if (!fs.existsSync(gitDir)) needInit = true; } catch (e) { needInit = true; }
+    if (!needInit) {
+      try {
+        const h = await checkSandboxRepoHealth();
+        if (!h.healthy) {
+          // 备份坏库后重建
+          try {
+            const badBak = path.join(backupRoot, '.git-broken-' + ts);
+            try { fs.cpSync(gitDir, badBak, { recursive: true }); } catch (e) {}
+            try { fs.renameSync(gitDir, gitDir + '.bak-' + ts); } catch (e) {}
+          } catch (e) {}
+          needInit = true;
+        }
+      } catch (e) {}
+    }
+    if (needInit) {
+      await runGit(SANDBOX_ROOT, ['init', '-b', branch]);
+      const gi = path.join(SANDBOX_ROOT, '.gitignore');
+      try { if (!fs.existsSync(gi)) fs.writeFileSync(gi, '.DS_Store\nThumbs.db\ndesktop.ini\n*.tmp\ntemp/\n', 'utf8'); } catch (e) {}
+    }
+    await runGit(SANDBOX_ROOT, ['config', 'core.quotepath', 'false']);
+    if (cfg && cfg.remoteUrl) {
+      try { gitAuth.assertAllowedRemoteUrl(String(cfg.remoteUrl)); } catch (e) {
+        return { ok: false, code: (e && e.code) || 'GIT_URL_BLOCKED', error: String((e && e.message) || e), backupDir: backupRoot, healed };
+      }
+      try {
+        const remotes = await runGit(SANDBOX_ROOT, ['remote']);
+        if (String(remotes.stdout || '').indexOf('origin') >= 0) await runGit(SANDBOX_ROOT, ['remote', 'set-url', 'origin', String(cfg.remoteUrl).trim()]);
+        else await runGit(SANDBOX_ROOT, ['remote', 'add', 'origin', String(cfg.remoteUrl).trim()]);
+      } catch (e) {}
+    }
+    if (cfg && cfg.authorName) { try { await runGit(SANDBOX_ROOT, ['config', 'user.name', cfg.authorName]); } catch (e) {} }
+    if (cfg && cfg.authorEmail) { try { await runGit(SANDBOX_ROOT, ['config', 'user.email', cfg.authorEmail]); } catch (e) {} }
+  } catch (e) {
+    return { ok: false, error: sanitizeGitError(String((e && e.message) || e)), backupDir: backupRoot, healed };
+  }
+  return { ok: true, backupDir: backupRoot, healed, nested };
 });
 
 function createWindow() {
@@ -3001,6 +2450,8 @@ app.whenReady().then(() => {
   ensureSandbox();        /* 展开内置 seed 为独立项目（同名目录已存在则跳过） */
   normalizeProjects();    /* 旧版扁平目录 → 项目结构整理（一次性） */
   cleanOldLogs();         /* 清理 7 天前本地日志 */
+  /* P0 凭据迁移：旧明文 token/username 先备份再迁入安全存储（失败不阻塞启动） */
+  try { gitConfigStore.migratePlaintextTokensOnce().catch(() => {}); } catch (e) {}
   createWindow();
 });
 

@@ -30,12 +30,9 @@ async function main() {
       out.hasPlanBIcon = typeof window.PlanBIcon === 'function';
       out.iconSvg = (typeof window.PlanBIcon === 'function') ? (window.PlanBIcon('folder', 14) || '').indexOf('<svg') >= 0 : false;
       out.icReplaced = document.querySelectorAll('[data-ic] svg').length > 0;
-      /* 2. 主题 */
+      /* 2. 主题已剥离：应无data-theme、无applyTheme */
       out.themeAttr = document.documentElement.getAttribute('data-theme');
-      try {
-        if (typeof applyTheme === 'function') { applyTheme('dark'); out.themeDarkApplied = document.documentElement.getAttribute('data-theme') === 'dark'; applyTheme('auto'); }
-        else out.themeDarkApplied = false;
-      } catch (e) { out.themeDarkApplied = 'ERR:' + e.message; }
+      out.hasApplyTheme = (typeof applyTheme === 'function');
       /* 3. 核心函数存在（测试约束） */
       out.fns = {
         setSbOpen: typeof setSbOpen === 'function',
@@ -58,8 +55,8 @@ async function main() {
       out.liReq = !!document.querySelector('.li-card.req-card');
       out.liAnno = !!document.querySelector('.li-card.anno-card');
       out.liDivider = !!document.querySelector('.li-divider');
-      /* 6. 设置面板主题 radio + 4 Tab */
-      out.themeRadio = !!document.getElementById('themeAuto') && !!document.getElementById('themeDark');
+      /* 6. 设置面板无主题 radio + 4 Tab */
+      out.themeRadio = !!document.getElementById('themeAuto') || !!document.getElementById('themeDark');
       out.settingsTabs = !!document.getElementById('tabNavAi') && !!document.getElementById('tabNavModels') && !!document.getElementById('tabNavSandbox') && !!document.getElementById('tabNavAbout');
       out.settingsPanes = !!document.getElementById('paneSetAi') && !!document.getElementById('paneSetModels') && !!document.getElementById('paneSetSandbox') && !!document.getElementById('paneSetAbout');
       /* 7. 导出链路（含 icons.js 内嵌） */
@@ -79,13 +76,13 @@ async function main() {
     if (!o.hasPlanBIcon) fails.push('PlanBIcon 缺失');
     if (!o.iconSvg) fails.push('iconSvg 生成失败');
     if (!o.icReplaced) fails.push('data-ic 未被替换');
-    if (!o.themeAttr) fails.push('主题属性为空');
-    if (o.themeDarkApplied !== true) fails.push('暗色切换失败: ' + o.themeDarkApplied);
+    if (o.themeAttr) fails.push('主题未剥离: data-theme残留:' + o.themeAttr);
+    if (o.hasApplyTheme) fails.push('主题未剥离: applyTheme残留');
     if (!o.fns.setSbOpen || !o.fns.setKind || !o.fns.extractElementText || !o.fns.buildExportHtml || !o.fns.editQueueAdd || !o.fns.fitPhone) fails.push('核心函数缺失');
     if (o.sbOpen < 200) fails.push('侧栏展开宽度不足: ' + o.sbOpen);
     if (o.sbClosed !== 0) fails.push('侧栏收起应为 0: ' + o.sbClosed);
     if (!o.liJump || !o.liReq || !o.liAnno || !o.liDivider) fails.push('检查器卡片结构缺失');
-    if (!o.themeRadio) fails.push('主题 radio 缺失');
+    if (o.themeRadio) fails.push('主题未剥离: theme radio残留');
     if (!o.settingsTabs || !o.settingsPanes) fails.push('4 Tab 设置面板结构缺失');
     if (!o.exportOk || String(o.exportOk).indexOf('ERR') === 0) fails.push('导出失败: ' + o.exportOk);
     if (o.exportHasIcs !== true && o.exportHasIcs !== 'SKIP') fails.push('导出未含 icons.js: ' + o.exportHasIcs);

@@ -2,7 +2,7 @@
 /* ═══════ 预览/编辑模式：编辑模式点击元素 → 检查器抽屉（跳转交互 + 修改需求） → 待提交列表 → 统一提交大模型 ═══════
    编辑定位基于 iframe 内 DOM（webSecurity:false 可跨源读写），不改动原型文件本身；
    每条记录含 内容 + 元素 + 元素唯一路径(CSS Selector) + 所在页面路由，提交时随清单交给大模型定位修改。 */
-var EDIT_MODE=false,EDIT_QUEUE=[],EDIT_HOVER_EL=null,EDIT_LOCKED_EL=null,EDIT_PENDING_SUBMIT=false,EDIT_EDITING_ID=null;
+var EDIT_QUEUE=[],EDIT_HOVER_EL=null,EDIT_LOCKED_EL=null,EDIT_PENDING_SUBMIT=false,EDIT_EDITING_ID=null; /* T3.2:僵尸编辑模式已下线，拾取统一由CTRL_PICK接管 */
 var EDIT_LAST_QUEUE=null; /* G01: 清空前的快照，用于撤销/审计 */
 var _editQueuePersistTimer=null;
 function persistEditQueue(){ try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(e){} }
@@ -181,7 +181,7 @@ window.CTRL_PICK = CTRL_PICK;
 var btnSubmitEditEl=$('btnSubmitEdit'),
     submitBadgeEl=$('submitBadge'),editHoverEl=$('editHover'),
     editDrawerEl=$('editDrawer'),editDrawerBodyEl=$('editDrawerBody'),editDrawerCloseEl=$('editDrawerClose'),
-    editDrawerMaskEl=$('editDrawerMask'),drawerBadgeEl=$('drawerBadge'),editDrawerTipEl=$('editDrawerTip'),
+    editDrawerMaskEl=$('editDrawerMask'),drawerBadgeEl=$('drawerBadge'),
     editQueueClearEl=$('editQueueClear'),editQueueSubmitEl=$('editQueueSubmit');
 function editFrameDoc(){ try{ return frame.contentDocument; }catch(e){ return null; } }
 function editFrameHash(){ try{ var h=(frame.contentWindow&&frame.contentWindow.location&&frame.contentWindow.location.hash)||''; return h.replace(/^#/,''); }catch(e){ return ''; } }
@@ -340,7 +340,7 @@ function editHover(ev){
     editShowHover(t);
     return;
   }
-  if(!EDIT_MODE) return;
+  if(!(CTRL_PICK && CTRL_PICK.holding)) return; /* T3.2:此处原为已下线模式守卫，下方为僵尸单选链，非holding一律回 */
   var t = ev.target;
   if(!t || t.nodeType !== 1) return;
   var tag = String(t.tagName||'').toLowerCase();
@@ -358,7 +358,7 @@ function editClick(ev){
     if(t && t.nodeType === 1) CTRL_PICK.toggle(t, ev);
     return;
   }
-  if(!EDIT_MODE) return;
+  if(!(CTRL_PICK && CTRL_PICK.holding)) return; /* T3.2:非holding点击不进openInspector，由顶部Ctrl分支接管 */
   var t = ev.target;
   if(!t || t.nodeType !== 1) return;
   ev.preventDefault(); ev.stopPropagation();
@@ -373,7 +373,7 @@ function editAttach(){
   if(d.__editAttached)return; d.__editAttached=true;
   try{
     d.addEventListener('mousedown', function(ev){
-      if((CTRL_PICK && CTRL_PICK.holding) || EDIT_MODE){
+      if(CTRL_PICK && CTRL_PICK.holding){
         if(!ev.altKey && !ev.shiftKey) ev.preventDefault();
       }
     }, true);
@@ -383,19 +383,21 @@ function editAttach(){
   }catch(e){}
 }
 /* 注：原此处对 frame.load 的 editAttach 重复注册已删除，职责由下方 Ctrl 拾取初始化代码（bindCtrlInspectListeners + 滚动重绘）统一接管 */
+function editQueueCurHtmlFile(){ try{ if(typeof curHtmlFile==='function')return curHtmlFile(); }catch(e){} return (typeof currentSource!=='undefined'&&currentSource&&(currentSource.activeSubFile||currentSource.mainHtmlFile||currentSource.name))||''; }
 function editQueueAdd(el, text){
   el = el || EDIT_LOCKED_EL || EDIT_HOVER_EL;
   if(!el)return;
   var t = (typeof text === 'string') ? text.trim() : '';
   if(!t){ alert('请先输入要调整的内容。'); return; }
-  var sel=generateSelector(el), pg=editFrameHash(), dup=null;
-  EDIT_QUEUE.forEach(function(it){ if(it.selector===sel&&it.page===pg)dup=it; });
+  var sel=generateSelector(el), pg=editFrameHash(), curHtml=editQueueCurHtmlFile(), dup=null;
+  EDIT_QUEUE.forEach(function(it){ if(it.selector===sel&&it.page===pg&&(!it.htmlFile||!curHtml||it.htmlFile===curHtml))dup=it; });
   if(dup){
     dup.text=t; dup.ts=Date.now();
+    if(!dup.htmlFile)dup.htmlFile=curHtml;
     libStatus('已更新该元素原有的修改需求。');
   }else{
     EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(),
-      page:pg, selector:sel, label:editElementLabel(el), text:t });
+      page:pg, selector:sel, label:editElementLabel(el), text:t, htmlFile:curHtml });
     libStatus('已加入待提交列表：'+EDIT_QUEUE.length+' 条（可点顶部「待提交列表」查看或提交）。');
   }
   updateEditBadge();
@@ -412,12 +414,15 @@ function openEditDrawer(){ if(!editDrawerEl)return; if(window.LinkBind)LinkBind.
 function closeEditDrawer(){ if(window.MaskStack) window.MaskStack.pop('editDrawerMask'); if(!editDrawerEl)return; editDrawerEl.classList.remove('open'); if(editDrawerMaskEl)editDrawerMaskEl.style.display='none'; }
 function renderEditDrawer(){
   if(!editDrawerBodyEl)return;
-  if(!EDIT_QUEUE.length){ editDrawerBodyEl.innerHTML='<div class="ed-empty">暂无待提交的修改需求<br>切到「编辑」模式，点击原型元素设置跳转或输入修改需求</div>'; return; }
+  if(!EDIT_QUEUE.length){ editDrawerBodyEl.innerHTML='<div class="ed-empty">暂无待提交的修改需求<br>按住 Ctrl 点击原型元素即可拾取，松开 Ctrl 后批量提交</div>'; return; }
   var h='';
   EDIT_QUEUE.forEach(function(it,i){
     var lab=it.label||it.selector;
     var selTip=it.selector+(it.label?'（'+it.label+'）':'');
-    h+='<div class="ed-item"><div class="ei-top"><span class="ei-no">'+(i+1)+'</span><span class="ei-page">'+escHtml(it.page?it.page:'（首页）')+'</span>'
+    var protoName=(typeof currentSource!=='undefined'&&currentSource&&(currentSource.displayName||currentSource.name))||'当前原型';
+    var mainF=((typeof currentSource!=='undefined'&&currentSource&&(currentSource.mainHtmlFile||currentSource.name))||'');
+    var effFile=it.htmlFile||mainF||'当前文件';
+    h+='<div class="ed-item"><div class="ei-top"><span class="ei-no">'+(i+1)+'</span><span class="ei-proto" title="'+escAttr(protoName)+'">'+escHtml(protoName)+'</span><span class="ei-file" title="'+escAttr(effFile)+'">'+escHtml(effFile)+'</span><span class="ei-page">'+escHtml(it.page?it.page:'（首页）')+'</span>'
       +'<span class="ei-edit" data-id="'+escAttr(it.id)+'" title="修改该条需求">✎</span>'
       +'<span class="ei-x" data-id="'+escAttr(it.id)+'" title="删除该条">✕</span></div>'
       +'<div class="ei-sel" title="'+escAttr(selTip)+'">'+escHtml(lab)+'</div>'
@@ -491,14 +496,24 @@ function editQueueSubmit(){
   if(!EDIT_QUEUE.length)return;
   if(!HAS_AI){ alert('大模型修改仅桌面端可用（请使用 exe 版打开）。'); return; }
   var srcName=(currentSource&&currentSource.displayName)||(currentSource&&currentSource.name)||'当前原型';
-  var parts=['以下是对原型「'+srcName+'」的编辑模式修改需求清单，请按清单逐项修改原型 HTML 文件：',''];
+  var mainFile=(currentSource&&(currentSource.mainHtmlFile||currentSource.name))||'';
+  var curActive=(typeof editQueueCurHtmlFile==='function'?editQueueCurHtmlFile():(currentSource&&(currentSource.activeSubFile||mainFile)||''));
+  var isMulti=!!(currentSource&&((currentSource.subPages&&currentSource.subPages.length)||(currentSource.htmlFiles&&currentSource.htmlFiles.length>1)));
+  var srcFull=srcName+((isMulti&&curActive&&mainFile&&curActive!==mainFile)?' / '+curActive:'');
+  function effOf(it){ return it.htmlFile||mainFile||'当前文件'; }
+  var seen={}, htmlFiles=[];
+  EDIT_QUEUE.forEach(function(it){ var f=effOf(it); if(!seen[f]){ seen[f]=1; htmlFiles.push(f); } });
+  if(!htmlFiles.length&&mainFile)htmlFiles=[mainFile];
+  var parts=['以下是对原型「'+srcFull+'」的需求清单，共'+EDIT_QUEUE.length+'条，涉及文件'+htmlFiles.length+'个（'+htmlFiles.join('、')+'），请按清单逐项修改对应的 HTML 文件：',''];
   EDIT_QUEUE.forEach(function(it,i){
-    parts.push('['+(i+1)+'] 页面：'+it.page);
-    parts.push('    元素选择器（CSS Selector，基于该页面当前 DOM 结构生成）：'+it.selector);
+    parts.push('['+(i+1)+'] 所属文件：'+effOf(it)+' ｜ 页面：'+(it.page||'（首页）'));
+    parts.push('    元素选择器（CSS Selector，基于该文件该页面当前 DOM 结构生成）：'+it.selector);
     parts.push('    元素：'+it.label);
     parts.push('    修改需求：'+it.text);
   });
-  parts.push('','要求：在原型 HTML 源文件对应页面片段中定位这些元素（页面为单文件内路由切换时，选择器适用于对应 hash 页面的 DOM），按「修改需求」直接修改元素的样式/结构/文案/交互；只改清单中的元素，其余保持原样；某元素定位不到则在回复中说明并跳过，不要臆造修改。');
+  parts.push('','涉及文件清单（共'+htmlFiles.length+'个）：');
+  htmlFiles.forEach(function(f){ parts.push(' - '+f); });
+  parts.push('','要求：在上述每个所属文件内的对应页面片段中定位这些元素（页面为单文件内路由切换时，选择器适用于对应 hash 页面的 DOM；跨文件时只在所属文件中找）；按「修改需求」直接修改元素的样式/结构/文案/交互；只改清单中的元素，其余保持原样；某元素在所属文件定位不到则在回复中说明并跳过，不要臆造修改、不要改其他文件。');
   var t=parts.join('\n');
   var count=EDIT_QUEUE.length;
   closeEditDrawer();
@@ -528,11 +543,11 @@ function editQueueSubmit(){
   }
 }
 function setEditMode(on){
-  if(EDIT_MODE===on)return;
-  EDIT_MODE=on;
-  if(on){ editAttach(); libStatus('编辑模式：点击元素可设置跳转或输入修改需求；按住 Ctrl 拾取元素。'); }
-  else{ editHideHover(); libStatus('预览模式。'); }
-  if(window.LinkBind)LinkBind.broadcastMode(on);
+  /* T3.2兼容存根：旧模式开关已下线，统一Ctrl拾取；保留broadcast以防iframe残留 */
+  try{ if(typeof console!=='undefined'&&console.warn)console.warn('[deprecated] setEditMode已下线，请按住Ctrl拾取元素。'); }catch(e){}
+  try{ editHideHover(); }catch(e){}
+  try{ libStatus('按住 Ctrl 点击原型元素即可拾取，松开 Ctrl 批量提交修改需求。'); }catch(e){}
+  try{ if(window.LinkBind)LinkBind.broadcastMode(false); }catch(e){}
 }
 if(btnSubmitEditEl)btnSubmitEditEl.onclick=function(){ openEditDrawer(); };
 if(editDrawerCloseEl)editDrawerCloseEl.onclick=closeEditDrawer;

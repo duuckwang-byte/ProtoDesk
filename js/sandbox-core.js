@@ -12,9 +12,9 @@ function sIco(name, fallback) {
   return fallback || '';
 }
 var btnAddSourceEl = $('btnAddSource');
-var kindTagEl=$('kindTag'), kindSegEl=$('kindSeg'); // @deprecated kindTagEl 保留兼容，避免外部引用断裂，当前端别切换由 kindSeg 统一
+var kindSegEl=$('kindSeg');
 var btnKindMobileEl=$('btnKindMobile'), btnKindPcEl=$('btnKindPc');
-var btnSbCollapseEl=$('btnSbCollapse'), sbFabEl=$('sbFab'), sbTriggerEl=$('sbTrigger'), docsFabEl=$('docsFab');
+var btnSbCollapseEl=$('btnSbCollapse'), sbTriggerEl=$('sbTrigger'), docsFabEl=$('docsFab');
 
 /* ═══════ 端别推断：根据 HTML 内容启发式判定移动端/PC 端 ═══════ */
 function detectKind(html){
@@ -61,10 +61,8 @@ function applyKind(openPanels){
   if(sbMaskEl) sbMaskEl.style.display='none'; /* 菜单栏为内嵌 Docked 布局，无需遮罩 */
  closeToc(); /* 端别/源切换时同步收起目录浮窗 */
  if(kind==='mobile') body.classList.remove('sb-collapsed');
- /* 顶部标签/分段控件 */
- if(kindTagEl)kindTagEl.textContent=kind==='pc'?'PC 端':'移动端';
- if(kindTagEl)kindTagEl.className='kind-tag '+(kind==='pc'?'pc':'mobile');
- if(btnKindMobileEl)btnKindMobileEl.classList.toggle('on', kind!=='pc');
+  /* 顶部端别分段控件 */
+  if(btnKindMobileEl)btnKindMobileEl.classList.toggle('on', kind!=='pc');
  if(btnKindPcEl)btnKindPcEl.classList.toggle('on', kind==='pc');
  fitPhone();
 }
@@ -90,10 +88,10 @@ function loadSource(src, keepPanels){
   if(!src.pages){ src.pages = extractPages(src.content||''); }
   src.curPage = src.curPage || ((src.pages&&src.pages[0])||'page-chat');
   if(src.method==='srcdoc'){
-    frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(src.content, { links: src._links||[], mode: (typeof EDIT_MODE!=='undefined'&&EDIT_MODE), from: src.displayName||src.name }) : src.content);
+    frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(src.content, { links: src._links||[], mode: false, from: src.displayName||src.name }) : src.content);
   }else{
     /* 旧版恢复的 method:'src' 源：有内容时回退 srcdoc 注入，避免空白 */
-    if(src.content){ frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(src.content, { links: src._links||[], mode: (typeof EDIT_MODE!=='undefined'&&EDIT_MODE), from: src.displayName||src.name }) : src.content); }
+    if(src.content){ frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(src.content, { links: src._links||[], mode: false, from: src.displayName||src.name }) : src.content); }
     else{ if(frame.hasAttribute('srcdoc')) frame.removeAttribute('srcdoc'); frame.setAttribute('src','about:blank'); }
   }
   document.title = '原型预览 · ' + src.displayName;
@@ -381,7 +379,7 @@ function loadSubPage(s, subFile){
     window.protoAPI.sandbox.readFile({ dir: s.sandboxDir, file: subFile }).then(function(r){
       var content = (r && r.ok) ? r.content : '';
       if(!content) content = '<!DOCTYPE html><html><body><h1>' + escHtml(subFile) + '</h1></body></html>';
-      frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(content, { links: s._links||[], mode: (typeof EDIT_MODE!=='undefined'&&EDIT_MODE), from: subFile, dir: s.sandboxDir }) : content);
+      frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(content, { links: s._links||[], mode: false, from: subFile, dir: s.sandboxDir }) : content);
       document.title = '原型预览 · ' + s.displayName + ' / ' + subFile;
       if(locEl) locEl.textContent = s.displayName + ' / ' + subFile.replace(/\.html$/i, '');
       // fix refresh preserve: quiet refresh keeps panels
@@ -714,6 +712,11 @@ function renameSource(s){
 function friendlyName(s){ return String(s&&(s.displayName||s.name)||'').replace(/\.(html?|md)$/i,''); }
 /* 当前原型名称：工具左上角与功能说明标题统一展示（不再随页面路由变化） */
 function protoTitle(){ return currentSource ? String(currentSource.displayName||friendlyName(currentSource)||'原型') : '原型'; }
+/* 方案二统一Helper：当前HTML文件/原型展示名/是否主页（单真相源，供edit-entry/annotation/project-ai-export共用） */
+function curHtmlFile(s){ s=(typeof s!=='undefined'&&s!==null)?s:currentSource; return String((s&&(s.activeSubFile||s.mainHtmlFile||s.name))||''); }
+function isMainFile(file,s){ s=(typeof s!=='undefined'&&s!==null)?s:currentSource; if(!s)return true; var f=String((typeof file!=='undefined'&&file!==null)?file:curHtmlFile(s)).trim().toLowerCase(); if(!f)return true; var main=String((s.mainHtmlFile||s.name)||'').trim().toLowerCase(); if(!main)return true; if(f===main)return true; var fb=f.replace(/\.(html?|md)$/i,''),mb=main.replace(/\.(html?|md)$/i,''); return fb===mb; }
+function protoLabel(s,includeSub){ s=(typeof s!=='undefined'&&s!==null)?s:currentSource; if(includeSub===undefined)includeSub=true; if(!s)return '原型'; var base=friendlyName(s)||'原型'; if(!includeSub||isMainFile(curHtmlFile(s),s))return base; var sub=String(curHtmlFile(s)||'').replace(/\.(html?|md)$/i,''); return sub&&sub!==base?base+' / '+sub:base; }
+try{ window.curHtmlFile=curHtmlFile; window.protoLabel=protoLabel; window.isMainFile=isMainFile; }catch(e){}
 
 /* ═══════ Iframe 路由与子页面/跨目录跳转双向同步 ═══════ */
 function onIframeNavigated(){

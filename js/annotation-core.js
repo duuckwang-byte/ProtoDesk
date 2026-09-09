@@ -588,7 +588,7 @@ var AnnotationEngine = (function () {
     body.innerHTML = '';
 
     if (!CURRENT_ANNOTATIONS.length) {
-      body.innerHTML = '<div class="lm-empty">当前原型暂无需求标注。<br>在编辑模式下点击原型元素即可添加标注说明。</div>';
+      body.innerHTML = '<div class="lm-empty">当前原型暂无需求标注。<br>按住 Ctrl 点击原型元素即可拾取添加标注说明。</div>';
       return;
     }
 

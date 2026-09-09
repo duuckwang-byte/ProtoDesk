@@ -1,13 +1,6 @@
 /* [js/nav-zoom.js] 导航联动 + 标题推断 + 舞台缩放（由 app.js 拆分，顺序勿乱调） */
 /* 由路由推断可读标题（通用）：取路由末段；页面章节标题一律优先 md 的 pageTitles，
     缺失时回退路由 key 本身（不再维护内置原型的硬编码映射表） */
-// @deprecated 保留兼容，外部可能引用，路由标题已由 protoTitle 统一
-function humanTitle(route){
- var base=String(route||'').replace(/^#/,'');
- var segs=base.split('/');
- return segs[segs.length-1]||base;
-}
-
 /* ═══════ 静态解析源文件页面：提取原型页面路由清单（仅供导航联动与按页占位，不在左栏展示） ═══════
  规则：页面容器 id(page-*) 与 hash 路由串，排除弹窗/侧栏/嵌入（sheet/picker/delete） */
 function extractPages(content){

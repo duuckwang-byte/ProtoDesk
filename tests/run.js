@@ -31,6 +31,7 @@ async function main() {
     api = await connect({ port: PORT });
     await sleep(2000); /* 等项目选择弹窗渲染 */
     const cases = [
+      ['diag-first-screen', require('./cases/diag-first-screen')],
       ['project-flow', require('./cases/project-flow')],
       ['title-toc', require('./cases/title-toc')],
       ['snapshot', require('./cases/snapshot')],

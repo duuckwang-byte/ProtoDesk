@@ -8,6 +8,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --x64",
+    "test": "node tests/run-all.js",
+    "test:all": "node tests/run-all.js",
     "test:ui": "node tests/run.js"
   },
   "devDependencies": {
@@ -23,6 +25,10 @@
       "preload.js",
       "app.css",
       "js/**",
+      "runtimes/**",
+      "providers/**",
+      "platform/**",
+      "git/**",
       "原型+文档.html",
       "toolPrompt.md"
     ],

@@ -556,7 +556,7 @@ var LinkBind = (function () {
     if (countEl) countEl.textContent = links.length;
     if (!body) return;
     if (!links.length) {
-      body.innerHTML = '<div class="lm-empty">本原型还没有跳转交互。<br>切到编辑模式，点击原型元素即可设置。</div>';
+      body.innerHTML = '<div class="lm-empty">本原型还没有跳转交互。<br>按住 Ctrl 点击原型元素即可拾取设置。</div>';
       return;
     }
     var html = '';

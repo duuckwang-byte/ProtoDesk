@@ -19,10 +19,16 @@ sidecar.js
 .rewrite-stream.js
 
 # 临时调试文件
-.dbg7.tmp.js
-.diag2.tmp.js
+.dbg*.tmp.js
+.diag*.tmp.js
+*.tmp.js
 
 # 系统/编辑器
 .DS_Store
 Thumbs.db
 *.log
+
+# 本地备份与过程补丁（不入库）
+*.bak
+*.patch
+scratch_diff.txt

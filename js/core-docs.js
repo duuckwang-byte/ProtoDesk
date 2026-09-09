@@ -39,11 +39,7 @@ function reportError(tag,err,userMsg){
  渲染为「整篇展示」：一次渲染全部章节；目录点击仅滚动定位，不做分块切换。 */
 var DOCS_KEY_PREFIX='protoDoc_v2_';
 function sourceDocKey(src){ return DOCS_KEY_PREFIX + (src&&src.name?src.name:'') + '_' + (src&&src.kind||'mobile'); }
-function parseStructuredMd(md, fallbackKey, titlesOut){
- var docs={}; if(!md)return docs;
- docs[fallbackKey||'default']=String(md);
- return docs;
-}
+
 function getDocMd(src){
  if(!src)return '';
  if(typeof src.md==='string')return src.md;
@@ -53,7 +49,6 @@ function getDocMd(src){
  }
  return '';
 }
-function serializeDocs(src){ return getDocMd(src); }
 function loadSourceDocs(src){
  if(!src)return '';
  try{
@@ -78,9 +73,7 @@ function loadSourceDocs(src){
 var docTitleEl=$('docTitle'),docContentEl=$('docContent');
 /* ═══════ 功能说明编辑（纯净 Markdown 存储，支持保存到沙箱同名 md 与 localStorage） ═══════ */
 var editOn=false,editHash=null;
-var btnEditDoc=$('btnEditDoc'),btnCancelDoc=$('btnCancelDoc'),btnResetDoc=$('btnResetDoc'),btnSaveDoc=$('btnSaveDoc'),docEditEl=$('docEdit'),docEditArea=$('docEditArea');
-// @deprecated 保留兼容，外部可能引用，推荐使用 fullDocMd/getDocMd
-function curDesc(){ return (currentSource&&currentSource.docs)||{}; }
+var btnEditDoc=$('btnEditDoc'),btnCancelDoc=$('btnCancelDoc'),btnSaveDoc=$('btnSaveDoc'),docEditEl=$('docEdit'),docEditArea=$('docEditArea');
 /* 整篇文档文本：直接读取纯净 Markdown 原文 */
 function fullDocMd(src){ return getDocMd(src||currentSource); }
 function persistDocs(){ if(!currentSource)return; var k=sourceDocKey(currentSource); var md=currentSource.md; var prev=persistDocsTimer.get(k); if(prev)clearTimeout(prev); persistDocsTimer.set(k,setTimeout(function(){ persistDocsTimer.delete(k); safeStorage.set(k,md); },300)); }
@@ -140,15 +133,6 @@ function cancelEdit(){
  exitEdit();
  loadDesc();
 }
-// @deprecated 保留兼容，外部可能引用，编辑重置逻辑已由 applyEditText/exitEdit 承接
-function resetEdit(){
- if(!editOn)return;
- var md=currentSource?(currentSource.md||''):'';
- applyEditText(md);
- docEditArea.value=md;
- exitEdit();
- loadDesc();
-}
 function flushEdit(){ /* 切换源时自动保存未提交修改 */
  if(reqMode){ exitEdit(); return; } /* 最新需求编辑：切走时不自动保存（保存靠按钮） */
  if(!editOn)return;
@@ -158,7 +142,6 @@ function flushEdit(){ /* 切换源时自动保存未提交修改 */
 if(btnEditDoc)btnEditDoc.onclick=enterEdit;
 if(btnSaveDoc)btnSaveDoc.onclick=saveEdit;
 if(btnCancelDoc)btnCancelDoc.onclick=cancelEdit;
-if(btnResetDoc)btnResetDoc.onclick=resetEdit;
 
 /* 轻量 Markdown 渲染：支持表格(H2/H3 标题)、加粗、无序/有序列表、代码块、<br> 等 */
 function escHtml(s){return String(s).replace(/\&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
