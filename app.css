@@ -1,5 +1,11 @@
 
 /* think stream/popup/scroll fix */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#CBD2DC;border-radius:99px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#A8B1BF;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-corner{background:transparent}
+*{scrollbar-width:thin;scrollbar-color:#CBD2DC transparent}
 :root{
   --bg:#EEF0F4;--panel:#FFFFFF;--line:#E3E6EC;--ink:#1F2937;--ink-2:#374151;--sub:#6B7280;--faint:#9CA3AF;
   --pri:#3B5BDB;--pri-soft:#E7ECFB;--ok:#10B981;--ok-soft:#DCFCE7;

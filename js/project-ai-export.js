@@ -378,7 +378,7 @@ var gitPullProjectSwitchBanner = $('gitPullProjectSwitchBanner'), gitPullProject
 var gitConfigMask = $('gitConfigMask'), gitConfigClose = $('gitConfigClose'), gitConfigCancel = $('gitConfigCancel'), gitConfigSave = $('gitConfigSave');
 var gitRemoteUrl = $('gitRemoteUrl'), gitBranch = $('gitBranch'), gitUsername = $('gitUsername'), gitToken = $('gitToken'), btnGitTokenEye = $('btnGitTokenEye');
 var btnTestGitConn = $('btnTestGitConn'), testGitStatus = $('testGitStatus'), gitSaveTip = $('gitSaveTip');
-var gitGlobalOriginText = $('gitGlobalOriginText'), gitRemoteUrlHint = $('gitRemoteUrlHint'), gitBranchHint = $('gitBranchHint'), gitTokenAck = $('gitTokenAck');
+var gitGlobalOriginText = $('gitGlobalOriginText'), gitRemoteUrlHint = $('gitRemoteUrlHint'), gitBranchHint = $('gitBranchHint');
 var gitPushBranchHint = $('gitPushBranchHint'), gitPullBranchHint = $('gitPullBranchHint'), gitPushBranchRuleHint = $('gitPushBranchRuleHint'), gitPullBranchRuleHint = $('gitPullBranchRuleHint');
 var gitLastSavedRemoteUrl = '';
 var gitPendingSavePayload = null;
@@ -776,7 +776,6 @@ function openGitConfigModal() {
       var masked = cfg.tokenMasked || '';
       gitToken.placeholder = masked ? ('已配置 (' + masked + ')，留空=不更新') : '填写个人访问令牌或密码';
     }
-    if (gitTokenAck) gitTokenAck.checked = false;
     gitLastSavedRemoteUrl = String(cfg.remoteUrl || '').trim();
     if (gitGlobalOriginText) gitGlobalOriginText.textContent = gitLastSavedRemoteUrl ? gitMaskUrl(gitLastSavedRemoteUrl) : '未配置';
     gitShowFieldHint(gitRemoteUrlHint, '');
@@ -878,7 +877,6 @@ function gitDoSaveConfig() {
       gitLastSavedRemoteUrl = String(cfg.remoteUrl || '').trim();
       if (gitGlobalOriginText) gitGlobalOriginText.textContent = gitLastSavedRemoteUrl ? gitMaskUrl(gitLastSavedRemoteUrl) : '未配置';
       if (gitToken) { gitToken.value = ''; try { var m2 = (r.config && r.config.tokenMasked) || ''; gitToken.placeholder = m2 ? ('已配置 (' + m2 + ')，留空=不更新') : '填写个人访问令牌或密码'; } catch (e) {} }
-      if (gitTokenAck) gitTokenAck.checked = false;
       if (gitSaveTip) {
         gitSaveTip.style.display = 'inline-flex';
         if (gitSaveTipTimer) clearTimeout(gitSaveTipTimer);
@@ -903,10 +901,6 @@ if (gitConfigSave) {
     if (url && urlMsg) { gitShowFieldHint(gitRemoteUrlHint, urlMsg, false); showGitError({ code: 'GIT_URL_BLOCKED', detail: urlMsg, primaryText: '修正地址', primaryFn: function() {} }); return; }
     var bMsg = gitBranchRuleMsg(branch);
     if (bMsg) { gitShowFieldHint(gitBranchHint, bMsg, false); showGitError({ code: 'INVALID_BRANCH', detail: bMsg, primaryText: '修正分支名', primaryFn: function() {} }); return; }
-    if (tokenVal && gitTokenAck && !gitTokenAck.checked) {
-      showGitError({ title: '保存含 Token 需先知悉', body: 'Token 将加密存于本机，仅本机可用。请勾选已知悉后再保存。', detail: 'tokenAck 未勾选', primaryText: '知道了', primaryFn: function() {} });
-      return;
-    }
     if (url && gitLastSavedRemoteUrl && url !== gitLastSavedRemoteUrl) {
       gitPendingSavePayload = null;
       var txt = $('gitRemoteConfirmText');
