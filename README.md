@@ -1,17 +1,12 @@
 # PRTool · 原型预览工具
 
-原型 + 文档一体化工具（Electron 桌面端）。以「项目制沙箱」组织原型，本地 AI（opencode）生成/修改原型与文档，支持页面跳转绑定、AI 任务快照回滚与离线导出交付。
+原型 + 文档一体化工具（Electron 桌面端）。以「项目制沙箱」组织原型，本地 CLI驱动，生成/修改原型与文档，支持快捷选中页面元素提交至CLI进行修改、原型和文档一屏展示。
 
 ## 功能
 
 ### 组织与管理
 
 - **项目制沙箱**：`%APPDATA%/原型工具/sandbox/<项目>/<原型>/`，一个项目一个文件夹、一个原型一个子文件夹（html + md + links.json 同放）。打开应用先弹窗选择进入哪个项目，**一个窗口只展示一个项目**；侧栏顶部显示当前项目名，点击随时切换；支持项目新建 / 重命名 / 删除（默认项目保护不可删）
-- **旧数据兼容**：旧版扁平沙箱首次启动自动整理（所有扁平原型归入「默认项目」，一次性标记防重复）；旧版 exe 旁 `sandbox/` 首次启动询问迁移
-- **沙箱是唯一数据源**：安装包不携带任何示例项目，%APPDATA% 沙箱为空即从空白开始；新建项目 / 导入 / AI 生成均写入此目录
-- **左侧列表交互**：原型项**单击**切换预览、**双击**直接重命名、**右键**弹出菜单（移入文件夹… / 重命名 / 删除原型… / 从列表移除）；分组标题**点击**折叠、**右键**菜单（新建二级文件夹 / 重命名文件夹 / 删除文件夹…）
-- **虚拟文件夹**：对原型分类整理（最多两级），不创建真实目录；分组关系存本机 localStorage（key 含沙箱路径，跨项目天然隔离），导出文件不携带
-- **刷新按钮**：顶部工具条「刷新」（预览/编辑右侧）一键重新读取本地最新的原型与文档
 
 ### 原型预览与文档
 
@@ -29,8 +24,8 @@
 
 ### AI 设计
 
-- **26 Agent 矩阵 + 双引擎（本地 CLI / API 直连）**：14 直驱（`opencode、claude、cursor-agent、codex、deepseek-harness、qwen、deepseek、mimo、amp、codebuddy、aider、grok-build、antigravity、atomcode`）+ 12 发现型（ACP / 私有协议系，仅探测展示，执行诚实降级，见 def `needsProtocol`），设置 Agent 矩阵卡片设主力，每卡可指定路径 / 重新探测，未安装收纳进折叠条；发现顺序：设置手动路径 → npm 全局 → `~/.opencode/bin` → scoop shims → Chocolatey → PATH；API 走多协议 BYOK（openai / anthropic / google / ollama / azure）：多 API 配置卡片（服务商名称 + 设为当前使用，旧单配置自动迁移为首卡）+ 连通性诊断 + `/v1/models` 拉取；**API 模式依赖本地 OpenCode CLI 执行文件修改，未安装不可用**；`hint` 优先不落盘翻转引擎，`cliModelsCache + TTL` + `-free` 清洗；会话按沙箱目录隔离持久化，自动续接历史上下文，事件经 `ai:event` 推送（对话 / 思考 / 工具调用 / 错误闭环）
-- **快照回滚**：每次 AI 任务前自动保存原型快照（每原型保留最近 10 份，超出删最旧）；AI 对话弹窗「⏱ 历史」查看并一键恢复任意版本，恢复前自动备份当前状态（undo 快照）；AI 生成中禁止恢复
+- **参考open-design实现的本地 CLI驱动**：不自写Agent或者AgentAPI调用逻辑，将任务完全交给本地CLI，你可以任意使用自己本地的skill、插件、MCP等。工具中的API连接方式，实际由本地安装的opencodeClI驱动，使用前必须安装opencodeCLI。
+- **快照回滚**：每次 AI 任务前自动保存原型快照（每原型保留最近 10 份，超出删最旧）；AI 对话弹窗「 历史」查看并一键恢复任意版本，恢复前自动备份当前状态（undo 快照
 - **Ctrl 即时拾取（CTRL_PICK）**：按住 Ctrl 点击拾取元素，支持多选 / toggle 反选 / 覆盖层角标，松开 Ctrl 批量提交（批量统一与独立双 Tab）；待提交队列含唯一 CSS 选择器 + 页面路由 + `所属文件 htmlFile`，提交头含`涉及文件清单`约束只改所属文件；旧预览/编辑模式开关已下线（`setEditMode` 仅存根告警）
 - **多 HTML 子页面**：一原型文件夹可含多 HTML（主页同名，其他为子页），支持新建 / 重命名 / 删除子页面，`loadSubPage` 切换，刷新保持子页，标注与待提交队列按 `htmlFile + page` 双隔离
 - **模型显示管理**：设置模型管理 Tab + 顶部模型下拉按引擎过滤；CLI / API 双可见性（`visibleModelsCli / Api`）+ 自定义（`customModelsCli`）即时落盘，空过滤防呆回退`默认推荐模型（CLI 预设）`，`-free` 统一清洗，切换 Agent 清空缓存并刷新；获取模型弹窗勾选即时写入管理页（无需确认，搜索过滤不丢勾选，管理页已有默认勾上）
@@ -80,7 +75,7 @@ npm run build   # 或 npx electron-builder --win --x64
 | `runtimes/` | 26 Agent 适配器矩阵：顶层 7 js（`registry` 注册 / `detection + resolution` 探测 / `parsers` 解析 / `engine` 执行 + `needsProtocol` 降级 / `diagnostics` 诊断 / `types` 类型 / `byok-opencode` 桥接）+ `defs/26（14 直驱 + 12 发现型）` + `parsers/4` |
 | `main.js` / `preload.js` | Electron 主进程与预加载（沙箱/项目/快照/links/日志/版本/AI 等 IPC） |
 | `toolPrompt.md` | AI 工作提示词（原型与文档分离修改、工作目录约定），随包分发 |
-| `tests/` | 15 套门禁（`npm test`，纯 Node 可进 CI：14 套 verify + 打包完整性 `check-pack`）+ CDP UI 回归（`npm run test:ui`，需 GUI）+ `cases/`，见下文 |
+| `tests/` | 24 套门禁（`npm test`，纯 Node 可进 CI：22 套 verify + 打包完整性 `check-pack` + static-verify）+ CDP UI 回归（`npm run test:ui`，需 GUI）+ `cases/`，见下文 |
 | `桌面端/` | 打包产物（NSIS 安装包 / win-unpacked），不入库 |
 | `.devdata/` | 开发隔离数据（不入库、可随时删除） |
 
@@ -99,7 +94,7 @@ npm run build   # 或 npx electron-builder --win --x64
 ```bash
 node --check main.js && node --check preload.js && node --check js/icons.js && node --check js/mask-manager.js && node --check js/core-docs.js && node --check js/nav-zoom.js && node --check js/sandbox-core.js && node --check js/project-ai-export.js && node --check js/edit-entry.js && node --check js/link-bind.js && node --check js/annotation-core.js
 npx electron . --remote-debugging-port=9333    # 开发启动（可配合 CDP 回归）
-npm test                                       # 统一门禁：15 套串行（pack 打包完整性 + 14 套 verify），ALL_PASS 方可合入，可进 CI
+npm test                                       # 统一门禁：24 套串行（pack 打包完整性 + static-verify + 22 套 verify），ALL_PASS 方可合入，可进 CI
 npm run test:ui                                # UI 回归（需 GUI）：自动启动 electron 执行 11 用例并汇总 PASS/FAIL
 ```
 
@@ -111,7 +106,7 @@ npm run test:ui                                # UI 回归（需 GUI）：自动
 
 ## UI 回归测试（tests/）
 
-- `tests/run-all.js`（`npm test` / `test:all`）：15 套纯 Node 串行（pack 打包完整性 + static-verify / platform / runtimes / providers / ipc / model-management / ui-integration / session-healing / subpage-naming / stdout-error-closure / event-pipeline / model-fetch / send-guard / snapshot-restore），任一失败 exit=1，可进 CI；`tests/cdp.js` 仅 UI 回归用
+- `tests/run-all.js`（`npm test` / `test:all`）：24 套纯 Node 串行（pack 打包完整性 + static-verify / platform / runtimes / providers / ipc / model-management / ui-integration / session-healing / subpage-naming / stdout-error-closure / event-pipeline / model-fetch / send-guard / snapshot-restore / md-p1 / md-p2 / md-p3 / md-p4 / doc-edit / docwin / inline-edit / link-stamp / spec-uilib），任一失败 exit=1，可进 CI；`tests/cdp.js` 仅 UI 回归用
 - `tests/run.js`（`npm run test:ui`，需 GUI 本机）：直接启动 electron.exe（避免进程残留占用调试端口）→ 顺序执行 11 用例 → 结束进程树 → 汇总 PASS/FAIL
 - UI 用例清单（11项，与 `tests/run.js` 同步，首位为纳入的孤儿用例）：
   - `diag-first-screen`：首屏诊断（项目弹窗 / 标注引擎 / 遮罩栈 / 图标 / 设置入口存在性）

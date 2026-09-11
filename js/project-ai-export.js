@@ -1757,8 +1757,8 @@ if (btnExportPureHtmlEl) btnExportPureHtmlEl.onclick = exportCurrentPureHtml;
 
 /* ═══════ 设置弹窗（升级为 680px 分栏/Tab 现代化布局） ═══════ */
 var settingsMask=$('settingsMask'),settingsClose=$('settingsClose'),settingsCancel=$('settingsCancel'),settingsOk=$('settingsOk'),btnSettings=$('btnSettings');
-var tabNavAi=$('tabNavAi'),tabNavModels=$('tabNavModels'),tabNavSandbox=$('tabNavSandbox'),tabNavAbout=$('tabNavAbout');
-var paneSetAi=$('paneSetAi'),paneSetModels=$('paneSetModels'),paneSetSandbox=$('paneSetSandbox'),paneSetAbout=$('paneSetAbout');
+var tabNavAi=$('tabNavAi'),tabNavModels=$('tabNavModels'),tabNavSandbox=$('tabNavSandbox'),tabNavShortcut=$('tabNavShortcut'),tabNavAbout=$('tabNavAbout');
+var paneSetAi=$('paneSetAi'),paneSetModels=$('paneSetModels'),paneSetSandbox=$('paneSetSandbox'),paneSetShortcut=$('paneSetShortcut'),paneSetAbout=$('paneSetAbout');
 var engCli=$('engCli'),engApi=$('engApi'),boxCliCfg=$('boxCliCfg'),boxApiCfg=$('boxApiCfg');
 var setApiPreset=$('setApiPreset'),setApiBaseUrl=$('setApiBaseUrl'),setApiKey=$('setApiKey'),setApiModel=$('setApiModel'),setApiEye=$('setApiEye');
 var setApiProviderName=$('setApiProviderName');
@@ -1872,6 +1872,7 @@ function switchSettingsTab(tab){
     { key:'ai', btn:tabNavAi, pane:paneSetAi },
     { key:'models', btn:tabNavModels, pane:paneSetModels },
     { key:'sandbox', btn:tabNavSandbox, pane:paneSetSandbox },
+    { key:'shortcut', btn:tabNavShortcut, pane:paneSetShortcut },
     { key:'about', btn:tabNavAbout, pane:paneSetAbout }
   ];
   tabs.forEach(function(t){
@@ -1882,6 +1883,7 @@ function switchSettingsTab(tab){
 if(tabNavAi)tabNavAi.onclick=function(){ switchSettingsTab('ai'); };
 if(tabNavModels)tabNavModels.onclick=function(){ switchSettingsTab('models'); };
 if(tabNavSandbox)tabNavSandbox.onclick=function(){ switchSettingsTab('sandbox'); };
+if(tabNavShortcut)tabNavShortcut.onclick=function(){ switchSettingsTab('shortcut'); };
 if(tabNavAbout)tabNavAbout.onclick=function(){ switchSettingsTab('about'); };
 
 function getActiveEngineInUi(){
@@ -2336,10 +2338,7 @@ function renderApiProfileMatrix(){
   var nameEl=document.createElement('span'); nameEl.className='api-profile-name'; nameEl.textContent=apiProfileLabel(p);
   var badge=document.createElement('span'); badge.className='api-profile-badge'+(p.id===activeId?'':' idle'); badge.textContent=(p.id===activeId?'当前使用':'未使用');
   head.appendChild(nameEl); head.appendChild(badge); card.appendChild(head);
-  var sub=document.createElement('div'); sub.className='api-profile-sub'; sub.textContent='BaseURL '+apiMaskBaseUrl(p.baseUrl)+' | 模型 '+String(p.model||'');
-  card.appendChild(sub);
-  var sub2=document.createElement('div'); sub2.className='api-profile-sub'; sub2.textContent='Key '+apiMaskKey(p.apiKey);
-  card.appendChild(sub2);
+  /* B1 隐敏：卡片仅显服务商名称+使用态+操作按钮，URL/模型/Key三字段不渲染（标识data-id与数据p.*保留，明细进弹窗维护） */
   var acts=document.createElement('div'); acts.className='api-profile-actions';
   var useBtn=document.createElement('button'); useBtn.type='button'; useBtn.className='btn-mini'; useBtn.setAttribute('data-act','use'); useBtn.setAttribute('data-id',p.id);
   if(p.id===activeId){ useBtn.textContent='当前使用'; useBtn.disabled=true; }else{ useBtn.textContent='设为当前使用'; }
@@ -3749,8 +3748,25 @@ function sweepStrayMasks(){
    if(aiBusy){ try{ i5CancelAi(); }catch(e){} }
    closeAi();
   }
- /* AI 设计：在当前原型沙箱打开对话（沙箱唯一会话，自动续接历史） */
+  /* AI 设计：在当前原型沙箱打开对话（沙箱唯一会话，自动续接历史） */
  function openAiDesign(){
+  /* B2 独立窗已开则直接focus独立窗（调aiwin:open），否则正常开应用内弹窗 */
+  try{
+   var __aiOpen=false;
+   try{ __aiOpen=!!window.__aiWinOpen; }catch(e){}
+   if(__aiOpen){
+    try{
+     if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.open==='function'){
+      var _pa={};
+      try{ _pa.project=String((typeof currentProject!=='undefined')?currentProject:''); }catch(e){}
+      try{ var _c=(typeof currentSource!=='undefined')?currentSource:null; if(_c)_pa.proto=String(_c.displayName||_c.name||'').replace(/\.(html?|md)$/i,''); }catch(e){}
+      try{ window.protoAPI.aiwin.open(_pa); }catch(e){ try{ window.protoAPI.aiwin.open(); }catch(e2){} }
+      try{ if(typeof closeAi==='function')closeAi(); }catch(e){}
+      return;
+     }
+    }catch(e){}
+   }
+  }catch(e){}
   if(!aiMaskEl)return;
   if(!HAS_AI){ (typeof showToast==="function"?showToast:alert)('大模型对话仅桌面端可用（请使用 exe 版打开）。'); return; }
    sweepStrayMasks(); /* 先清除游离/已知遮罩，避免与 AI 弹窗叠加 */
@@ -3771,6 +3787,7 @@ function sweepStrayMasks(){
   }
   if(aiInputEl)aiInputEl.focus();
  }
+
 function aiDetectCurrentPage(){
   try{
     if(typeof framePageKey==='function'){ var k=framePageKey(); if(k)return k; }
@@ -3829,8 +3846,9 @@ function aiDoSend(){
    } catch(e){}
     var _enk = true;
    var activePg = (typeof aiDetectCurrentPage==='function' ? aiDetectCurrentPage() : '');
-  var targetFile = (aiTargetPageSelect && aiTargetPageSelect.value) || (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || '';
-  window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, enableTools:_enk}).then(function(r){
+   var targetFile = (aiTargetPageSelect && aiTargetPageSelect.value) || (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || '';
+   /* 回滚说明：规范注入位置加错（用户出完原型再做），aiDoSend恢复直通原文t；快照helpers保留供导出附录/预读+后续复用 */
+   window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, enableTools:_enk}).then(function(r){
    if(r&&r.error==='busy'){ aiBubbleError('（已有任务在运行，请稍候）'); }
    else if(r&&!r.ok){ if(aiStreaming)aiBubbleError(String(r.error||'发送失败')); else aiSetBusy(false); }
   }).catch(function(e){ aiBubbleError('发送失败：'+(e&&e.message||e)); });
@@ -4040,8 +4058,8 @@ if(btnRefreshEl)btnRefreshEl.onclick=function(){
  try{ _savedHash = frame && frame.contentWindow && frame.contentWindow.location.hash || ''; }catch(e){}
  window._refreshSavedSub = _savedSub;
  window._refreshSavedHash = _savedHash;
- window.__aiQuietRefresh=true; /* 保持当前面板状态：刷新不自动弹开菜单/文档面板 */
- loadSandboxSources(_savedSub && /\.html$/i.test(String(_savedSub)) ? _savedSub : undefined);
+  window.__aiQuietRefresh=true; /* 保持当前面板状态：刷新不自动弹开菜单/文档面板 */
+  loadSandboxSources(_savedSub && /\.html$/i.test(String(_savedSub)) ? _savedSub : undefined);
 };
 function i5RefreshAgentBadge(agentId){
   aiAgentBadge=$('aiAgentBadge')||aiAgentBadge; aiAgentName=$('aiAgentName')||aiAgentName;
@@ -4173,6 +4191,101 @@ function escAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/
 function safeScript(t){ return String(t||'').split('</script').join('<\\/script'); }
 /* 主程序脚本清单（与 原型+文档.html 引入顺序一致）：导出时按序全部内嵌 */
 var EXPORT_SCRIPT_FILES=['js/icons.js','js/mask-manager.js','js/core-docs.js','js/nav-zoom.js','js/sandbox-core.js','js/project-ai-export.js','js/edit-entry.js','js/link-bind.js','js/annotation-core.js'];
+/* P1 MD重构：离线导出图片内联流水线（相对assets路径转Base64 Data URL，缺失保留原路径不中断） */
+function guessImageMime(p){
+  var s=String(p||'').toLowerCase();
+  if(/\.jpe?g$/.test(s)) return 'image/jpeg';
+  if(/\.gif$/.test(s)) return 'image/gif';
+  if(/\.svg$/.test(s)) return 'image/svg+xml';
+  if(/\.webp$/.test(s)) return 'image/webp';
+  if(/\.bmp$/.test(s)) return 'image/bmp';
+  if(/\.ico$/.test(s)) return 'image/x-icon';
+  return 'image/png';
+}
+function normalizeAssetDataUrl(r, fallbackPath){
+  if(r==null) return null;
+  if(typeof r==='string'){
+    var s0=String(r).trim();
+    if(/^data:/i.test(s0)) return s0;
+    return null;
+  }
+  try{
+    if(r.dataUrl&&/^data:/i.test(String(r.dataUrl))) return String(r.dataUrl);
+    if(r.url&&/^data:/i.test(String(r.url))) return String(r.url);
+    if(r.content&&/^data:/i.test(String(r.content).trim())) return String(r.content).trim();
+    var b64=r.base64||r.data||r.base64Data||null;
+    if(b64&&typeof b64==='string'){
+      var b=String(b64).trim().replace(/\s+/g,'');
+      if(!b) return null;
+      if(/^data:/i.test(b)) return b;
+      if(b.length<20) return null;
+      return 'data:'+guessImageMime(fallbackPath)+';base64,'+b;
+    }
+  }catch(e){}
+  return null;
+}
+function readOneAsset(dir, file){
+  return new Promise(function(resolve){
+    try{
+      var sb=(window.protoAPI&&window.protoAPI.sandbox)||null;
+      if(!sb||!dir){ resolve(null); return; }
+      if(typeof sb.readAssetBase64!=='function'){ resolve(null); return; }
+      var ret=null;
+      try{ ret=sb.readAssetBase64({dir:dir,file:file}); }
+      catch(e){ resolve(null); return; }
+      Promise.resolve(ret).then(function(r){
+        if(r&&r.ok===false){ resolve(null); return; }
+        resolve(normalizeAssetDataUrl(r, file));
+      }).catch(function(){ resolve(null); });
+    }catch(e){ resolve(null); }
+  });
+}
+function inlineMarkdownImages(mdText, protoDir){
+  var src=String(mdText==null?'':mdText);
+  if(!src) return Promise.resolve(src);
+  var dir=String(protoDir||'');
+  /* P2 图片缩放对齐：容忍自有 GFM 后缀 {w=NN} / {w=NN align=xx} / {align=xx}（扫描与替换均保留后缀） */
+  var re=/!\[[^\]]*\]\(([^)]+)\)(\{[^{}]*\})?/g;
+  var seen={}, list=[], m=null;
+  while((m=re.exec(src))){
+    var raw=String(m[1]||'').trim();
+    if(!raw) continue;
+    var pathPart=raw.split(/\s+/)[0].replace(/^['"]|['"]$/g,'');
+    if(!pathPart) continue;
+    if(/^data:/i.test(pathPart)) continue;
+    if(/^(https?:|file:|proto-asset:|blob:|javascript:)/i.test(pathPart)) continue;
+    if(pathPart.charAt(0)==='#') continue;
+    if(pathPart.charAt(0)==='/') continue;
+    var norm=String(pathPart).replace(/^\.\//,'');
+    if(norm.indexOf('assets/')<0) continue;
+    if(seen[pathPart]) continue;
+    seen[pathPart]=1;
+    list.push(pathPart);
+  }
+  if(!list.length) return Promise.resolve(src);
+  if(!dir) return Promise.resolve(src);
+  try{
+    var sb0=(window.protoAPI&&window.protoAPI.sandbox)||null;
+    if(!sb0||typeof sb0.readAssetBase64!=='function') return Promise.resolve(src);
+  }catch(e){ return Promise.resolve(src); }
+  return Promise.all(list.map(function(p){
+    var file=String(p).replace(/^\.\//,'');
+    return readOneAsset(dir, file);
+  })).then(function(results){
+    var map={};
+    for(var i=0;i<list.length;i++){ if(results[i]) map[list[i]]=results[i]; }
+    if(!Object.keys(map).length) return src;
+    return src.replace(/!\[[^\]]*\]\(([^)]+)\)(\{[^{}]*\})?/g, function(full, inner, suffix){
+      var raw2=String(inner||'').trim();
+      var pp=raw2.split(/\s+/)[0].replace(/^['"]|['"]$/g,'');
+      var du=map[pp];
+      if(!du) return full;
+      var rest=raw2.slice(pp.length);
+      /* 替换路径保留后缀：full 已含可选后缀，仅替换括号内路径部分 */
+      return String(full).replace(inner, du+rest);
+    });
+  }).catch(function(){ return src; });
+}
 function buildExportHtml(chosenList){
   var chosen=(chosenList&&chosenList.length)?chosenList.filter(Boolean):((currentSource)?[currentSource]:[]);
   if(!chosen.length){ return Promise.resolve(null); }
@@ -4248,12 +4361,19 @@ function buildExportHtml(chosenList){
       });
       return Promise.allSettled([reqMapPromise, linksPromise, annotationsPromise]).then(function(res2){
         var reqMap = (res2[0]&&res2[0].value)||{}, exportLinksData = (res2[1]&&res2[1].value)||[], exportAnnoMap = (res2[2]&&res2[2].value)||{};
+        /* P1 MD重构：导出前将各原型MD内相对assets图片经readAssetBase64批量转Data URL内联（缺失保留原路径） */
+        var inlineJobs=chosen.map(function(src,i){
+          var rawMd=mds[i]||src.md||(typeof fullDocMd==='function'?fullDocMd(src):'')||'';
+          var pdir=(src&&src.sandboxDir)||'';
+          return inlineMarkdownImages(rawMd, pdir);
+        });
+        return Promise.all(inlineJobs).then(function(inlinedMds){
         /* 内嵌全部所选原型：content + 各自功能说明 */
         var embeds=[], docWrites='';
         chosen.forEach(function(src,i){
           var proto=protos[i];
           if(!proto){ return; }
-          var mdText=mds[i]||src.md||(typeof fullDocMd==='function'?fullDocMd(src):'')||'';
+          var mdText=(inlinedMds&&inlinedMds[i]!=null)?inlinedMds[i]:(mds[i]||src.md||(typeof fullDocMd==='function'?fullDocMd(src):'')||'');
           var em={ name:src.name, displayName:src.displayName||src.name, kind:src.kind||'mobile', method:'srcdoc', content:proto, mdName:src.mdName||null, path:'', md:mdText, docs:{ 'default': mdText } };
           embeds.push(em);
           docWrites+='try{localStorage.setItem('+JSON.stringify(DOCS_KEY_PREFIX+em.name+'_'+em.kind)+','+JSON.stringify(mdText)+');}catch(e){}\n';
@@ -4303,6 +4423,7 @@ function buildExportHtml(chosenList){
           +'catch(e){}})();\n')
           +'\n<\/script>\n</body>\n</html>';
         return h;
+        }); /* Promise.all(inlineJobs) 图片内联回填 */
       }); /* Promise.all([reqMapPromise, linksPromise, annotationsPromise]).then */
     });
   }).catch(function(err){ alert('导出失败：'+(err&&err.message||err)); return null; });
@@ -4509,6 +4630,7 @@ function renderProjectList(projects, last){
   var arr=(projects||[]).slice().sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||''),'zh-CN'); });
   if(!arr.length){ projListEl.innerHTML='<div class="gp-empty">暂无项目，输入名称新建一个。</div>'; }
   arr.forEach(function(p){
+    var wrap=document.createElement('div'); wrap.className='proj-row'; wrap.setAttribute('data-project', String(p.name||''));
     var it=document.createElement('button'); it.type='button';
     it.className='proj-item'+(projPick===p.name?' on':'');
     it.innerHTML='<span class="pi-name">'+escHtml(p.name)+'</span><span class="pi-cnt">'+((p.protoCount||0))+' 个原型</span>';
@@ -4521,7 +4643,11 @@ function renderProjectList(projects, last){
     dl.onclick=function(ev){ ev.stopPropagation(); askProjectRemove(p); };
     acts.appendChild(rn); acts.appendChild(dl);
     it.appendChild(acts);
-    projListEl.appendChild(it);
+    wrap.appendChild(it);
+    wrap.onclick=function(){
+      projPick=p.name; renderProjectList(projects,last);
+    };
+    projListEl.appendChild(wrap);
   });
   if(projCountEl)projCountEl.textContent='共 '+arr.length+' 个项目';
   if(projOkEl)projOkEl.disabled=!projPick;
@@ -4554,10 +4680,13 @@ function askProjectRemove(p){
 function projNew(){
   var v=String(projNewNameEl&&projNewNameEl.value||'').trim();
   if(!v){ alert('请输入项目名称。'); return; }
-  if(/[\\\/:*?"<>|]|\.\./.test(v)){ alert('名称含非法字符（不能含 \\ / : * ? \" < > |）。'); return; }
+  if(/[\\\/:*?"<>|]|\.\./.test(v)){ alert('名称含非法字符（不能含 \\ / : * ? " < > |）。'); return; }
   if(v.length>60){ alert('名称过长（≤60字）。'); return; }
   window.protoAPI.sandbox.projectCreate({name:v}).then(function(r){
-   if(r&&r.ok){ enterProject(r.name); }
+   if(r&&r.ok){
+     var pn=String(r.name||v);
+     enterProject(pn);
+   }
    else reportError('project-create', new Error(r&&r.error||'未知错误'), '创建失败：'+(r&&r.error||'未知错误'));
   });
 }

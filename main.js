@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -19,9 +19,25 @@ const gitConfigStore = require('./git/config-store');
 const os = require('node:os');
 
 let activeExecution = null;
+/* iter25: AI任务归属转移（关窗任务守卫，纯色，无渐变） */
+let aiEventTarget = null;
+let aiTransferToMain = false;
+let aiWinForceClose = false;
+
+/* 独立文档窗口：只做窗口管理+镜像中继，不存业务状态 */
+let mainWin = null;
+let docWin = null;
+/* iter15: AI独立窗口变量，与docWin互不干扰 */
+let aiWin = null;
 
 /* P0-1 fix: 移除全局 allow-file-access-from-files，改为 webPreferences 精细控制（保留 webSecurity:true） */
 // app.commandLine.appendSwitch('allow-file-access-from-files');
+
+/* P1 MD重构三-(1)：注册 proto-asset 特权协议（standard+secure+supportFetchAPI+stream+corsEnabled，Electron33 全支持） */
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'proto-asset',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+}]);
 
 /* ═══════ 开发隔离：未打包（npx electron .）时把 userData 重定向到本目录 .devdata ═══════
    避免开发/测试读写正式环境的 %APPDATA%/原型工具（sandbox、ai-config、AI 会话等）；
@@ -612,6 +628,485 @@ ipcMain.handle('project:remove', (ev, o) => {
 });
 
 /* ═══════ 渲染进程请求选择文本文件（原型 html / md），默认定位到软件包目录 ═══════ */
+/* ═══════ 设计规范与前端组件库（T1）：userData/specs|uilibs 中央库 + sandbox/<项目>/快照 ═══════
+   数据结构（见《设计规范开发方案.md》第2节）：
+   userData/specs/index.json:[{id,name,desc,file,updatedAt}] + specs/<id>.md
+   userData/uilibs/index.json:[{id,name,version,css[],js[],deps,initScript,snippet,updatedAt}]
+   sandbox/<项目>/project.json:{specId,specName,uiLibId,uiLibName,updatedAt} + design-spec.md（选用=拷贝快照） */
+const SPECS_ROOT = path.join(app.getPath('userData'), 'specs');
+const UILIBS_ROOT = path.join(app.getPath('userData'), 'uilibs');
+const SPECS_INDEX_FILE = path.join(SPECS_ROOT, 'index.json');
+const UILIBS_INDEX_FILE = path.join(UILIBS_ROOT, 'index.json');
+const SPEC_MAX_BYTES = 200 * 1024;
+function sanitizeLibId(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s || s.length > 80) return null;
+  if (s.indexOf('\0') >= 0) return null;
+  if (s.indexOf('/') >= 0 || s.indexOf('\\') >= 0) return null;
+  if (s.indexOf('..') >= 0) return null;
+  if (s === '.' || s === '..') return null;
+  if (!/^[A-Za-z0-9_\-\u4e00-\u9fa5]+$/.test(s)) return null;
+  return s;
+}
+function slugifyLibName(raw, fb) {
+  let s = String(raw == null ? '' : raw).trim().toLowerCase();
+  s = s.replace(/[\s_]+/g, '-').replace(/[^a-z0-9\-\u4e00-\u9fa5]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
+  if (!s) s = fb || 'spec';
+  return s;
+}
+function specTsNow(d) {
+  try {
+    const p = (n) => String(n).padStart(2, '0');
+    return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  } catch (e) { return String(Date.now()); }
+}
+function genUniqueLibId(wantName, existingIds, fb) {
+  const slug = slugifyLibName(wantName, fb);
+  const ts = specTsNow(new Date());
+  let rand = '';
+  try { rand = Date.now().toString(36).slice(-4); } catch (e) { rand = String(Math.floor(Math.random() * 46656).toString(36)); }
+  const set = new Set(existingIds || []);
+  let id = slug + '-' + ts + '-' + rand;
+  if (!set.has(id)) return id;
+  let n = 2;
+  while (set.has(id + '-' + n) && n < 10000) n++;
+  return id + '-' + n;
+}
+function ensureUniqueLibName(items, name, selfId) {
+  const s = String(name == null ? '' : name).trim();
+  if (!s) return s;
+  const taken = new Set();
+  (items || []).forEach((it) => { if (it && it.name && (!selfId || it.id !== selfId)) taken.add(String(it.name)); });
+  if (!taken.has(s)) return s;
+  let n = 2;
+  while (taken.has(s + '(' + n + ')') && n < 10000) n++;
+  return s + '(' + n + ')';
+}
+function readJsonArrayFile(f) {
+  try {
+    if (!fs.existsSync(f)) return [];
+    const raw = fs.readFileSync(f, 'utf8');
+    const arr = JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+function specPresetDefs() {
+  return [
+    { id: 'spec-default', name: '规范默认', desc: '通用设计规范（默认预设）', content: '# 通用设计规范\n\n> 默认预设：适用于大多数原型，约束色彩/字体/间距/圆角/按钮/表单。\n\n## 色彩\n- 主色 #1677FF，成功 #52C41A，警告 #FAAD14，错误 #FF4D4F，中性 #111418 / #8A94A6。\n- 背景 #FFFFFF / #F5F7FA，边框 #E5E8EF。\n\n## 字体字号\n- 中文 PingFang SC / Microsoft YaHei，数字 Roboto / Consolas。标题 18/16，正文 14，辅助 12。\n\n## 间距圆角\n- 基准 8px 网格；卡片内边距 16/20；圆角 6/8；按钮高 32/40。\n\n## 组件形态\n- 按钮主/次/文本三态齐全；表单 label 顶置或左置统一；表格斑马线可选。\n' },
+    { id: 'spec-enterprise', name: '企业端规范', desc: '企业中后台规范（默认预设）', content: '# 企业端设计规范\n\n> 默认预设：中后台密度优先，侧边导航 + 顶栏，表格/表单为主。\n\n## 布局\n- 左侧导航宽 200/208，顶栏高 48/56；内容区最大 1200，左右 24 留白。\n\n## 色彩\n- 主色 #165DFF（企业蓝），背景 #F2F3F5，卡片白底 1px 边框。\n\n## 表格表单\n- 表格行高 40/48，分页右下；查询表单一行 3-4 项，更多收起。\n\n## 适配组件库\n- 优先 Element Plus（桌面端），版本锁死见组件库预设。\n' },
+    { id: 'spec-gov', name: '政府端规范', desc: '政务端设计规范（默认预设）', content: '# 政府端设计规范\n\n> 默认预设：庄重稳重，高对比、无障碍，政务蓝主导。\n\n## 色彩\n- 政务蓝 #0B5FFF / #003A8C，深红点缀 #C41D23；正文 #1A1A1A，背景 #FFFFFF / #F5F6F7。\n\n## 字体\n- 标题黑体加粗，正文 14-16，行高不小于 1.75；对比度不低于 4.5:1。\n\n## 布局\n- 顶栏含国徽/标题区，面包屑必备；页脚版权信息齐全。\n\n## 无障碍\n- 焦点可见，键盘可达；图片必有 alt。\n' }
+  ];
+}
+function uilibPresetDefs() {
+  const now = Date.now();
+  return [
+    { id: 'uilib-vant', name: 'Vant', version: '4.9.0', css: ['https://cdn.jsdelivr.net/npm/vant@4.9.0/lib/index.css'], js: ['https://cdn.jsdelivr.net/npm/vue@3.4.0/dist/vue.global.prod.js', 'https://cdn.jsdelivr.net/npm/vant@4.9.0/lib/vant.min.js'], deps: 'vue@3.4.0', initScript: '', snippet: '<!-- Vant 4.9.0（移动端，锁版本） -->\n<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vant@4.9.0/lib/index.css">', updatedAt: now },
+    { id: 'uilib-element-plus', name: 'Element Plus', version: '2.7.0', css: ['https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.css'], js: ['https://cdn.jsdelivr.net/npm/vue@3.4.0/dist/vue.global.prod.js', 'https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.full.min.js'], deps: 'vue@3.4.0', initScript: '', snippet: '<!-- Element Plus 2.7.0（桌面端，锁版本） -->\n<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.css">', updatedAt: now },
+    { id: 'uilib-antd', name: 'Ant Design', version: '5.18.0', css: ['https://cdn.jsdelivr.net/npm/antd@5.18.0/dist/reset.css'], js: ['https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js', 'https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js', 'https://cdn.jsdelivr.net/npm/antd@5.18.0/dist/antd.min.js'], deps: 'react@18.3.1 react-dom@18.3.1', initScript: '', snippet: '<!-- Ant Design 5.18.0（桌面端，锁版本） -->\n<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.18.0/dist/reset.css">', updatedAt: now }
+  ];
+}
+function ensureSpecsInit() {
+  try {
+    if (!fs.existsSync(SPECS_ROOT)) fs.mkdirSync(SPECS_ROOT, { recursive: true });
+    let items = readJsonArrayFile(SPECS_INDEX_FILE);
+    if (Array.isArray(items) && items.length) {
+      try {
+        items.forEach((it) => {
+          if (!it || !it.id || !it.file) return;
+          const f = path.normalize(path.join(SPECS_ROOT, String(it.file)));
+          if (f !== path.normalize(SPECS_ROOT) && f.indexOf(path.normalize(SPECS_ROOT) + path.sep) === 0 && !fs.existsSync(f)) {
+            /* 索引有但文件缺失：占位空文件，避免 read 500 穿透 */
+            try { fs.writeFileSync(f, '# ' + String(it.name || it.id) + '\n\n（规范正文文件缺失，可重新编辑覆盖。）\n', 'utf8'); } catch (e) {}
+          }
+        });
+      } catch (e) {}
+      return items;
+    }
+    const defs = specPresetDefs();
+    const now = Date.now();
+    items = defs.map((d) => {
+      try { fs.writeFileSync(path.join(SPECS_ROOT, d.id + '.md'), d.content, 'utf8'); } catch (e) {}
+      return { id: d.id, name: d.name, desc: d.desc, file: d.id + '.md', updatedAt: now };
+    });
+    try { fs.writeFileSync(SPECS_INDEX_FILE, JSON.stringify(items, null, 2), 'utf8'); } catch (e) {}
+    return items;
+  } catch (e) { return []; }
+}
+function ensureUilibsInit() {
+  try {
+    if (!fs.existsSync(UILIBS_ROOT)) fs.mkdirSync(UILIBS_ROOT, { recursive: true });
+    const items = readJsonArrayFile(UILIBS_INDEX_FILE);
+    if (Array.isArray(items) && items.length) return items;
+    const defs = uilibPresetDefs();
+    try { fs.writeFileSync(UILIBS_INDEX_FILE, JSON.stringify(defs, null, 2), 'utf8'); } catch (e) {}
+    return defs;
+  } catch (e) { return []; }
+}
+function readSpecsIndex() { try { return readJsonArrayFile(SPECS_INDEX_FILE); } catch (e) { return []; } }
+function readUilibsIndex() { try { return readJsonArrayFile(UILIBS_INDEX_FILE); } catch (e) { return []; } }
+function writeSpecsIndex(items) { try { if (!fs.existsSync(SPECS_ROOT)) fs.mkdirSync(SPECS_ROOT, { recursive: true }); fs.writeFileSync(SPECS_INDEX_FILE, JSON.stringify(items || [], null, 2), 'utf8'); } catch (e) {} }
+function writeUilibsIndex(items) { try { if (!fs.existsSync(UILIBS_ROOT)) fs.mkdirSync(UILIBS_ROOT, { recursive: true }); fs.writeFileSync(UILIBS_INDEX_FILE, JSON.stringify(items || [], null, 2), 'utf8'); } catch (e) {} }
+function specTargetFor(id) {
+  const clean = sanitizeLibId(id);
+  if (!clean) return null;
+  const rootNorm = path.normalize(SPECS_ROOT);
+  const target = path.normalize(path.join(SPECS_ROOT, clean + '.md'));
+  if (target === rootNorm || target.indexOf(rootNorm + path.sep) !== 0) return null;
+  try { if (!isSubPath(target, SPECS_ROOT)) return null; } catch (e) { return null; }
+  return target;
+}
+function isUtf8Buffer(buf) {
+  try {
+    const TD = (typeof TextDecoder !== 'undefined') ? TextDecoder : require('util').TextDecoder;
+    new TD('utf-8', { fatal: true }).decode(buf);
+    return true;
+  } catch (e) { return false; }
+}
+function firstNonEmptyLine(text) {
+  try {
+    const lines = String(text == null ? '' : text).split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const t = String(lines[i] || '').trim().replace(/^#+\s*/, '').trim();
+      if (t) return t.slice(0, 120);
+    }
+  } catch (e) {}
+  return '';
+}
+function normalizeUrlArray(v) {
+  if (v == null || v === '') return { ok: true, list: [] };
+  if (!Array.isArray(v)) return { ok: false, error: 'css/js 须为数组' };
+  const out = [];
+  for (let i = 0; i < v.length; i++) {
+    const u = String(v[i] == null ? '' : v[i]).trim();
+    if (!u) continue;
+    if (u.indexOf('\0') >= 0 || /\s/.test(u) || !/^https?:\/\/\S+$/i.test(u)) return { ok: false, error: '组件地址格式错误，仅支持 http(s) URL：' + u.slice(0, 80) };
+    out.push(u);
+  }
+  return { ok: true, list: out };
+}
+function emptyProjectBinding() { return { specId: '', specName: '', uiLibId: '', uiLibName: '', updatedAt: 0 }; }
+function readProjectBindingFile(projDir) {
+  try {
+    const f = path.join(projDir, 'project.json');
+    if (!fs.existsSync(f)) return emptyProjectBinding();
+    const raw = JSON.parse(fs.readFileSync(f, 'utf8') || '{}');
+    const b = emptyProjectBinding();
+    b.specId = String((raw && raw.specId) || '');
+    b.specName = String((raw && raw.specName) || '');
+    b.uiLibId = String((raw && raw.uiLibId) || '');
+    b.uiLibName = String((raw && raw.uiLibName) || '');
+    b.updatedAt = Number((raw && raw.updatedAt) || 0) || 0;
+    return b;
+  } catch (e) { return emptyProjectBinding(); }
+}
+/* spec:list — 读库全量，缺目录自动初始化预设 */
+ipcMain.handle('spec:list', () => {
+  try {
+    const items = ensureSpecsInit();
+    return { ok: true, items: Array.isArray(items) ? items : [] };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e), items: [] }; }
+});
+/* spec:create-from-file — 复用 pick-text-file 已选路径 {srcPath,name,desc}，校验后缀/≤200KB/UTF-8 后拷贝入库 */
+ipcMain.handle('spec:create-from-file', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const srcPath = String(o2.srcPath == null ? '' : o2.srcPath).trim();
+    if (!srcPath) return { ok: false, error: '缺少源文件路径（请先经 pick-text-file 选择 .md）' };
+    if (srcPath.indexOf('\0') >= 0) return { ok: false, error: '非法源文件路径' };
+    if (path.extname(srcPath).toLowerCase() !== '.md') return { ok: false, error: '仅支持 .md 文件入库' };
+    let st = null;
+    try { st = fs.statSync(srcPath); } catch (e) { return { ok: false, error: '源文件不存在或不可读' }; }
+    if (!st || !st.isFile()) return { ok: false, error: '源文件不存在或不可读' };
+    if (st.size > SPEC_MAX_BYTES) return { ok: false, error: '文件超过200KB，拒绝入库' };
+    let buf = null;
+    try { buf = fs.readFileSync(srcPath); } catch (e) { return { ok: false, error: '源文件读取失败：' + String((e && e.message) || e) }; }
+    if (!buf || buf.length > SPEC_MAX_BYTES) return { ok: false, error: '文件超过200KB，拒绝入库' };
+    if (!isUtf8Buffer(buf)) return { ok: false, error: '文件非UTF-8编码，拒绝入库' };
+    const content = buf.toString('utf8');
+    let name = String(o2.name == null ? '' : o2.name).trim();
+    if (!name) { try { name = path.parse(srcPath).name; } catch (e) {} name = String(name || '').trim() || '未命名规范'; }
+    if (name.length > 60) return { ok: false, error: '名称过长（≤60字符）' };
+    let desc = String(o2.desc == null ? '' : o2.desc).trim();
+    if (!desc) desc = firstNonEmptyLine(content);
+    const items = ensureSpecsInit();
+    const uniqName = ensureUniqueLibName(items, name, null);
+    const id = genUniqueLibId(uniqName, items.map((x) => x && x.id), 'spec');
+    if (!sanitizeLibId(id)) return { ok: false, error: '生成规范ID失败' };
+    const target = specTargetFor(id);
+    if (!target) return { ok: false, error: '非法规范ID' };
+    try { fs.writeFileSync(target, content, 'utf8'); } catch (e) { return { ok: false, error: '写入规范失败：' + String((e && e.message) || e) }; }
+    const item = { id: id, name: uniqName, desc: desc, file: id + '.md', updatedAt: Date.now() };
+    items.push(item);
+    writeSpecsIndex(items);
+    return { ok: true, item: item };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* spec:create-from-text — 手写入库 {name,desc,content} */
+ipcMain.handle('spec:create-from-text', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const name = String(o2.name == null ? '' : o2.name).trim();
+    if (!name) return { ok: false, error: '名称不能为空' };
+    if (name.length > 60) return { ok: false, error: '名称过长（≤60字符）' };
+    const content = String(o2.content == null ? '' : o2.content);
+    if (!content.trim()) return { ok: false, error: '内容不能为空' };
+    if (Buffer.byteLength(content, 'utf8') > SPEC_MAX_BYTES) return { ok: false, error: '内容超过200KB，拒绝入库' };
+    let desc = String(o2.desc == null ? '' : o2.desc).trim();
+    if (!desc) desc = firstNonEmptyLine(content);
+    const items = ensureSpecsInit();
+    const uniqName = ensureUniqueLibName(items, name, null);
+    const id = genUniqueLibId(uniqName, items.map((x) => x && x.id), 'spec');
+    if (!sanitizeLibId(id)) return { ok: false, error: '生成规范ID失败' };
+    const target = specTargetFor(id);
+    if (!target) return { ok: false, error: '非法规范ID' };
+    try { fs.writeFileSync(target, content, 'utf8'); } catch (e) { return { ok: false, error: '写入规范失败：' + String((e && e.message) || e) }; }
+    const item = { id: id, name: uniqName, desc: desc, file: id + '.md', updatedAt: Date.now() };
+    items.push(item);
+    writeSpecsIndex(items);
+    return { ok: true, item: item };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* spec:update — 编辑覆盖 {id,name?,desc?,content?}，刷新 updatedAt */
+ipcMain.handle('spec:update', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const id = sanitizeLibId(o2.id);
+    if (!id) return { ok: false, error: '非法规范ID' };
+    const items = ensureSpecsInit();
+    let idx = -1;
+    for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === id) { idx = i; break; } }
+    if (idx < 0) return { ok: false, error: '规范不存在' };
+    const it = items[idx] || {};
+    if (o2.name !== undefined) {
+      const nn = String(o2.name == null ? '' : o2.name).trim();
+      if (!nn) return { ok: false, error: '名称不能为空' };
+      if (nn.length > 60) return { ok: false, error: '名称过长（≤60字符）' };
+      it.name = ensureUniqueLibName(items, nn, id);
+    }
+    if (o2.desc !== undefined) it.desc = String(o2.desc == null ? '' : o2.desc).trim();
+    if (o2.content !== undefined) {
+      const nc = String(o2.content == null ? '' : o2.content);
+      if (!nc.trim()) return { ok: false, error: '内容不能为空' };
+      if (Buffer.byteLength(nc, 'utf8') > SPEC_MAX_BYTES) return { ok: false, error: '内容超过200KB，拒绝保存' };
+      const target = specTargetFor(id);
+      if (!target) return { ok: false, error: '非法规范ID' };
+      try { fs.writeFileSync(target, nc, 'utf8'); } catch (e) { return { ok: false, error: '写入规范失败：' + String((e && e.message) || e) }; }
+      if (!it.desc) it.desc = firstNonEmptyLine(nc);
+    }
+    it.file = id + '.md';
+    it.updatedAt = Date.now();
+    items[idx] = it;
+    writeSpecsIndex(items);
+    return { ok: true, item: it };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* spec:rename — 只改库（index.json），不碰 md 正文 */
+ipcMain.handle('spec:rename', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const id = sanitizeLibId(o2.id);
+    const name = String(o2.name == null ? '' : o2.name).trim();
+    if (!id) return { ok: false, error: '非法规范ID' };
+    if (!name) return { ok: false, error: '名称不能为空' };
+    if (name.length > 60) return { ok: false, error: '名称过长（≤60字符）' };
+    const items = ensureSpecsInit();
+    let idx = -1;
+    for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === id) { idx = i; break; } }
+    if (idx < 0) return { ok: false, error: '规范不存在' };
+    items[idx].name = ensureUniqueLibName(items, name, id);
+    items[idx].updatedAt = Date.now();
+    writeSpecsIndex(items);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* spec:remove — 只删库（index + specs/<id>.md），不碰项目快照 */
+ipcMain.handle('spec:remove', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const id = sanitizeLibId(o2.id);
+    if (!id) return { ok: false, error: '非法规范ID' };
+    const items = ensureSpecsInit();
+    let idx = -1;
+    for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === id) { idx = i; break; } }
+    if (idx < 0) return { ok: false, error: '规范不存在' };
+    const target = specTargetFor(id);
+    try { if (target && fs.existsSync(target)) fs.unlinkSync(target); } catch (e) {}
+    items.splice(idx, 1);
+    writeSpecsIndex(items);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* spec:read — 预览/编辑回显 {id} -> {ok,content} */
+ipcMain.handle('spec:read', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const id = sanitizeLibId(o2.id);
+    if (!id) return { ok: false, error: '非法规范ID' };
+    const items = ensureSpecsInit();
+    let found = null;
+    for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === id) { found = items[i]; break; } }
+    if (!found) return { ok: false, error: '规范不存在' };
+    const target = specTargetFor(id);
+    if (!target) return { ok: false, error: '非法规范ID' };
+    if (!fs.existsSync(target)) return { ok: false, error: '规范文件缺失' };
+    let content = '';
+    try { content = fs.readFileSync(target, 'utf8'); } catch (e) { return { ok: false, error: '规范读取失败：' + String((e && e.message) || e) }; }
+    return { ok: true, content: content, item: found };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* uilib:list — 组件库全量，缺目录自动初始化预设 */
+ipcMain.handle('uilib:list', () => {
+  try {
+    const items = ensureUilibsInit();
+    return { ok: true, items: Array.isArray(items) ? items : [] };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e), items: [] }; }
+});
+/* uilib:save — 新增/编辑二合一 {id?,name,version?,css[],js[],deps?,initScript?,snippet?}，name 必填 */
+ipcMain.handle('uilib:save', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const name = String(o2.name == null ? '' : o2.name).trim();
+    if (!name) return { ok: false, error: '名称不能为空' };
+    if (name.length > 60) return { ok: false, error: '名称过长（≤60字符）' };
+    const cssR = normalizeUrlArray(o2.css);
+    if (!cssR.ok) return { ok: false, error: cssR.error };
+    const jsR = normalizeUrlArray(o2.js);
+    if (!jsR.ok) return { ok: false, error: jsR.error };
+    const version = String(o2.version == null ? '' : o2.version).trim().slice(0, 40);
+    const deps = String(o2.deps == null ? '' : o2.deps).trim().slice(0, 500);
+    const initScript = String(o2.initScript == null ? '' : o2.initScript);
+    if (Buffer.byteLength(initScript, 'utf8') > 50 * 1024) return { ok: false, error: 'initScript 过大（≤50KB）' };
+    const snippet = String(o2.snippet == null ? '' : o2.snippet);
+    if (Buffer.byteLength(snippet, 'utf8') > 50 * 1024) return { ok: false, error: 'snippet 过大（≤50KB）' };
+    const items = ensureUilibsInit();
+    const rawId = (o2.id == null || String(o2.id).trim() === '') ? '' : String(o2.id).trim();
+    if (rawId) {
+      const id = sanitizeLibId(rawId);
+      if (!id) return { ok: false, error: '非法组件ID' };
+      let idx = -1;
+      for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === id) { idx = i; break; } }
+      if (idx < 0) return { ok: false, error: '组件库不存在' };
+      const it = items[idx] || {};
+      it.name = ensureUniqueLibName(items, name, id);
+      it.version = version;
+      it.css = cssR.list;
+      it.js = jsR.list;
+      it.deps = deps;
+      it.initScript = initScript;
+      it.snippet = snippet;
+      it.updatedAt = Date.now();
+      items[idx] = it;
+      writeUilibsIndex(items);
+      return { ok: true, item: it };
+    }
+    const uniqName = ensureUniqueLibName(items, name, null);
+    const id = genUniqueLibId(uniqName, items.map((x) => x && x.id), 'uilib');
+    if (!sanitizeLibId(id)) return { ok: false, error: '生成组件ID失败' };
+    const item = { id: id, name: uniqName, version: version, css: cssR.list, js: jsR.list, deps: deps, initScript: initScript, snippet: snippet, updatedAt: Date.now() };
+    items.push(item);
+    writeUilibsIndex(items);
+    return { ok: true, item: item };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* uilib:remove — 只删库 */
+ipcMain.handle('uilib:remove', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const id = sanitizeLibId(o2.id);
+    if (!id) return { ok: false, error: '非法组件ID' };
+    const items = ensureUilibsInit();
+    let idx = -1;
+    for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === id) { idx = i; break; } }
+    if (idx < 0) return { ok: false, error: '组件库不存在' };
+    items.splice(idx, 1);
+    writeUilibsIndex(items);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* project:get-binding — 读 sandbox/<项目>/project.json，缺失返回空绑定不写盘 */
+ipcMain.handle('project:get-binding', (ev, o) => {
+  try {
+    const raw = (typeof o === 'string') ? o : ((o && o.project) || '');
+    const project = sanitizeProjectName(raw);
+    if (!project) return { ok: false, error: '非法项目名' };
+    const projDir = path.join(SANDBOX_ROOT, project);
+    if (!isSubPath(projDir, SANDBOX_ROOT)) return { ok: false, error: '项目不在沙箱范围内' };
+    if (!fs.existsSync(projDir)) return { ok: true, binding: emptyProjectBinding() };
+    const binding = readProjectBindingFile(projDir);
+    return { ok: true, binding: binding };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+/* project:set-binding — 拷贝规范快照 + 更新绑定，仅写当前项目 {project,specId?,uiLibId?} */
+ipcMain.handle('project:set-binding', (ev, o) => {
+  try {
+    const o2 = o || {};
+    const raw = (typeof o2 === 'string') ? o2 : (o2.project || '');
+    const project = sanitizeProjectName(raw);
+    if (!project) return { ok: false, error: '非法项目名' };
+    const projDir = path.join(SANDBOX_ROOT, project);
+    if (!isSubPath(projDir, SANDBOX_ROOT)) return { ok: false, error: '项目不在沙箱范围内' };
+    try { if (!fs.existsSync(projDir)) fs.mkdirSync(projDir, { recursive: true }); } catch (e) { return { ok: false, error: '创建项目目录失败' }; }
+    const projNorm = path.normalize(projDir);
+    const rootNorm = path.normalize(SANDBOX_ROOT);
+    if (projNorm === rootNorm) return { ok: false, error: '不可绑定沙箱根目录' };
+    let binding = readProjectBindingFile(projDir);
+    const hasSpec = Object.prototype.hasOwnProperty.call(o2, 'specId');
+    const hasUi = Object.prototype.hasOwnProperty.call(o2, 'uiLibId');
+    if (hasSpec) {
+      const v = (o2.specId == null) ? '' : String(o2.specId).trim();
+      if (!v) {
+        binding.specId = '';
+        binding.specName = '';
+        try {
+          const dst = path.normalize(path.join(projDir, 'design-spec.md'));
+          if (dst !== projNorm && dst.indexOf(projNorm + path.sep) === 0 && isSubPath(dst, SANDBOX_ROOT) && fs.existsSync(dst)) fs.unlinkSync(dst);
+        } catch (e) {}
+      } else {
+        const sid = sanitizeLibId(v);
+        if (!sid) return { ok: false, error: '非法规范ID' };
+        const items = ensureSpecsInit();
+        let found = null;
+        for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === sid) { found = items[i]; break; } }
+        if (!found) return { ok: false, error: '规范不存在' };
+        const src = specTargetFor(sid);
+        if (!src || !fs.existsSync(src)) return { ok: false, error: '规范文件缺失' };
+        const dst = path.normalize(path.join(projDir, 'design-spec.md'));
+        if (dst === projNorm || dst.indexOf(projNorm + path.sep) !== 0) return { ok: false, error: '非法快照路径' };
+        if (!isSubPath(dst, SANDBOX_ROOT)) return { ok: false, error: '项目不在沙箱范围内' };
+        try { fs.copyFileSync(src, dst); } catch (e) { return { ok: false, error: '拷贝规范快照失败：' + String((e && e.message) || e) }; }
+        binding.specId = found.id;
+        binding.specName = found.name;
+      }
+    }
+    if (hasUi) {
+      const v = (o2.uiLibId == null) ? '' : String(o2.uiLibId).trim();
+      if (!v) {
+        binding.uiLibId = '';
+        binding.uiLibName = '';
+      } else {
+        const uid = sanitizeLibId(v);
+        if (!uid) return { ok: false, error: '非法组件ID' };
+        const items = ensureUilibsInit();
+        let found = null;
+        for (let i = 0; i < items.length; i++) { if (items[i] && items[i].id === uid) { found = items[i]; break; } }
+        if (!found) return { ok: false, error: '组件库不存在' };
+        binding.uiLibId = found.id;
+        binding.uiLibName = found.name;
+      }
+    }
+    binding.updatedAt = Date.now();
+    const bf = path.normalize(path.join(projDir, 'project.json'));
+    if (bf === projNorm || bf.indexOf(projNorm + path.sep) !== 0) return { ok: false, error: '非法绑定路径' };
+    if (!isSubPath(bf, SANDBOX_ROOT)) return { ok: false, error: '项目不在沙箱范围内' };
+    try {
+      const tmp = bf + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(binding, null, 2), 'utf8');
+      fs.renameSync(tmp, bf);
+    } catch (e) { return { ok: false, error: '写入绑定失败：' + String((e && e.message) || e) }; }
+    return { ok: true, binding: binding };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+
 ipcMain.handle('pick-text-file', async (event, opts) => {
   const win = BrowserWindow.getFocusedWindow();
   const o = opts || {};
@@ -693,19 +1188,225 @@ function reqFileFor(dir) {
   } catch (e) {}
   return REQ_FALLBACK_FILE; /* 无有效沙箱目录：回退工具级 */
 }
-ipcMain.handle('doc:read-latest', (ev, dir) => {
-  const f = reqFileFor(dir);
+/* P3 多文档：doc 文件名清洗（仅允许 [a-zA-Z0-9_\u4e00-\u9fa5.-]，拒 / \ 盘符 ../ \0，且须为 .md） */
+function sanitizeDocFile(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s || s.includes('\0')) return null;
+  if (s.includes('/') || s.includes('\\')) return null;
+  if (s.includes('..')) return null;
+  if (/^[a-zA-Z]:/.test(s)) return null;
+  if (s === '.' || s === '..') return null;
+  if (!/^[a-zA-Z0-9_\u4e00-\u9fa5.\-]+$/.test(s)) return null;
+  if (!/\.md$/i.test(s)) return null;
+  if (s.length > 100) return null;
+  return s;
+}
+/* P3 多文档：兼容旧调用(doc:read-latest,dir)与新对象({dir,file}) */
+function parseDocReadArgs(a, b) {
+  let dir = '';
+  let file;
+  if (typeof a === 'string') {
+    dir = a;
+    if (typeof b === 'string' && b) file = b;
+    else if (b && typeof b === 'object' && typeof b.file === 'string' && b.file) file = b.file;
+  } else if (a && typeof a === 'object') {
+    dir = a.dir != null ? String(a.dir) : '';
+    if (typeof a.file === 'string' && a.file) file = a.file;
+    else if (typeof b === 'string' && b) file = b;
+  }
+  return { dir: dir, file: file };
+}
+/* P3 多文档：兼容旧调用(doc:write-latest,dir,content)与新对象({dir,file,content})/({dir,file},content) */
+function parseDocWriteArgs(a, b, c) {
+  let dir = '';
+  let file;
+  let content;
+  if (typeof a === 'string') {
+    dir = a;
+    if (b && typeof b === 'object') {
+      file = b.file;
+      content = (b.content !== undefined ? b.content : c);
+    } else {
+      content = b;
+      if (typeof c === 'string' && c) file = c;
+      else if (c && typeof c === 'object' && typeof c.file === 'string') file = c.file;
+    }
+  } else if (a && typeof a === 'object') {
+    dir = a.dir != null ? String(a.dir) : '';
+    if (typeof a.file === 'string' && a.file) file = a.file;
+    content = (a.content !== undefined ? a.content : b);
+    if (content !== undefined && typeof content === 'object' && content !== null && content.content !== undefined && a.content === undefined) content = content.content;
+    if (!file && c && typeof c === 'string') file = c;
+  }
+  return { dir: dir, file: file, content: content };
+}
+ipcMain.handle('doc:list', (ev, o) => {
+  let dir = '';
+  if (typeof o === 'string') dir = o;
+  else if (o && typeof o === 'object') dir = String(o.dir != null ? o.dir : '');
+  const dn = validProtoDir(dir);
+  if (!dn) return { ok: false, error: '目录不在沙箱范围内' };
+  try {
+    let entries = null;
+    try { entries = fs.readdirSync(dn, { withFileTypes: true }); } catch (e) { return { ok: false, error: '读取目录失败' }; }
+    const docs = [];
+    const dnNorm = path.normalize(dn);
+    for (const ent of (entries || [])) {
+      try {
+        if (!ent || !ent.isFile()) continue;
+        const name = String(ent.name || '');
+        if (!name) continue;
+        if (name.charAt(0) === '.' || name.charAt(0) === '~' || name.charAt(0) === '$') continue;
+        if (name.slice(-1) === '~' || /\.tmp$/i.test(name)) continue;
+        if (!/\.md$/i.test(name)) continue;
+        const full = path.normalize(path.join(dn, name));
+        if (full !== path.normalize(path.join(dnNorm, name))) continue;
+        if (full !== dnNorm && !full.startsWith(dnNorm + path.sep)) continue;
+        if (!isSubPath(full, SANDBOX_ROOT)) continue;
+        let st = null;
+        try { st = fs.statSync(full); } catch (e) { continue; }
+        if (!st || !st.isFile()) continue;
+        docs.push({ file: name, size: st.size, mtimeMs: st.mtimeMs });
+      } catch (e) {}
+    }
+    docs.sort((x, y) => y.mtimeMs - x.mtimeMs);
+    return { ok: true, docs: docs.slice(0, 20) };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle('doc:read-latest', (ev, a, b) => {
+  const parsed = parseDocReadArgs(a, b);
+  const fileRaw = parsed.file;
+  if (fileRaw != null && String(fileRaw) !== '') {
+    const clean = sanitizeDocFile(fileRaw);
+    if (!clean) return { ok: false, error: '非法文件名' };
+    try {
+      const dirNorm = path.normalize(String(parsed.dir || ''));
+      if (!isSubPath(dirNorm, SANDBOX_ROOT)) return { ok: false, error: '目录不在沙箱范围内' };
+      const target = path.normalize(path.join(dirNorm, clean));
+      if (target === dirNorm || (!target.startsWith(dirNorm + path.sep))) return { ok: false, error: '目录不在沙箱范围内' };
+      if (!isSubPath(target, SANDBOX_ROOT)) return { ok: false, error: '目录不在沙箱范围内' };
+      try {
+        if (!fs.existsSync(target)) return { ok: false, error: '文件不存在' };
+        return { ok: true, content: fs.readFileSync(target, 'utf8') };
+      } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  }
+  const f = reqFileFor(parsed.dir);
   try {
     if (!fs.existsSync(f)) return { ok: true, content: '# 最新需求\n\n（在此编写当前迭代的需求。）\n' };
     return { ok: true, content: fs.readFileSync(f, 'utf8') };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
-ipcMain.handle('doc:write-latest', (ev, dir, content) => {
-  const f = reqFileFor(dir);
+ipcMain.handle('doc:write-latest', (ev, a, b, c) => {
+  const parsed = parseDocWriteArgs(a, b, c);
+  const fileRaw = parsed.file;
+  if (fileRaw != null && String(fileRaw) !== '') {
+    const clean = sanitizeDocFile(fileRaw);
+    if (!clean) return { ok: false, error: '非法文件名' };
+    try {
+      const dirNorm = path.normalize(String(parsed.dir || ''));
+      if (!isSubPath(dirNorm, SANDBOX_ROOT)) return { ok: false, error: '目录不在沙箱范围内' };
+      const target = path.normalize(path.join(dirNorm, clean));
+      if (target === dirNorm || (!target.startsWith(dirNorm + path.sep))) return { ok: false, error: '目录不在沙箱范围内' };
+      if (!isSubPath(target, SANDBOX_ROOT)) return { ok: false, error: '目录不在沙箱范围内' };
+      try {
+        fs.writeFileSync(target, String(parsed.content == null ? '' : parsed.content), 'utf8');
+        return { ok: true, path: target };
+      } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  }
+  const f = reqFileFor(parsed.dir);
   try {
-    fs.writeFileSync(f, String(content == null ? '' : content), 'utf8');
+    fs.writeFileSync(f, String(parsed.content == null ? '' : parsed.content), 'utf8');
     return { ok: true, path: f };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+/* P4 专业交付：导出标题清洗（去非法文件名字符，限长60） */
+function sanitizeExportTitle(raw) {
+  const s = String(raw == null ? '' : raw).trim() || '文档';
+  const clean = s.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return clean || '文档';
+}
+/* P4 专业交付：导出 HTML 封装（最小白底 body 样式，离线无头渲染用） */
+function buildExportHtml(inner) {
+  const body = String(inner == null ? '' : inner);
+  return '<!doctype html><html><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<style>html,body{margin:0;padding:0;background:#fff;}'
+    + 'body{padding:28px;background:#fff;color:#1f2937;font-family:-apple-system,"Microsoft YaHei",sans-serif;font-size:15px;line-height:1.75;word-break:break-word;}'
+    + 'img{max-width:100%;height:auto;}table{border-collapse:collapse;width:100%;margin:12px 0;}'
+    + 'th,td{border:1px solid #e5e7eb;padding:8px 10px;text-align:left;}pre{white-space:pre-wrap;word-break:break-all;background:#f8fafc;padding:12px;border-radius:6px;}'
+    + 'code{font-family:Consolas,monospace;}blockquote{margin:12px 0;padding:8px 14px;border-left:4px solid #e5e7eb;color:#4b5563;background:#f9fafb;}</style>'
+    + '</head><body>' + body + '</body></html>';
+}
+/* P4 专业交付：doc:export-long-image（隐藏窗口载 data URL，全页 capturePage 写 PNG） */
+ipcMain.handle('doc:export-long-image', async (ev, o) => {
+  const o2 = (o && typeof o === 'object') ? o : {};
+  const title = sanitizeExportTitle(o2.title);
+  const html = String(o2.html == null ? '' : o2.html);
+  if (!html) return { ok: false, error: '缺少导出内容' };
+  const width = (Number(o2.width) > 0) ? Math.min(2400, Math.max(600, Math.floor(Number(o2.width)))) : 1200;
+  const scale = (Number(o2.scale) > 0) ? Math.min(3, Math.max(1, Number(o2.scale))) : 2;
+  const parent = BrowserWindow.getFocusedWindow();
+  let save = null;
+  try {
+    const opts = { title: '导出长图', defaultPath: title + '-长图.png', filters: [{ name: 'PNG 图片', extensions: ['png'] }] };
+    save = parent ? await dialog.showSaveDialog(parent, opts) : await dialog.showSaveDialog(opts);
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  if (!save || save.canceled || !save.filePath) return { ok: false, cancelled: true };
+  let expWin = null;
+  try {
+    expWin = new BrowserWindow({
+      show: false, width: width, height: 800,
+      webPreferences: { nodeIntegration: false, contextIsolation: true }
+    });
+    const full = buildExportHtml(html);
+    await expWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(full));
+    let contentH = 0;
+    try { contentH = await expWin.webContents.executeJavaScript('Math.max(document.body?document.body.scrollHeight:0,document.documentElement?document.documentElement.scrollHeight:0)'); } catch (e) { contentH = 0; }
+    contentH = Math.max(200, Math.min(12000, Number(contentH) || 800));
+    try { expWin.setSize(width, Math.min(9000, contentH + 40)); } catch (e) {}
+    try { expWin.webContents.setZoomFactor(scale); } catch (e) {}
+    await new Promise((r) => setTimeout(r, 250));
+    const image = await expWin.webContents.capturePage();
+    try {
+      if (image && typeof image.saveToPNG === 'function') await image.saveToPNG(save.filePath);
+      else fs.writeFileSync(save.filePath, image.toPNG());
+    } catch (e) { return { ok: false, error: '写入文件失败：' + String(e && e.message || e) }; }
+    return { ok: true, filePath: save.filePath };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  finally { try { if (expWin && !expWin.isDestroyed()) expWin.close(); } catch (e) {} expWin = null; }
+});
+/* P4 专业交付：doc:export-pdf（隐藏窗口载 data URL，printToPDF 输出 A4） */
+ipcMain.handle('doc:export-pdf', async (ev, o) => {
+  const o2 = (o && typeof o === 'object') ? o : {};
+  const title = sanitizeExportTitle(o2.title);
+  const html = String(o2.html == null ? '' : o2.html);
+  if (!html) return { ok: false, error: '缺少导出内容' };
+  const parent = BrowserWindow.getFocusedWindow();
+  let save = null;
+  try {
+    const opts = { title: '导出 PDF', defaultPath: title + '.pdf', filters: [{ name: 'PDF 文档', extensions: ['pdf'] }] };
+    save = parent ? await dialog.showSaveDialog(parent, opts) : await dialog.showSaveDialog(opts);
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  if (!save || save.canceled || !save.filePath) return { ok: false, cancelled: true };
+  let expWin = null;
+  try {
+    expWin = new BrowserWindow({
+      show: false, width: 1200, height: 800,
+      webPreferences: { nodeIntegration: false, contextIsolation: true }
+    });
+    const full = buildExportHtml(html);
+    await expWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(full));
+    await new Promise((r) => setTimeout(r, 250));
+    let pdfData = null;
+    try {
+      pdfData = await expWin.webContents.printToPDF({ pageSize: 'A4', margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }, printBackground: true });
+    } catch (e) { return { ok: false, error: '生成 PDF 失败：' + String(e && e.message || e) }; }
+    try { fs.writeFileSync(save.filePath, pdfData); } catch (e) { return { ok: false, error: '写入文件失败：' + String(e && e.message || e) }; }
+    return { ok: true, filePath: save.filePath };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  finally { try { if (expWin && !expWin.isDestroyed()) expWin.close(); } catch (e) {} expWin = null; }
 });
 /* L4: 旧 cliVersion/withToolPrompt/isolate 已删除，统一走 runtimes/engine + byok-opencode */
 
@@ -1005,6 +1706,190 @@ function isSafeGitRel(rel){
 }
 function isValidBranch(b){ return /^[a-zA-Z0-9._\/-]+$/.test(b) && b.length<=60 && !b.includes('..'); }
 
+/* ═══════ P1 MD重构三-(1)(2)：proto-asset 图片资产（sandbox/<项目>/<原型>/assets/*） ═══════ */
+const PROTO_ASSET_EXT_MIME = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml'
+};
+/* P1 asset 文件名时间戳：img_yyyyMMdd_HHmmss（与 fmtTs 的 yyyyMMdd-HHmmss 区分，下划线分隔） */
+function fmtAssetTs(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+/* P1 proto-asset 协议 handler：只服务 SANDBOX_ROOT 内 assets 图片（normalize+startsWith 防..穿越，白名单后缀，不存在404） */
+async function handleProtoAsset(request) {
+  try {
+    const u = new URL(request.url);
+    let rel = '';
+    try {
+      const host = String(u.host || u.hostname || '');
+      const p = decodeURIComponentSafe(u.pathname || '');
+      /* 映射规范 proto-asset://local/<项目>/<原型>/assets/x.png：host=local 剥离，仅用 pathname；非 local host 则拼回首段 */
+      if (host && host !== '' && host !== 'local') rel = String('/' + host + p).replace(/^\/+/, '');
+      else rel = String(p || '').replace(/^\/+/, '');
+    } catch (e) { return new Response('Bad Request', { status: 400 }); }
+    if (!rel || rel.includes('\0')) return new Response('Forbidden', { status: 403 });
+    const rootNorm = path.normalize(SANDBOX_ROOT);
+    const full = path.normalize(path.join(SANDBOX_ROOT, rel));
+    if (full !== rootNorm && !full.startsWith(rootNorm + path.sep)) return new Response('Forbidden', { status: 403 });
+    if (!isSubPath(full, SANDBOX_ROOT)) return new Response('Forbidden', { status: 403 });
+    const ext = path.extname(full).toLowerCase();
+    const mime = PROTO_ASSET_EXT_MIME[ext];
+    if (!mime) return new Response('Forbidden', { status: 403 });
+    /* 仅服务 assets/ 内文件，不直接暴露 md/html/links 等 */
+    const segs = full.split(path.sep);
+    if (segs.indexOf('assets') < 0) return new Response('Forbidden', { status: 403 });
+    let st = null;
+    try { st = fs.statSync(full); } catch (e) { return new Response('Not Found', { status: 404 }); }
+    if (!st || !st.isFile()) return new Response('Not Found', { status: 404 });
+    const buf = fs.readFileSync(full);
+    return new Response(buf, { status: 200, headers: { 'content-type': mime, 'content-length': String(st.size) } });
+  } catch (e) {
+    return new Response('Not Found', { status: 404 });
+  }
+}
+
+/* P1 MD重构：保存剪贴板截图/图片到 <原型dir>/assets/ */
+ipcMain.handle('sandbox:save-asset', async (ev, o) => {
+  try {
+    const o2 = o || {};
+    const dn = validProtoDir(o2.dir);
+    if (!dn) return { ok: false, error: '目录不在沙箱范围内' };
+    let ext = String(o2.ext == null ? '' : o2.ext).trim().toLowerCase().replace(/^\./, '');
+    try {
+      if (!ext) {
+        const m = String(o2.name || '').trim().toLowerCase().match(/\.([a-z0-9]+)$/);
+        if (m) ext = m[1];
+      }
+    } catch (e) {}
+    if (!PROTO_ASSET_EXT_MIME['.' + ext]) ext = 'png';
+    let base = String(o2.name == null ? '' : o2.name).trim().replace(/\.[A-Za-z0-9]+$/, '');
+    try { base = String(base || '').replace(/\\/g, '/').split('/').pop(); } catch (e) {}
+    base = String(base || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+    if (!base) base = 'img_' + fmtAssetTs(new Date());
+    const assetsDir = path.join(dn, 'assets');
+    try { if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true }); } catch (e) { return { ok: false, error: '创建 assets 目录失败' }; }
+    let fileName = base + '.' + ext;
+    try {
+      let i = 1;
+      while (fs.existsSync(path.join(assetsDir, fileName)) && i < 1000) { fileName = base + '_' + i + '.' + ext; i++; }
+      if (fs.existsSync(path.join(assetsDir, fileName))) fileName = base + '_' + fmtAssetTs(new Date()) + '.' + ext;
+    } catch (e) {}
+    const target = path.normalize(path.join(assetsDir, fileName));
+    if (!isSubPath(target, SANDBOX_ROOT) || !target.startsWith(path.normalize(assetsDir) + path.sep)) return { ok: false, error: '非法文件名' };
+    let b64 = String(o2.dataBase64 == null ? '' : o2.dataBase64);
+    if (!b64) return { ok: false, error: '缺少图片数据' };
+    const comma = b64.indexOf(',');
+    if (b64.startsWith('data:') && comma >= 0) b64 = b64.slice(comma + 1);
+    b64 = b64.replace(/\s+/g, '');
+    if (!/^[A-Za-z0-9+/=_-]+$/.test(b64)) return { ok: false, error: '图片数据格式错误' };
+    if (b64.length > 20 * 1024 * 1024) return { ok: false, error: '图片过大（超过20MB）' };
+    let buf = null;
+    try { buf = Buffer.from(b64, 'base64'); } catch (e) { return { ok: false, error: '图片数据解码失败' }; }
+    if (!buf || !buf.length) return { ok: false, error: '图片数据为空' };
+    fs.writeFileSync(target, buf);
+    return { ok: true, relPath: 'assets/' + fileName };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e || '保存失败') };
+  }
+});
+
+/* P1 MD重构：读取 <原型dir>/assets 内图片转 DataURL（供导出内联与404容错） */
+ipcMain.handle('sandbox:read-asset-base64', async (ev, o) => {
+  try {
+    const o2 = o || {};
+    const dn = validProtoDir(o2.dir);
+    if (!dn) return { ok: false, error: '目录不在沙箱范围内' };
+    let rel = String(o2.relPath == null ? '' : o2.relPath).replace(/\\/g, '/').trim();
+    if (!rel) return { ok: false, error: '缺少图片路径' };
+    if (rel.includes('\0')) return { ok: false, error: '非法图片路径' };
+    if (rel.startsWith('/') || /^[a-zA-Z]:/.test(rel) || rel.includes('..')) return { ok: false, error: '非法图片路径' };
+    rel = rel.replace(/^\/+/, '').replace(/^\.\//, '');
+    const assetsNorm = path.normalize(path.join(dn, 'assets'));
+    const target = path.normalize(path.join(dn, rel));
+    if (target !== assetsNorm && !target.startsWith(assetsNorm + path.sep)) return { ok: false, error: '仅允许读取 assets 内图片' };
+    if (!isSubPath(target, SANDBOX_ROOT)) return { ok: false, error: '目录不在沙箱范围内' };
+    const ext = path.extname(target).toLowerCase();
+    const mime = PROTO_ASSET_EXT_MIME[ext];
+    if (!mime) return { ok: false, error: '不支持的图片格式' };
+    let st = null;
+    try { st = fs.statSync(target); } catch (e) { return { ok: false, error: '图片不存在' }; }
+    if (!st || !st.isFile()) return { ok: false, error: '图片不存在' };
+    const buf = fs.readFileSync(target);
+    return { ok: true, dataUrl: 'data:' + mime + ';base64,' + buf.toString('base64') };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e || '读取失败') };
+  }
+});
+
+/* P2 MD重构：列出 <原型dir>/assets 内白名单图片（按 mtime 倒序） */
+ipcMain.handle('sandbox:list-assets', async (ev, o) => {
+  try {
+    const o2 = o || {};
+    const dn = validProtoDir(o2.dir);
+    if (!dn) return { ok: false, error: '目录不在沙箱范围内' };
+    const assetsDir = path.join(dn, 'assets');
+    try {
+      if (!fs.existsSync(assetsDir)) return { ok: true, items: [] };
+    } catch (e) { return { ok: true, items: [] }; }
+    let entries = null;
+    try { entries = fs.readdirSync(assetsDir, { withFileTypes: true }); } catch (e) { return { ok: false, error: '读取 assets 目录失败' }; }
+    const items = [];
+    for (const ent of (entries || [])) {
+      try {
+        if (!ent || !ent.isFile()) continue;
+        const name = String(ent.name || '');
+        if (!name || name.includes('\0')) continue;
+        const ext = path.extname(name).toLowerCase();
+        if (!PROTO_ASSET_EXT_MIME[ext]) continue;
+        const full = path.normalize(path.join(assetsDir, name));
+        if (!full.startsWith(path.normalize(assetsDir) + path.sep)) continue;
+        if (!isSubPath(full, SANDBOX_ROOT)) continue;
+        let st = null;
+        try { st = fs.statSync(full); } catch (e) { continue; }
+        if (!st || !st.isFile()) continue;
+        items.push({ name: name, relPath: 'assets/' + name, size: st.size, mtimeMs: st.mtimeMs });
+      } catch (e) {}
+    }
+    items.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return { ok: true, items: items };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e || '获取失败') };
+  }
+});
+
+/* P2 MD重构：删除 <原型dir>/assets 内单个图片（仅允许删除该目录内文件，绝不删目录外） */
+ipcMain.handle('sandbox:delete-asset', async (ev, o) => {
+  try {
+    const o2 = o || {};
+    const dn = validProtoDir(o2.dir);
+    if (!dn) return { ok: false, error: '目录不在沙箱范围内' };
+    const name = String(o2.name == null ? '' : o2.name).trim();
+    if (!name) return { ok: false, error: '缺少文件名' };
+    if (name.includes('\0')) return { ok: false, error: '非法文件名' };
+    if (name.includes('/') || name.includes('\\')) return { ok: false, error: '非法文件名' };
+    if (/^[a-zA-Z]:/.test(name) || name.includes('..')) return { ok: false, error: '非法文件名' };
+    if (name === '.' || name === '..') return { ok: false, error: '非法文件名' };
+    if (!/^[a-zA-Z0-9_.\-]+$/.test(name)) return { ok: false, error: '非法文件名' };
+    const assetsDir = path.join(dn, 'assets');
+    const assetsNorm = path.normalize(assetsDir);
+    const target = path.normalize(path.join(assetsDir, name));
+    if (target === assetsNorm || !target.startsWith(assetsNorm + path.sep)) return { ok: false, error: '非法文件名' };
+    if (!isSubPath(target, SANDBOX_ROOT)) return { ok: false, error: '目录不在沙箱范围内' };
+    let st = null;
+    try { st = fs.statSync(target); } catch (e) { return { ok: false, error: '文件不存在' }; }
+    if (!st || !st.isFile()) return { ok: false, error: '仅允许删除文件' };
+    try { fs.unlinkSync(target); } catch (e) { return { ok: false, error: String((e && e.message) || e || '删除失败') }; }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e || '删除失败') };
+  }
+});
+
 /* L4 old code removed, unified to startAgentExecution */
 
 ipcMain.handle('ai:get-config', () => loadAiCfg());
@@ -1237,6 +2122,18 @@ ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraO
   }
   const aiCfg = loadAiCfg();
   const webContents = ev.sender;
+  /* iter25: 记录事件归属，支持关窗后转主窗口续跑 */
+  try { aiEventTarget = ev.sender; aiTransferToMain = false; } catch (e) {}
+  function emitAiEvent(payload) {
+    try {
+      var target = null;
+      try {
+        if (aiTransferToMain && mainWin && !mainWin.isDestroyed()) target = mainWin.webContents;
+        else target = aiEventTarget || webContents;
+      } catch (e) { target = webContents; }
+      try { if (target && !target.isDestroyed()) target.send('ai:event', payload); } catch (e) {}
+    } catch (e) {}
+  }
   const isApiMode = aiCfg.mode === 'api' || aiCfg.providerType === 'api' || aiCfg.engine === 'api';
   let def = null;
   let resolvedBin = null;
@@ -1264,7 +2161,7 @@ ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraO
     if (!def) throw new Error('未找到 OpenCode 适配器，BYOK 模式依赖本地 OpenCode CLI');
     resolvedBin = await resolveAgentExecutable(def, aiCfg.cliPath);
     if (!resolvedBin) {
-      webContents.send('ai:event', {
+      emitAiEvent({
         type: 'error', code: 'CLI_NOT_FOUND', title: '缺少 OpenCode CLI',
         message: '大模型 API 模式需要本地安装 OpenCode 负责执行文件修改，请先安装或指定路径。'
       });
@@ -1286,7 +2183,7 @@ ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraO
     const byokModel = (targetModel && targetModel !== 'default') ? targetModel : String(byokSrc.model || '').trim();
     const byokConfig = buildOpenCodeByokProviderConfig(byokSrc, byokModel);
     if (!byokConfig) {
-      webContents.send('ai:event', {
+      emitAiEvent({
         type: 'error', code: 'INVALID_BYOK_CONFIG', title: 'API 配置不完整',
         message: '请在设置中心检查 API Key、BaseURL 及模型名称是否已正确配置。'
       });
@@ -1298,7 +2195,7 @@ ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraO
     const agentId = aiCfg.agentId || 'opencode';
     def = getAgentDef(agentId) || getAgentDef('opencode');
     if (!def) {
-      webContents.send('ai:event', { type: 'error', code: 'AGENT_NOT_FOUND', title: '未找到 Agent', message: String(agentId) });
+      emitAiEvent({ type: 'error', code: 'AGENT_NOT_FOUND', title: '未找到 Agent', message: String(agentId) });
       return { ok: false, success: false, error: '未找到 Agent 适配器' };
     }
     let customPath = aiCfg.cliPath;
@@ -1307,7 +2204,7 @@ ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraO
     } catch (e) {}
     resolvedBin = await resolveAgentExecutable(def, customPath);
     if (!resolvedBin) {
-      webContents.send('ai:event', {
+      emitAiEvent({
         type: 'error', code: 'CLI_NOT_FOUND', title: ('未检测到 ' + def.name),
         message: ('未找到 ' + def.name + ' 可执行文件，请在终端执行安装或在设置中心指定路径。')
       });
@@ -1326,28 +2223,29 @@ ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraO
       cwd,
       options: opts,
       handlers: {
-        onThinking: (text) => webContents.send('ai:event', { type: 'thinking', text: String((text && text.text) || text || '') }),
-        onChunk: (text) => webContents.send('ai:event', { type: 'chunk', text: String((text && text.text) || text || '') }),
-        onToolCall: (data) => webContents.send('ai:event', { type: 'tool_call', ...data }),
+        onThinking: (text) => emitAiEvent({ type: 'thinking', text: String((text && text.text) || text || '') }),
+        onChunk: (text) => emitAiEvent({ type: 'chunk', text: String((text && text.text) || text || '') }),
+        onToolCall: (data) => emitAiEvent({ type: 'tool_call', ...data }),
         onSession: (id) => {
           const sid = String((id && (id.sessionId || id.id || id.sessionID || id.session_id || id.session)) || (typeof id === 'string' ? id : '') || '');
-          webContents.send('ai:event', { type: 'session', id: sid, sessionId: sid });
+          emitAiEvent({ type: 'session', id: sid, sessionId: sid });
         },
         onError: (diag) => {
           const d = (diag && typeof diag === 'object') ? diag : { message: String((diag && diag.message) || diag || '未知错误') };
           // 自愈降级：若因携带失效的 sessionId 导致 SESSION_NOT_FOUND，自动抹除并无感重试一次全新会话
           if (d.code === 'SESSION_NOT_FOUND' && opts.sessionId && !isRetry) {
-            try { webContents.send('ai:event', { type: 'session', id: '', sessionId: '' }); } catch (e) {}
+            try { emitAiEvent({ type: 'session', id: '', sessionId: '' }); } catch (e) {}
             const retryOpts = { ...opts };
             delete retryOpts.sessionId;
             activeExecution = runAgentProcess(retryOpts, true);
             return;
           }
           activeExecution = null;
+          try { aiTransferToMain = false; aiEventTarget = null; } catch (e) {}
           try {
-            webContents.send('ai:event', { type: 'error', code: d.code || 'EXECUTION_FAILURE', title: d.title || '调用失败', message: d.message || '调用失败', action: d.action || 'retry' });
+            emitAiEvent({ type: 'error', code: d.code || 'EXECUTION_FAILURE', title: d.title || '调用失败', message: d.message || '调用失败', action: d.action || 'retry' });
           } catch (e) {
-            try { webContents.send('ai:event', { type: 'error', message: String((diag && diag.message) || diag || '未知错误') }); } catch (ee) {}
+            try { emitAiEvent({ type: 'error', message: String((diag && diag.message) || diag || '未知错误') }); } catch (ee) {}
           }
         },
         onClose: ({ cancelled, code } = {}) => {
@@ -1360,13 +2258,14 @@ ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraO
             fileChanges = [];
           }
           try {
-            webContents.send('ai:event', {
+            emitAiEvent({
               type: 'done',
               cancelled: !!cancelled,
               code,
               fileChanges
             });
           } catch (e) {}
+          try { aiTransferToMain = false; aiEventTarget = null; } catch (e) {}
         }
       }
     });
@@ -1384,6 +2283,7 @@ ipcMain.handle('ai:cancel', async () => {
     }
   } catch (e) {}
   activeExecution = null;
+  try { aiTransferToMain = false; aiEventTarget = null; } catch (e) {}
   return 'ok';
 });
 
@@ -2419,6 +3319,184 @@ ipcMain.handle('git:heal-repair', async (ev, o) => {
   return { ok: true, backupDir: backupRoot, healed, nested };
 });
 
+/* ═══════ 独立文档窗口：复用同一 HTML，以 query 标识启动（docwin=1 时渲染进程只显示文档面板） ═══════ */
+function createDocWindow(opts) {
+  try {
+    if (docWin && !docWin.isDestroyed()) { try { docWin.focus(); } catch (e) {} return docWin; }
+  } catch (e) {}
+  var _o = (opts && typeof opts === 'object') ? opts : {};
+  var _project = _o.project != null ? String(_o.project) : '';
+  var _proto = _o.proto != null ? String(_o.proto) : '';
+  var _q = { docwin: '1' };
+  if (_project) _q.project = encodeURIComponent(_project);
+  if (_proto) _q.proto = encodeURIComponent(_proto);
+  docWin = new BrowserWindow({
+    width: 520,
+    height: 800,
+    title: '文档-功能说明',
+    autoHideMenuBar: true,
+    show: true,
+    webPreferences: {
+      webSecurity: true, // P0-1 fix
+      allowFileAccessFromFiles: false, // P0-1 fix
+      allowRunningInsecureContent: false, // P0-1 fix
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+  try { docWin.setMenuBarVisibility(false); } catch (e) {}
+  docWin.on('closed', () => {
+    docWin = null;
+    try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('doc:mirror', { kind: 'mode', mode: 'panel' }); } catch (e) {}
+  });
+  try { docWin.loadFile('原型+文档.html', { query: _q }); } catch (e) {}
+  try { docWin.show(); } catch (e) {}
+  try { docWin.maximize(); } catch (e) {}
+  return docWin;
+}
+/* iter15: AI独立窗口复用docwin实现模式，变量aiWin独立，query aiwin=1 (+project/proto)，关闭经doc:mirror kind=ai-mode通知主窗（handleDocMirror忽略该kind故不冲突） */
+function createAiWindow(opts) {
+  try {
+    if (aiWin && !aiWin.isDestroyed()) { try { aiWin.focus(); } catch (e) {} return aiWin; }
+  } catch (e) {}
+  var _o = (opts && typeof opts === 'object') ? opts : {};
+  var _project = _o.project != null ? String(_o.project) : '';
+  var _proto = _o.proto != null ? String(_o.proto) : '';
+  var _q = { aiwin: '1' };
+  if (_project) _q.project = encodeURIComponent(_project);
+  if (_proto) _q.proto = encodeURIComponent(_proto);
+  aiWin = new BrowserWindow({
+    width: 900,
+    height: 700,
+    title: 'AI对话',
+    autoHideMenuBar: true,
+    show: true,
+    webPreferences: {
+      webSecurity: true,
+      allowFileAccessFromFiles: false,
+      allowRunningInsecureContent: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+  try { aiWin.setMenuBarVisibility(false); } catch (e) {}
+  aiWin.on('closed', () => {
+    aiWin = null;
+    try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('doc:mirror', { kind: 'ai-mode', mode: 'ai-panel' }); } catch (e) {}
+  });
+  try { aiWin.loadFile('原型+文档.html', { query: _q }); } catch (e) {}
+  try { aiWin.show(); } catch (e) {}
+  try { aiWin.maximize(); } catch (e) {}
+  /* iter25: 关窗任务守卫（纯色，无渐变）：任务在跑时弹窗确认，继续跑则归属转主窗口 */
+  try {
+    aiWin.on('close', (e) => {
+      try {
+        if (aiWinForceClose) { aiWinForceClose = false; return; }
+        if (activeExecution) {
+          try { e.preventDefault(); } catch (ee) {}
+          var choice = 0;
+          try {
+            choice = dialog.showMessageBoxSync(aiWin, {
+              type: 'question', buttons: ['继续跑', '中断后关'], defaultId: 0, cancelId: 0,
+              title: 'AI任务进行中',
+              message: 'AI任务正在进行中，是否让任务在主窗口继续运行？',
+              detail: '选择“继续跑”任务归属转主窗口并在主窗口恢复提示；选择“中断后关”将停止任务后关闭窗口。'
+            });
+          } catch (err) { choice = 0; }
+          if (choice === 1) {
+            try {
+              if (activeExecution) {
+                try { if (typeof activeExecution.cancel === 'function') activeExecution.cancel().catch(function(){}); } catch (err) {}
+                try { if (activeExecution && activeExecution.pid) killProcessTree(activeExecution.pid).catch(function(){}); } catch (err) {}
+              }
+            } catch (err) {}
+            try { activeExecution = null; aiTransferToMain = false; aiEventTarget = null; } catch (err) {}
+            try { aiWinForceClose = true; aiWin.close(); } catch (err) {}
+          } else {
+            try { aiTransferToMain = true; } catch (err) {}
+            try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('doc:mirror', { kind: 'ai-busy-restore', payload: { restored: true } }); } catch (err) {}
+            try { aiWinForceClose = true; aiWin.close(); } catch (err) {}
+          }
+        }
+      } catch (err) {}
+    });
+  } catch (e) {}
+  return aiWin;
+}
+
+ipcMain.handle('docwin:open', (ev, opts) => {
+  try {
+    createDocWindow(opts);
+    try { if (docWin && !docWin.isDestroyed()) docWin.focus(); } catch (e) {}
+    return { ok: true, mode: 'win' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle('docwin:close', () => {
+  try {
+    try { if (docWin && !docWin.isDestroyed()) docWin.close(); } catch (e) {}
+    return { ok: true, mode: 'panel' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle('docwin:toggle', () => {
+  try {
+    /* iter25: 任务进行中拒绝切换 */
+    try { if (activeExecution) return { ok: false, error: 'busy' }; } catch (e) {}
+    if (docWin && !docWin.isDestroyed()) {
+      try { docWin.close(); } catch (e) {}
+      return { ok: true, mode: 'panel' };
+    }
+    createDocWindow();
+    return { ok: true, mode: 'win' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+/* iter15: aiwin三通道复用docwin模式 */
+ipcMain.handle('aiwin:open', (ev, opts) => {
+  try {
+    createAiWindow(opts);
+    try { if (aiWin && !aiWin.isDestroyed()) aiWin.focus(); } catch (e) {}
+    return { ok: true, mode: 'ai-win' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle('aiwin:close', () => {
+  try {
+    try { if (aiWin && !aiWin.isDestroyed()) aiWin.close(); } catch (e) {}
+    return { ok: true, mode: 'ai-panel' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle('aiwin:toggle', () => {
+  try {
+    /* iter25: 任务进行中拒绝切换 */
+    try { if (activeExecution) return { ok: false, error: 'busy' }; } catch (e) {}
+    if (aiWin && !aiWin.isDestroyed()) {
+      try { aiWin.close(); } catch (e) {}
+      return { ok: true, mode: 'ai-panel' };
+    }
+    createAiWindow();
+    return { ok: true, mode: 'ai-win' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+/* 镜像中继：msg 原样透传不解析 */
+ipcMain.handle('doc:mirror-push', (ev, msg) => {
+  try {
+    var hasDoc = false;
+    try { hasDoc = !!(docWin && !docWin.isDestroyed()); } catch (e) { hasDoc = false; }
+    var hasAi = false;
+    try { hasAi = !!(aiWin && !aiWin.isDestroyed()); } catch (e) { hasAi = false; }
+    if (!hasDoc && !hasAi) return { ok: false, nop: true };
+    try { if (hasDoc) docWin.webContents.send('doc:mirror', msg); } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    try { if (hasAi) aiWin.webContents.send('doc:mirror', msg); } catch (e) {}
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle('doc:mirror-back', (ev, msg) => {
+  try {
+    try { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('doc:mirror', msg); } catch (e) {}
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -2437,6 +3515,10 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     }
   });
+  mainWin = win;
+  /* 主窗口关闭联带独立文档窗口与AI窗口 */
+  win.on('close', () => { try { if (docWin && !docWin.isDestroyed()) docWin.close(); } catch (e) {} try { if (aiWin && !aiWin.isDestroyed()) aiWin.close(); } catch (e) {} });
+  win.on('closed', () => { try { if (mainWin === win) mainWin = null; } catch (e) {} });
   win.setMenuBarVisibility(false);
   win.once('ready-to-show', () => {
     win.maximize();
@@ -2452,6 +3534,8 @@ app.whenReady().then(() => {
   cleanOldLogs();         /* 清理 7 天前本地日志 */
   /* P0 凭据迁移：旧明文 token/username 先备份再迁入安全存储（失败不阻塞启动） */
   try { gitConfigStore.migratePlaintextTokensOnce().catch(() => {}); } catch (e) {}
+  /* P1 MD重构三-(1)：proto-asset 本地文件流服务（只服务 SANDBOX_ROOT 内 assets 图片） */
+  try { protocol.handle('proto-asset', handleProtoAsset); } catch (e) {}
   createWindow();
 });
 

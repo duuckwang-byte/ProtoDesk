@@ -393,6 +393,30 @@ function loadSubPage(s, subFile){
   }
 }
 window.loadSubPage = loadSubPage;
+/* P3 文档→画布复用器：按route只读匹配子页面并只读调用既有loadSubPage，不改其实现，失败返回false绝不抛错 */
+function jumpToSubPageByRoute(route){
+ try{
+  if(typeof loadSubPage!=='function') return false;
+  var src=null; try{ src=(typeof currentSource!=='undefined')?currentSource:null; }catch(e){ src=null; }
+  if(!src) return false;
+  var norm=function(s){ try{ return String(s||'').trim().replace(/^#/,'').trim().replace(/\.html?$/i,'').toLowerCase(); }catch(e){ return ''; } };
+  var target=norm(route);
+  if(!target) return false;
+  var cands=[];
+  try{
+   if(src.mainHtmlFile) cands.push(String(src.mainHtmlFile));
+   if(src.name&&/\.html?$/i.test(String(src.name))) cands.push(String(src.name));
+   if(src.subPages) for(var i=0;i<src.subPages.length;i++){ var sp=src.subPages[i]; if(!sp) continue; if(typeof sp==='string') cands.push(sp); else if(sp.file) cands.push(String(sp.file)); }
+   if(src.pages) for(var j=0;j<src.pages.length;j++){ var pg=src.pages[j]; if(!pg) continue; var f=String(pg); if(!/\.html?$/i.test(f)) f=f+'.html'; cands.push(f); }
+   if(src.htmlFiles) for(var k=0;k<src.htmlFiles.length;k++){ if(src.htmlFiles[k]) cands.push(String(src.htmlFiles[k])); }
+  }catch(e){}
+  for(var t=0;t<cands.length;t++){
+   if(norm(cands[t])===target){ loadSubPage(src,cands[t]); return true; }
+  }
+  return false;
+ }catch(e){ return false; }
+}
+try{ window.jumpToSubPageByRoute=jumpToSubPageByRoute; }catch(e){}
 
 function makeSourceItem(s){
   var hasSub = (s.subPages && s.subPages.length > 0);

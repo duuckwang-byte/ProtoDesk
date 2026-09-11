@@ -451,6 +451,10 @@ body .sb-foot{padding-bottom:58px}
 .set-select{width:100%;box-sizing:border-box;height:34px;border:1px solid var(--line);border-radius:8px;padding:0 8px;font-size:13px;background:#FAFBFC;outline:none;cursor:pointer}
 .set-tip{font-size:12px;color:var(--faint);line-height:1.5}
 .set-val{font-size:12.5px;color:var(--ink);background:var(--bg-subtle) /* P1-6 fix */;padding:6px 10px;border-radius:6px;border:1px solid var(--line);word-break:break-all}
+.set-shortcut-list{display:flex;flex-direction:column;gap:4px}
+.set-shortcut-row{display:flex;align-items:baseline;gap:10px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#FAFBFC}
+.set-shortcut-key{flex:none;min-width:150px;font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap}
+.set-shortcut-act{flex:1;font-size:12px;color:var(--ink-2);line-height:1.5}
 .set-actions{flex-direction:row;align-items:center;gap:10px;margin-top:4px}
 .set-status{font-size:12px;font-weight:600}
 .set-status.ok{color:var(--ok)}
@@ -903,3 +907,205 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 .api-profile-add:hover{ border-color:var(--pri); background:var(--pri-soft); }
 /* API服务商名称输入框沿用set-input，卡片标题单行省略已由api-profile-name承载 */
 #setApiProviderName{ width:100%; }
+
+/* ======= P1 MD重构：GFM排版体系（13px/1.75） ======= */
+.doc-content{ font-size:13px; line-height:1.75; color:var(--ink-2); word-break:break-word; -webkit-font-smoothing:antialiased }
+.doc-content h1, .doc-content h2, .doc-content h3, .doc-content h4, .doc-content h5, .doc-content h6{ color:var(--ink); font-weight:700; line-height:1.5; margin:16px 0 8px; word-break:break-word }
+.doc-content h1:first-child, .doc-content h2:first-child, .doc-content h3:first-child{ margin-top:0 }
+.doc-content h1{ font-size:18px; padding-bottom:8px; border-bottom:1px solid var(--line) }
+.doc-content h2{ font-size:16px; padding-bottom:6px; border-bottom:1px solid var(--line) }
+.doc-content h3{ font-size:15px }
+.doc-content h4{ font-size:14px }
+.doc-content h5{ font-size:13px }
+.doc-content h6{ font-size:12px; color:var(--sub) }
+.doc-content p{ margin:6px 0 }
+.doc-content strong{ color:var(--ink); font-weight:700 }
+.doc-content em{ font-style:italic }
+.doc-content del{ color:var(--sub); text-decoration:line-through }
+.doc-content a{ color:var(--pri); text-decoration:none; word-break:break-all }
+.doc-content a:hover{ text-decoration:underline }
+.doc-content ul, .doc-content ol{ margin:6px 0; padding-left:22px }
+.doc-content ul{ list-style:disc }
+.doc-content ol{ list-style:decimal }
+.doc-content li{ margin:3px 0; line-height:1.75 }
+.doc-content li::marker{ color:var(--sub) }
+/* 响应式表格：外层横向滚动，不挤破面板 */
+.md-table-wrap{ width:100%; overflow-x:auto; margin:10px 0; border:1px solid var(--line); border-radius:8px; background:var(--panel) }
+.md-table-wrap .md-table{ margin:0; border:none; min-width:480px }
+.doc-content .md-table-wrap .md-table th{ background:var(--bg-subtle); white-space:nowrap; position:sticky; top:0 }
+.doc-content hr{ border:none; border-top:1px solid var(--line); margin:14px 0 }
+/* 引用：左侧3px纯色条 */
+.doc-content blockquote{ margin:10px 0; padding:8px 12px; border-left:3px solid var(--pri); background:#F8FAFC; border-radius:0 8px 8px 0; color:var(--ink-2); font-size:13px; line-height:1.75 }
+.doc-content blockquote p{ margin:4px 0 }
+.doc-content blockquote blockquote{ margin:6px 0 }
+/* Callout三色（GitHub风格 NOTE/TIP/WARNING） */
+.doc-callout{ margin:10px 0; padding:9px 12px; border-radius:8px; border:1px solid var(--line); border-left-width:3px; font-size:13px; line-height:1.75; background:#FFFFFF }
+.doc-callout .doc-callout-title{ font-weight:700; font-size:12.5px; margin-bottom:4px }
+.doc-callout-note{ border-color:#BFDBFE; border-left-color:#3B82F6; background:#EFF6FF }
+.doc-callout-note .doc-callout-title{ color:#1D4ED8 }
+.doc-callout-tip{ border-color:#A7F3D0; border-left-color:#10B981; background:#ECFDF5 }
+.doc-callout-tip .doc-callout-title{ color:#047857 }
+.doc-callout-warning{ border-color:#FDE68A; border-left-color:#F59E0B; background:#FFFBEB }
+.doc-callout-warning .doc-callout-title{ color:#B45309 }
+/* 代码：行内与围栏 */
+.doc-content code{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; background:#F1F2F5; border:1px solid var(--line); border-radius:4px; padding:1px 5px; color:#1E293B; word-break:break-all }
+.doc-content pre{ background:#F6F7F9; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.65; white-space:pre-wrap; word-break:break-all; margin:10px 0; overflow-x:auto }
+.doc-content pre code{ background:transparent; border:none; padding:0; font-size:12px; color:var(--ink) }
+/* 任务列表checkbox */
+.doc-content .task-list{ list-style:none; padding-left:0 }
+.doc-content .task-list-item{ list-style:none; margin:4px 0 4px 0; display:flex; align-items:flex-start; gap:7px; line-height:1.75 }
+.doc-content .task-list-item input[type="checkbox"]{ flex:none; width:14px; height:14px; margin-top:5px; accent-color:var(--pri); cursor:pointer }
+.doc-content li.task-list-item{ margin-left:0 }
+/* 图片：100%居中圆角8px + 图注 */
+.doc-content .doc-img-wrap{ text-align:center; margin:10px 0 }
+.doc-content img{ max-width:100%; height:auto; display:block; margin:8px auto; border-radius:8px; border:1px solid var(--line); background:#FFFFFF }
+.doc-content .doc-img-caption{ display:block; text-align:center; font-size:11.5px; line-height:1.6; color:var(--sub); margin:4px 0 10px }
+/* 图片404虚线卡片：60px浅灰虚线，不破坏版式 */
+.doc-img-missing{ min-height:60px; display:flex; align-items:center; justify-content:center; gap:6px; margin:10px 0; padding:12px; border:1px dashed #CBD5E1; border-radius:8px; background:#F8FAFC; color:#64748B; font-size:12px; line-height:1.6; word-break:break-all }
+/* ======= P1 MD重构：Lightbox大图预览 ======= */
+.doc-lightbox-mask{ position:fixed; inset:0; z-index:1000; background:rgba(15,23,42,0.75); display:flex; align-items:center; justify-content:center; padding:24px; cursor:zoom-out }
+.doc-lightbox-img{ max-width:90vw; max-height:90vh; width:auto; height:auto; border-radius:8px; background:#FFFFFF; box-shadow:0 24px 60px rgba(0,0,0,0.35); cursor:default }
+/* 已移除空编辑工具条灰块 */
+/* ======= P2 MD重构：Scrollspy / 资产抽屉 / 微浮层 / 图片对齐（纯色，无渐变） ======= */
+.doc-toc .toc-item.active{ background:#E7ECFB; color:#3B5BDB; font-weight:700 }
+.doc-img-align-left{ display:block }
+.doc-img-align-center{ display:block }
+.doc-img-align-right{ display:block }
+#docAssetDrawer{ width:300px }
+.doc-asset-bar{ flex:none; display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); background:#F8FAFC }
+.doc-asset-count{ flex:1; min-width:0; font-size:11.5px; color:var(--sub); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.doc-asset-list{ flex:1; min-height:0; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px }
+.doc-asset-card{ display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#FFFFFF }
+.doc-asset-thumb{ flex:none; width:44px; height:44px; border-radius:6px; background:#F1F5F9; border:1px solid var(--line); object-fit:cover; cursor:pointer }
+.doc-asset-meta{ flex:1; min-width:0 }
+.doc-asset-name{ font-size:12px; font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.doc-asset-size{ font-size:11px; color:var(--faint) }
+.doc-asset-badge{ flex:none; font-size:10px; font-weight:700; padding:1px 6px; border-radius:99px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A }
+.doc-asset-ops{ flex:none; display:flex; flex-direction:column; gap:4px }
+.doc-asset-btn{ height:24px; padding:0 10px; border-radius:6px; border:1px solid var(--line); background:#FFFFFF; color:var(--ink-2); font-size:11.5px; font-weight:600; cursor:pointer }
+.doc-asset-btn:hover{ border-color:var(--pri); color:var(--pri) }
+.doc-asset-btn.danger{ border-color:#FDA29B; color:#B42318; background:#FEF3F2 }
+.doc-asset-btn.danger:hover{ background:#FEE2E2 }
+.doc-asset-empty{ font-size:12px; color:var(--faint); text-align:center; padding:24px 8px; line-height:1.6 }
+.doc-micro-pop{ position:fixed; z-index:700; width:280px; background:#FFFFFF; border:1px solid var(--line); border-radius:10px; box-shadow:0 12px 32px rgba(16,24,40,.22); padding:8px; display:flex; flex-direction:column; gap:6px }
+.doc-micro-ta{ width:100%; min-height:90px; max-height:220px; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12px; line-height:1.7; font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--ink); background:#FAFBFC; resize:vertical; outline:none }
+.doc-micro-ta:focus{ border-color:var(--pri); background:#FFFFFF }
+.doc-micro-bar{ display:flex; gap:6px; justify-content:flex-end }
+.doc-micro-btn{ height:26px; padding:0 12px; border-radius:6px; border:1px solid var(--line); background:#FFFFFF; color:var(--ink-2); font-size:12px; font-weight:600; cursor:pointer }
+.doc-micro-btn:hover{ border-color:var(--pri); color:var(--pri) }
+.doc-micro-btn.primary{ background:var(--pri); border-color:var(--pri); color:#FFFFFF }
+.doc-micro-btn.primary:hover{ background:#2F4BB8 }
+.doc-micro-hint{ font-size:11px; color:var(--faint); line-height:1.5 }
+/* ======= P3：route穿梭 / 内联SVG（单面板100%宽，纯色，无渐变） ======= */
+.doc-page-jump{ cursor:pointer }
+.doc-page-jump:hover{ color:var(--pri) }
+.doc-route-badge{ display:inline-block; font-size:11px; font-weight:700; padding:1px 8px; margin-left:6px; border-radius:99px; background:#E7ECFB; color:#3B5BDB; border:1px solid #C6DCFB; cursor:pointer; vertical-align:1px; white-space:nowrap }
+.doc-route-badge:hover{ background:#3B5BDB; color:#FFFFFF; border-color:#3B5BDB }
+.doc-svg-diagram{ width:100%; max-width:100%; box-sizing:border-box; overflow-x:auto; margin:10px 0 }
+.doc-svg-diagram-svg{ width:100%; max-width:100%; height:auto; display:block; background:#FFFFFF }
+.doc-diag-node{ font-size:12px; fill:#1F2937 }
+.doc-diag-line{ stroke:#64748B; stroke-width:1.6 }
+/* ======= P4：专业交付 / 全文检索 / 状态图（单面板100%宽，纯色，无渐变） ======= */
+.docs-panel{ position:relative }
+.doc-export-wrap{ position:relative; display:inline-flex; align-items:center }
+.doc-export-menu{ position:absolute; top:calc(100% + 6px); right:0; min-width:150px; background:#FFFFFF; border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); padding:5px; z-index:var(--z-overlay); display:flex; flex-direction:column; gap:3px }
+.doc-export-item{ width:100%; height:32px; padding:0 12px; border-radius:6px; font-size:12.5px; font-weight:600; color:var(--ink-2); text-align:left; display:flex; align-items:center; background:transparent; cursor:pointer; border:none; white-space:nowrap }
+.doc-export-item:hover{ background:var(--bg-subtle); color:var(--pri) }
+.doc-search-box{ position:absolute; top:46px; right:12px; z-index:var(--z-overlay); height:28px; min-height:28px; max-height:28px; display:flex; align-items:center; gap:6px; padding:0 6px 0 8px; background:#FFFFFF; border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow) }
+.doc-search-input{ width:150px; height:22px; border:none; outline:none; background:transparent; font-size:12px; color:var(--ink) }
+.doc-search-count{ flex:none; font-size:11px; color:var(--sub); min-width:32px; text-align:center; font-variant-numeric:tabular-nums }
+.doc-search-box .doc-search-btn{ height:22px; padding:0 8px; font-size:11px }
+.doc-search-hit{ background:#FEF08A; color:inherit; border-radius:2px; padding:0 1px }
+.doc-search-hit-active{ background:#F59E0B; color:#FFFFFF; border-radius:2px; padding:0 1px; outline:1px solid #B45309 }
+.doc-state-node{ font-size:12px; fill:#1F2937 }
+.doc-state-arrow{ stroke:#64748B; stroke-width:1.6 }
+/* ======= 文档编辑快捷键入口与弹窗（纯色，无渐变） ======= */
+.doc-shortcut-link{ margin-left:8px; padding:0 4px; height:22px; font-size:11.5px; font-weight:600; color:#3B5BDB; background:transparent; border:none; cursor:pointer; vertical-align:1px }
+.doc-shortcut-link:hover{ color:#2F4BB8; text-decoration:underline }
+.doc-shortcut-table{ width:100%; border-collapse:collapse; font-size:12px; line-height:1.6 }
+.doc-shortcut-table th,.doc-shortcut-table td{ border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top }
+.doc-shortcut-table th{ background:#F8FAFC; color:var(--ink); font-weight:700; white-space:nowrap }
+.doc-shortcut-table td:first-child{ white-space:nowrap; font-weight:600; color:var(--ink-2) }
+/* ======= 独立文档窗口双Tab与模式切换（纯色，无渐变） ======= */
+.doc-mode-tabs{ flex:none; display:flex; gap:6px; padding:8px 12px; border-bottom:1px solid var(--line); background:var(--bg-subtle) }
+.doc-mode-tab{ flex:none; width:120px; height:28px; border-radius:50px; border:1px solid var(--line); background:var(--panel); color:var(--sub); font-size:12px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; text-align:center }
+.doc-mode-tab:hover{ border-color:var(--pri); color:var(--pri) }
+.doc-mode-tab.on{ background:var(--pri); border-color:var(--pri); color:#FFFFFF }
+.doc-mode-tab.on:hover{ color:#FFFFFF }
+#btnDocWinToggle{ flex:none }
+/* ======= 独立文档窗口模式：仅留文档面板全屏（纯色，无渐变） ======= */
+body.docwin-mode .stage-head{ display:none }
+body.docwin-mode .sb{ display:none }
+body.docwin-mode .phone-holder{ display:none }
+body.docwin-mode .sb-hotzone{ display:none }
+body.docwin-mode .doc-hotzone{ display:none }
+body.docwin-mode .sheet-mask{ display:none }
+body.docwin-mode #aiMask{ display:none }
+body.docwin-mode #reqPanel{ display:none }
+body.docwin-mode #editBar{ display:none }
+body.docwin-mode #annoBadgeLayer{ display:none }
+body.docwin-mode #annoPopoverCard{ display:none }
+body.docwin-mode #selectionOverlay{ display:none }
+body.docwin-mode #linkInspector{ display:none }
+body.docwin-mode #linkMgrDrawer{ display:none }
+body.docwin-mode #annoMgrDrawer{ display:none }
+body.docwin-mode #multiEditDrawer{ display:none }
+body.docwin-mode .workbench-narrow-tip{ display:none }
+body.docwin-mode .app-body{ display:block; padding:0 }
+body.docwin-mode .stage{ display:block; height:100vh; padding:0 }
+body.docwin-mode .stage-frame{ display:block; padding:12px; height:100vh; overflow:auto }
+body.docwin-mode .docs-panel{ position:fixed; top:12px; right:12px; bottom:12px; left:12px; width:auto; height:auto; transform:none; z-index:60; flex:none }
+body.docwin-mode.kind-pc .docs-panel{ transform:none; width:auto; min-width:0; max-width:none }
+body.docwin-mode .doc-toc{ z-index:70 }
+/* iter15: 独立窗口恒为左侧目录+右侧文档（不跟随端别，目录为独立板块PC同款，纯色） */
+body.docwin-mode .stage-frame{ display:flex; flex-direction:row; gap:12px; padding:12px; height:100vh; overflow:hidden; box-sizing:border-box }
+body.docwin-mode .doc-toc{ position:static; flex:none; width:220px; min-width:220px; max-width:220px; align-self:stretch; height:auto; max-height:none; display:block; overflow-y:auto; top:auto; left:auto }
+body.docwin-mode .docs-panel{ position:static; flex:1 1 auto; min-width:0; width:auto; height:auto; max-width:none; transform:none; z-index:60 }
+body.docwin-mode.kind-pc .docs-panel{ position:static; transform:none; width:auto; min-width:0; max-width:none }
+body.docwin-mode.kind-mobile .docs-panel{ position:static; transform:none; width:auto; min-width:0; max-width:none }
+/* iter15: AI独立窗口仅留AI弹窗全屏（纯色） */
+body.aiwin-mode .workbench-narrow-tip{ display:none }
+body.aiwin-mode .app{ display:none }
+body.aiwin-mode .sb-hotzone{ display:none }
+body.aiwin-mode .doc-hotzone{ display:none }
+body.aiwin-mode #aiMask{ background:rgba(15,23,42,.42) }
+body.aiwin-mode .ai-modal{ width:100vw; max-width:100vw; height:100vh; max-height:100vh; min-height:0; border-radius:0; border:none }
+/* iter16: AI独立窗口四项联动优化（纯色） */
+.ai-head #btnAiWinToggle{ flex:none; margin-left:6px; margin-right:2px }
+body.aiwin-mode #aiClose{ display:none }
+body.aiwin-mode #sbProject, body.aiwin-mode #sbList, body.aiwin-mode #btnAddSource, body.aiwin-mode #btnAddGroup, body.aiwin-mode #btnSettings, body.aiwin-mode #sbTrigger, body.aiwin-mode #btnSbCollapse{ display:none }
+body.aiwin-mode #projMask{ display:none }
+body.aiwin-mode .ai-head #btnAiWinToggle{ display:inline-flex }
+/* iter17: 预览区就地改小浮层（纯色，无渐变） */
+.inline-edit-pop{position:fixed;z-index:400;width:440px;max-width:calc(100vw - 16px);background:#FFFFFF;border:1px solid #E3E6EC;border-radius:10px;box-shadow:0 12px 32px rgba(16,24,40,.18);display:flex;flex-direction:column;overflow:hidden}
+.inline-edit-hd{display:flex;align-items:center;gap:6px;padding:8px 10px;background:#F8FAFC;border-bottom:1px solid #E3E6EC;font-size:12px;font-weight:700;color:#1F2937}
+.inline-edit-tag{flex:none;font-size:10.5px;background:#E2E8F0;color:#475569;border-radius:4px;padding:1px 6px;font-weight:600}
+.inline-edit-sel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#64748B;font-family:monospace;font-size:11px;font-weight:400}
+.inline-edit-ta{width:100%;box-sizing:border-box;min-height:110px;max-height:220px;border:none;border-bottom:1px solid #E3E6EC;padding:8px 10px;font-size:12px;line-height:1.6;font-family:ui-monospace,Menlo,Consolas,monospace;color:#1F2937;background:#FFFFFF;resize:vertical;outline:none}
+.inline-edit-ta:focus{background:#FAFBFC}
+.inline-edit-wrap{position:relative}
+.inline-edit-wrap .inline-edit-ta{display:block;padding-bottom:38px}
+.inline-edit-inbtn{position:absolute;bottom:8px;height:24px;padding:0 10px;font-size:11.5px}
+.inline-edit-insave{right:8px}
+.inline-edit-incancel{right:66px}
+.inline-edit-ft{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 10px;background:#FFFFFF}
+.inline-edit-hint{flex:1;min-width:0;font-size:11px;color:#9CA3AF;line-height:1.4}
+.inline-edit-btn{flex:none;height:28px;padding:0 12px;border-radius:7px;border:1px solid #E3E6EC;background:#FFFFFF;color:#374151;font-size:12px;font-weight:600;cursor:pointer}
+.inline-edit-btn:hover{border-color:#3B5BDB;color:#3B5BDB}
+.inline-edit-btn.primary{background:#3B5BDB;border-color:#3B5BDB;color:#FFFFFF}
+.inline-edit-btn.primary:hover{background:#2F4BB8}
+/* iter18 B1 隐敏兜底：API卡片三字段即使残留也不显示（纯色，无渐变） */
+.api-profile-matrix .api-profile-sub{display:none}
+/* iter18 B6 文档窗免选项目：全程隐藏项目选择弹窗（纯色） */
+body.docwin-mode #projMask{display:none}
+/* iter25: docwin高度链修复（纯色，无渐变）：stage-frame/docs-panel/docs-body需100vh链+min-height:0+滚动容器overflow:auto，目录区独立滚动 */
+body.docwin-mode .app{height:100vh;min-height:0;overflow:hidden}
+body.docwin-mode .app-body{display:block;flex:1;min-height:0;height:100vh;max-height:100vh;overflow:hidden;padding:0}
+body.docwin-mode .stage{display:block;height:100%;min-height:0;overflow:hidden;padding:0}
+body.docwin-mode .stage-frame{display:flex;flex-direction:row;gap:12px;padding:12px;height:100vh;max-height:100vh;min-height:0;overflow:hidden;box-sizing:border-box}
+body.docwin-mode .docs-panel{position:static;flex:1 1 auto;min-width:0;min-height:0;height:100%;max-height:100%;display:flex;flex-direction:column;overflow:hidden}
+body.docwin-mode .docs-head{flex:none}
+body.docwin-mode .doc-mode-tabs{flex:none}
+body.docwin-mode .docs-body{flex:1 1 auto;min-height:0;overflow-y:auto}
+body.docwin-mode .doc-toc{position:static;flex:none;width:220px;min-width:220px;max-width:220px;align-self:stretch;min-height:0;max-height:100%;height:100%;display:block;overflow-y:auto}
+.proj-item{flex-wrap:wrap}

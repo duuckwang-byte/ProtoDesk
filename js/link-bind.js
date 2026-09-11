@@ -9,6 +9,51 @@ var LinkBind = (function () {
     return fallback || '';
   }
 
+  /* data-plink 打戳 helpers：toast + 作用域断言 + 文件定位 + plid 生成 */
+  function lbToast(msg) {
+    try { if (typeof showToast === 'function') { showToast(msg); return; } } catch (e) {}
+    try { if (typeof libStatus === 'function') { libStatus(msg); } } catch (e2) {}
+  }
+  function lbIsPreviewEl(el) {
+    try {
+      if (!el || !el.ownerDocument) return false;
+      var fd = null;
+      try { fd = (typeof frame !== 'undefined' && frame && frame.contentDocument) ? frame.contentDocument : null; } catch (e) {}
+      if (!fd) return false;
+      return el.ownerDocument === fd;
+    } catch (e) { return false; }
+  }
+  function lbCurHtmlFile() {
+    try { if (typeof curHtmlFile === 'function') return curHtmlFile(); } catch (e) {}
+    try { if (typeof editQueueCurHtmlFile === 'function') return editQueueCurHtmlFile(); } catch (e2) {}
+    try { if (typeof currentSource !== 'undefined' && currentSource) return (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name) || ''; } catch (e3) {}
+    return '';
+  }
+  function lbMakePlid() {
+    try { return 'lk_' + Date.now().toString(36) + Math.floor(Math.random() * 46656).toString(36); } catch (e) { return 'lk_' + Date.now(); }
+  }
+  function restampLive(restampId) {
+    try {
+      if (!restampId) return;
+      var sid = String(restampId).replace(/"/g, '');
+      if (!sid) return;
+      var doc = null;
+      try { doc = (typeof frame !== 'undefined' && frame && frame.contentDocument) ? frame.contentDocument : null; } catch (e) {}
+      if (!doc) return;
+      try { if (doc.querySelector('[data-plink="' + sid + '"]')) return; } catch (e) {}
+      var links = (typeof currentSource !== 'undefined' && currentSource && currentSource._links) || [];
+      var sel = '';
+      for (var i = 0; i < links.length; i++) {
+        var l = links[i];
+        if (String(l.plid || '') === sid || String(l.id || '') === sid) { sel = l.selector || ''; break; }
+      }
+      if (!sel) return;
+      var all = null;
+      try { all = doc.querySelectorAll(sel); } catch (e) { return; }
+      if (all && all.length === 1) { try { all[0].setAttribute('data-plink', sid); } catch (e2) {} }
+    } catch (e) {}
+  }
+
   /* ═══════ 悬停提示气泡样式（仅 iframe 内使用） ═══════ */
   var TIP_STYLE = 'position:absolute;pointer-events:none;z-index:99999;padding:4px 10px;border-radius:6px;'
     + 'background:#333;color:#fff;font:12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;'
@@ -22,24 +67,37 @@ var LinkBind = (function () {
     '  var P=window.__plrt||{links:[],mode:false,from:""};',
     '  function findLink(el){',
     '    if(P.mode)return null;',
-    '    var cur=location.hash.replace(/^#/,"");',
-    '    for(var i=0;i<P.links.length;i++){',
-    '      var l=P.links[i];',
-    '      if(l.page!==cur) continue;',
-    '      try{ if(el.closest(l.selector)){ /* 再次确认唯一性 */ var all=document.querySelectorAll(l.selector); if(all.length===1) return l; } }catch(e){}',
+    '    var cur="";try{cur=location.hash.replace(/^#/,"");}catch(e){};',
+    '    var holder=null;try{holder=(el&&el.closest)?el.closest("[data-plink]"):null;}catch(e){holder=null;}',
+    '    if(holder){',
+    '      var pid="";try{pid=String(holder.getAttribute("data-plink")||"");}catch(e){pid="";}',
+    '      if(pid){',
+    '        for(var i=0;i<P.links.length;i++){',
+    '          var l=P.links[i];var lid="";try{lid=String(l.plid||"");}catch(e){};var oid="";try{oid=String(l.id||"");}catch(e){};',
+    '          if((lid&&lid===pid)||(!lid&&oid&&oid===pid)){return{kind:"plink",link:l,el:holder,plid:pid};}',
+    '        }',
+    '        return{kind:"stale",plid:pid,el:holder,link:null};',
+    '      }',
+    '    }',
+    '    for(var j=0;j<P.links.length;j++){',
+    '      var m=P.links[j];',
+    '      if(m.page!==cur) continue;',
+    '      try{ if(el.closest(m.selector)){ var all=document.querySelectorAll(m.selector); if(all.length===1){ var rs=null; try{rs=String(m.plid||m.id||"")||null;}catch(e){rs=null;} return{kind:"legacy",link:m,el:el,restamp:rs}; } } }catch(e){}',
     '    }',
     '    return null;',
     '  }',
-    '  /* 捕获阶段 click 监听 */',
+    '  /* 捕获阶段 click 监听：仅 plink/legacy 拦截，stale 静默自清后放行原生，null 放行原生 */',
     '  document.addEventListener("click",function(ev){',
     '    if(P.mode)return; /* 编辑模式：外层检查器接管 */',
     '    if(ev.ctrlKey||ev.metaKey)return; /* Ctrl/Cmd 穿透 */',
     '    var t=ev.target;if(!t||t.nodeType!==1)return;',
-    '    var tag=String(t.tagName||"").toLowerCase();if(tag==="html"||tag==="body")return;',
-    '    var link=findLink(t);',
-    '    if(!link)return;',
+    '    var tag="";try{tag=String(t.tagName||"").toLowerCase();}catch(e){};if(tag==="html"||tag==="body")return;',
+    '    var res=findLink(t);',
+    '    if(!res)return;',
+    '    if(res.kind==="stale"){ try{ if(res.el&&res.el.removeAttribute)res.el.removeAttribute("data-plink"); }catch(e){} try{ parent.postMessage({type:"proto-link-stale",from:P.from,plid:res.plid||""},"*"); }catch(e2){} return; }',
     '    ev.preventDefault();ev.stopPropagation();',
-    '    try{ parent.postMessage({type:"proto-link",from:P.from,target:{proto:link.target,page:link.targetPage||""}},"*"); }catch(e){}',
+    '    var link=res.link;if(!link)return;',
+    '    try{ var msg={type:"proto-link",from:P.from,target:{proto:link.target,page:link.targetPage||""}}; if(res.kind==="legacy"&&res.restamp){msg.restamp=res.restamp;} parent.postMessage(msg,"*"); }catch(e){}',
     '  },true);',
     '  /* 预览态悬停提示 */',
     '  var tipEl=null,origShadow=null,origEl=null;',
@@ -75,14 +133,16 @@ var LinkBind = (function () {
     '    if(P.mode)return;',
     '    if(!P.links.length)return;',
     '    var t=ev.target;if(!t||t.nodeType!==1)return;',
-    '    var link=findLink(t);',
+    '    var res=findLink(t);',
+    '    var link=(res&&res.link)?res.link:null;',
     '    if(link) addTip(t,link);',
     '  },true);',
     '  document.addEventListener("mouseout",function(ev){',
     '    if(P.mode)return;',
     '    var t=ev.target;if(!t||t.nodeType!==1)return;',
-    '    var link=findLink(t);',
-    '    if(link) removeTip();',
+    '    var res2=findLink(t);',
+    '    var link2=(res2&&res2.link)?res2.link:null;',
+    '    if(link2) removeTip();',
     '  },true);',
     '  document.addEventListener("click",function(){ removeTip(); },true);',
     '  /* 外层消息监听 */',
@@ -114,6 +174,56 @@ var LinkBind = (function () {
     if(ev.origin !== 'null' && ev.origin !== location.origin) return false; // file:// origin 为 null，放行
     return true;
   }
+  /* stale 静默自清：按 plid 精确清 live + 源文件同 id 戳，不 toast 不提示，best-effort */
+  function silentCleanStalePlid(plid) {
+    var sid = '';
+    try { sid = String(plid || '').replace(/"/g, ''); } catch (e) { sid = ''; }
+    if (!sid) return;
+    try {
+      var doc = null;
+      try { doc = (typeof frame !== 'undefined' && frame && frame.contentDocument) ? frame.contentDocument : null; } catch (e2) {}
+      if (doc) {
+        try {
+          var olds = doc.querySelectorAll('[data-plink="' + sid + '"]');
+          for (var k = 0; k < (olds ? olds.length : 0); k++) {
+            try { olds[k].removeAttribute('data-plink'); } catch (e3) {}
+          }
+        } catch (e4) {}
+      }
+    } catch (e5) {}
+    try {
+      var dir = (typeof currentSource !== 'undefined' && currentSource) ? currentSource.sandboxDir : null;
+      var file = lbCurHtmlFile();
+      var sb = null;
+      try { sb = (window.protoAPI && window.protoAPI.sandbox) || null; } catch (e6) {}
+      if (!sb || !sb.readFile || !sb.write || !dir || !file) return;
+      (function (rmId, d, f, api) {
+        try {
+          api.readFile({ dir: d, file: f }).then(function (r) {
+            if (!r || !r.ok) return;
+            var srcHtml = String(r.content || '');
+            var pdoc = null;
+            try { pdoc = new DOMParser().parseFromString(srcHtml, 'text/html'); } catch (e7) { return; }
+            if (!pdoc) return;
+            var changed = false;
+            try {
+              var srcOlds = pdoc.querySelectorAll('[data-plink="' + String(rmId).replace(/"/g, '') + '"]');
+              for (var j = 0; j < (srcOlds ? srcOlds.length : 0); j++) {
+                try { srcOlds[j].removeAttribute('data-plink'); changed = true; } catch (e8) {}
+              }
+            } catch (e9) { return; }
+            if (!changed) return;
+            var out = '';
+            try {
+              var hasDoctype = /^\s*<!doctype/i.test(srcHtml);
+              out = (hasDoctype ? '<!DOCTYPE html>\n' : '') + pdoc.documentElement.outerHTML;
+            } catch (e10) { return; }
+            api.write({ dir: d, file: f, content: out }).catch(function () {});
+          }).catch(function () {});
+        } catch (e11) {}
+      })(sid, dir, file, sb);
+    } catch (e12) {}
+  }
   function initMessageListener() {
     window.addEventListener('message', function (ev) {
       if(!isTrustedProtoMessage(ev)) return; // P0-1 fix
@@ -121,11 +231,14 @@ var LinkBind = (function () {
       if (!d || typeof d !== 'object') return;
       if (d.type === 'proto-link') {
         handleProtoLink(d);
+      } else if (d.type === 'proto-link-stale') {
+        try { silentCleanStalePlid(d && d.plid); } catch (e) {}
       }
     });
   }
   function handleProtoLink(d) {
-    var target = d.target || {};
+    try { if (d && d.restamp) restampLive(d.restamp); } catch (e) {}
+    var target = (d && d.target) || {};
     var protoName = target.proto || '';
     var targetPage = target.page || '';
     var dest = null;
@@ -195,6 +308,7 @@ var LinkBind = (function () {
 
   function openInspector(el) {
     if (!el) return;
+    if (!lbIsPreviewEl(el)) { lbToast('仅支持绑定原型内的元素，请点击预览区元素。'); return; }
     /* 关闭其他抽屉（必须在状态赋值之前，否则 closeInspector 会清空状态） */
     closeAllDrawers();
     inspectorEl = el;
@@ -394,64 +508,147 @@ var LinkBind = (function () {
     };
   }
 
+  /* 打戳绑定：selector 在源文件恰好命中1个才建绑定；live+源文件双写 data-plink；links.json 加 plid */
   function saveJumpBinding(sel, pg, targetName, targetPage) {
     if (!currentSource || !currentSource.sandboxDir) return;
-    var links = currentSource._links || [];
-    var btnName = (typeof extractElementText === 'function') ? extractElementText(inspectorEl) : '';
-    /* 一元素一条绑定：替换或新增 */
-    var foundIdx = -1;
-    for (var i = 0; i < links.length; i++) {
-      if (links[i].selector === sel && links[i].page === pg) {
-        links[i].btnName = btnName;
-        links[i].target = targetName;
-        links[i].targetPage = targetPage || '';
-        links[i].label = editElementLabel(inspectorEl);
-        links[i].text = '';
-        try { links[i].text = String(inspectorEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) {}
-        links[i].ts = Date.now();
-        foundIdx = i;
-        break;
+    if (!lbIsPreviewEl(inspectorEl)) { lbToast('仅支持绑定原型内的元素，请点击预览区元素。'); return; }
+    if (!sel) { lbToast('选择器生成失败，无法绑定。'); return; }
+    if (!targetName) { lbToast('请先选择跳转目标原型。'); return; }
+    var dir = currentSource.sandboxDir;
+    var file = lbCurHtmlFile();
+    if (!file) { lbToast('无法确定当前原型文件，绑定已取消。'); return; }
+    var sb = null;
+    try { sb = (window.protoAPI && window.protoAPI.sandbox) || null; } catch (e) {}
+    if (!sb || typeof sb.readFile !== 'function' || typeof sb.write !== 'function') { lbToast('当前原型不支持直接写盘，无法打戳绑定。'); return; }
+    var liveEl = inspectorEl;
+    sb.readFile({ dir: dir, file: file }).then(function (r) {
+      if (!r || !r.ok) { lbToast('源文件读取失败，绑定已取消：' + ((r && r.error) || '未知错误')); return; }
+      var srcHtml = String(r.content || '');
+      var pdoc = null;
+      try { pdoc = new DOMParser().parseFromString(srcHtml, 'text/html'); } catch (e) {}
+      if (!pdoc) { lbToast('源文件解析失败，绑定已取消。'); return; }
+      var hits = null;
+      try { hits = pdoc.querySelectorAll(sel); } catch (e) { lbToast('选择器在源文件无效，绑定已取消。'); return; }
+      var n = hits ? hits.length : 0;
+      if (n !== 1) { lbToast('该元素在源文件中定位命中' + n + '个（需恰好1个），已拒绝绑定，请重新拾取。'); return; }
+      var links0 = currentSource._links || [];
+      var existPlid = '';
+      for (var k = 0; k < links0.length; k++) {
+        if (links0[k].selector === sel && links0[k].page === pg) { existPlid = String(links0[k].plid || ''); break; }
       }
-    }
-    if (foundIdx < 0) {
-      var id = 'lk_' + Date.now().toString(36) + Math.floor(Math.random() * 46656).toString(36);
-      var newLink = {
-        id: id, page: pg, selector: sel,
-        btnName: btnName,
-        label: editElementLabel(inspectorEl),
-        text: (function () { try { return String(inspectorEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { return ''; } })(),
-        target: targetName, targetPage: targetPage || '',
-        ts: Date.now()
-      };
-      links.push(newLink);
-      foundIdx = links.length - 1;
-    }
-    currentSource._links = links;
-    /* 写盘 */
-    window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
-    updateLinkBadge();
-    libStatus('已保存跳转：' + (btnName ? '【' + btnName + '】' : editElementLabel(inspectorEl)) + ' → ' + targetName + (targetPage ? ' · ' + targetPage : ''));
-    /* 切回已绑定态 */
-    inspectorLink = links[foundIdx];
-    inspectorMode = 'bound';
-    var jumpChip = $('liJumpChip');
-    var jumpBody = $('liJumpBody');
-    var sel = generateSelector(inspectorEl);
-    var pg2 = framePageKey();
-    renderJumpSection(sel, pg2, jumpChip, jumpBody);
+      var plid = existPlid || lbMakePlid();
+      try { if (liveEl && liveEl.setAttribute) liveEl.setAttribute('data-plink', plid); } catch (e) {}
+      try { hits[0].setAttribute('data-plink', plid); } catch (e) { lbToast('源文件打戳失败，绑定已取消。'); return; }
+      var out = '';
+      try {
+        var hasDoctype = /^\s*<!doctype/i.test(srcHtml);
+        out = (hasDoctype ? '<!DOCTYPE html>\n' : '') + pdoc.documentElement.outerHTML;
+      } catch (e) { lbToast('源文件序列化失败，绑定已取消。'); return; }
+      sb.write({ dir: dir, file: file, content: out }).then(function (w) {
+        if (!w || !w.ok) { lbToast('源文件写盘失败，绑定已取消：' + ((w && w.error) || '未知错误')); return; }
+        var links = currentSource._links || [];
+        var btnName = (typeof extractElementText === 'function') ? extractElementText(liveEl) : '';
+        var foundIdx = -1;
+        for (var i = 0; i < links.length; i++) {
+          if (links[i].selector === sel && links[i].page === pg) {
+            links[i].btnName = btnName;
+            links[i].target = targetName;
+            links[i].targetPage = targetPage || '';
+            links[i].label = editElementLabel(liveEl);
+            links[i].text = '';
+            try { links[i].text = String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) {}
+            links[i].ts = Date.now();
+            if (!links[i].plid) links[i].plid = plid;
+            if (!links[i].id) links[i].id = links[i].plid || plid;
+            foundIdx = i;
+            break;
+          }
+        }
+        if (foundIdx < 0) {
+          var newLink = {
+            id: plid, plid: plid, page: pg, selector: sel,
+            btnName: btnName,
+            label: editElementLabel(liveEl),
+            text: (function () { try { return String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { return ''; } })(),
+            target: targetName, targetPage: targetPage || '',
+            ts: Date.now()
+          };
+          links.push(newLink);
+          foundIdx = links.length - 1;
+        }
+        currentSource._links = links;
+        window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
+        updateLinkBadge();
+        libStatus('已保存跳转：' + (btnName ? '【' + btnName + '】' : editElementLabel(liveEl)) + ' → ' + targetName + (targetPage ? ' · ' + targetPage : ''));
+        inspectorLink = links[foundIdx];
+        inspectorMode = 'bound';
+        var jumpChip = $('liJumpChip');
+        var jumpBody = $('liJumpBody');
+        var sel2 = sel;
+        try { sel2 = generateSelector(liveEl); } catch (e2) {}
+        var pg2 = framePageKey();
+        renderJumpSection(sel2, pg2, jumpChip, jumpBody);
+      }).catch(function () { lbToast('源文件写盘异常，绑定已取消。'); });
+    }).catch(function () { lbToast('源文件读取异常，绑定已取消。'); });
   }
 
   function removeJumpBinding(sel, pg) {
     if (!currentSource || !currentSource.sandboxDir) return;
     var links = currentSource._links || [];
+    var rmPlid = '';
     for (var i = links.length - 1; i >= 0; i--) {
       if (links[i].selector === sel && links[i].page === pg) {
+        rmPlid = String(links[i].plid || links[i].id || '');
         links.splice(i, 1);
         break;
       }
     }
+    try {
+      var doc = null;
+      try { doc = (typeof frame !== 'undefined' && frame && frame.contentDocument) ? frame.contentDocument : null; } catch (e) {}
+      if (doc && rmPlid) {
+        try {
+          var stampedAll = doc.querySelectorAll('[data-plink="' + rmPlid.replace(/"/g, '') + '"]');
+          for (var si = 0; si < (stampedAll ? stampedAll.length : 0); si++) {
+            try { stampedAll[si].removeAttribute('data-plink'); } catch (e2a) {}
+          }
+        } catch (e2) {}
+      }
+      try { if (inspectorEl && inspectorEl.removeAttribute) inspectorEl.removeAttribute('data-plink'); } catch (e3) {}
+    } catch (e) {}
     currentSource._links = links;
     window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
+    try {
+      var dir = currentSource.sandboxDir;
+      var file = lbCurHtmlFile();
+      var sb = null;
+      try { sb = (window.protoAPI && window.protoAPI.sandbox) || null; } catch (e) {}
+      if (sb && sb.readFile && sb.write && file && rmPlid) {
+        (function (rmId, d, f, api) {
+          api.readFile({ dir: d, file: f }).then(function (r) {
+            if (!r || !r.ok) return;
+            var srcHtml = String(r.content || '');
+            var pdoc = null;
+            try { pdoc = new DOMParser().parseFromString(srcHtml, 'text/html'); } catch (e) { return; }
+            if (!pdoc) return;
+            var changed = false;
+            try {
+              var olds = pdoc.querySelectorAll('[data-plink="' + String(rmId).replace(/"/g, '') + '"]');
+              for (var k = 0; k < (olds ? olds.length : 0); k++) {
+                try { olds[k].removeAttribute('data-plink'); changed = true; } catch (e2) {}
+              }
+            } catch (e3) { return; }
+            if (!changed) return;
+            var out = '';
+            try {
+              var hasDoctype = /^\s*<!doctype/i.test(srcHtml);
+              out = (hasDoctype ? '<!DOCTYPE html>\n' : '') + pdoc.documentElement.outerHTML;
+            } catch (e4) { return; }
+            api.write({ dir: d, file: f, content: out }).catch(function () {});
+          }).catch(function () {});
+        })(rmPlid, dir, file, sb);
+      }
+    } catch (e) {}
     updateLinkBadge();
     libStatus('已解除跳转绑定。');
     inspectorLink = null;
@@ -711,9 +908,12 @@ var LinkBind = (function () {
   function removeLinkMgrItem(idx) {
     var links = currentSource._links || [];
     if (idx < 0 || idx >= links.length) return;
+    var rmPlid = '';
+    try { rmPlid = String((links[idx] && (links[idx].plid || links[idx].id)) || ''); } catch (e) { rmPlid = ''; }
     links.splice(idx, 1);
     currentSource._links = links;
     window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
+    try { if (rmPlid) silentCleanStalePlid(rmPlid); } catch (e2) {}
     updateLinkBadge();
     libStatus('已删除跳转绑定。');
     renderLinkMgr();
@@ -733,7 +933,7 @@ var LinkBind = (function () {
     }
   }
 
-  /* ═══════ 失效校验 ═══════ */
+  /* ═══════ 失效校验（查戳优先，备用 selector 补戳，不写盘） ═══════ */
   function validateLinks() {
     if (!currentSource) return;
     var links = currentSource._links || [];
@@ -743,14 +943,60 @@ var LinkBind = (function () {
     var changed = false;
     for (var i = 0; i < links.length; i++) {
       var l = links[i];
-      try {
-        var all = doc.querySelectorAll(l.selector);
-        l._stale = (all.length !== 1);
-      } catch (e) {
-        l._stale = true;
+      var plid = String(l.plid || '');
+      if (plid) {
+        try {
+          var sid = plid.replace(/"/g, '');
+          var stamped = null;
+          try { stamped = doc.querySelectorAll('[data-plink="' + sid + '"]'); } catch (e) { stamped = null; }
+          if (stamped && stamped.length === 1) {
+            l._stale = false;
+          } else {
+            var back = null;
+            try { back = doc.querySelectorAll(l.selector); } catch (e2) { back = null; }
+            if (back && back.length === 1) {
+              try { back[0].setAttribute('data-plink', sid); } catch (e3) {}
+              l._stale = false;
+            } else {
+              l._stale = true;
+            }
+          }
+        } catch (e) {
+          l._stale = true;
+        }
+      } else {
+        try {
+          var all = doc.querySelectorAll(l.selector);
+          l._stale = (all.length !== 1);
+        } catch (e4) {
+          l._stale = true;
+        }
       }
       changed = true;
     }
+    /* 孤儿戳静默清理：有戳无表项则去戳，不标 stale 不提示，不写盘 */
+    try {
+      var known = {};
+      for (var ki = 0; ki < links.length; ki++) {
+        try {
+          var k1 = String(links[ki].plid || '');
+          if (k1) known[k1] = true;
+          var k2 = String(links[ki].id || '');
+          if (k2) known[k2] = true;
+        } catch (e5) {}
+      }
+      try {
+        var allStamped = doc.querySelectorAll('[data-plink]');
+        for (var oi = 0; oi < (allStamped ? allStamped.length : 0); oi++) {
+          try {
+            var opid = String(allStamped[oi].getAttribute('data-plink') || '');
+            if (!opid || !known[opid]) {
+              try { allStamped[oi].removeAttribute('data-plink'); } catch (e6) {}
+            }
+          } catch (e7) {}
+        }
+      } catch (e8) {}
+    } catch (e9) {}
     if (changed) {
       updateLinkBadge();
       /* 如果检查器或管理抽屉打开则刷新 */

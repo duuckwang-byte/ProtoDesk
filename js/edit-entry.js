@@ -108,8 +108,18 @@ var CTRL_PICK = {
   /* —— 出口 —— */
   openPanel: function () {
     if (CTRL_PICK.selected.length === 1) {
-      /* 单选：先清空拾取集合与覆盖框，再移交检查器，防止残留污染下一次拾取 */
+      /* 单选：先校验预览 iframe 作用域，再清空移交检查器 */
       var targetEl = CTRL_PICK.selected[0].el;
+      var _fd = null;
+      try { _fd = (typeof frame !== 'undefined' && frame && frame.contentDocument) ? frame.contentDocument : null; } catch (e) {}
+      if (!targetEl || !targetEl.ownerDocument || !_fd || targetEl.ownerDocument !== _fd) {
+        try {
+          if (typeof showToast === 'function') showToast('仅支持绑定原型内的元素，请点击预览区元素。');
+          else if (typeof libStatus === 'function') libStatus('仅支持绑定原型内的元素，请点击预览区元素。');
+        } catch (e2) {}
+        CTRL_PICK.clear();
+        return;
+      }
       CTRL_PICK.clear();
       if (window.LinkBind) LinkBind.openInspector(targetEl);
       return;
@@ -331,6 +341,9 @@ function editShowHover(el){
 }
 function editHideHover(){ if(editHoverEl)editHoverEl.style.display='none'; }
 function editHover(ev){
+  try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e){}
+  /* Ctrl+Shift按住时不启动拾取高亮（与Ctrl+单击拾取互斥，留给就地改单击） */
+  if(ev&&ev.shiftKey&&(ev.ctrlKey||ev.metaKey)){ try{ if(CTRL_PICK)CTRL_PICK.hovering=null; }catch(e){} try{ editHideHover(); }catch(e2){} return; }
   if(CTRL_PICK && CTRL_PICK.holding){
     var t = ev.target;
     if(!t || t.nodeType !== 1) return;
@@ -348,7 +361,36 @@ function editHover(ev){
   EDIT_HOVER_EL = t;
   editShowHover(t);
 }
+var _editEvtSeen={type:'',stamp:-1,target:null};
+function editEvtDedup(ev){
+  try{
+    if(!ev)return false;
+    var _ts=(typeof ev.timeStamp!=='undefined')?ev.timeStamp:0;
+    if(!_ts)return false;
+    var _ty=ev.type||'';
+    if(!_ty)return false;
+    var _tg=ev.target||null;
+    if(_editEvtSeen.type===_ty&&_editEvtSeen.stamp===_ts&&_editEvtSeen.target===_tg)return true;
+    _editEvtSeen.type=_ty; _editEvtSeen.stamp=_ts; _editEvtSeen.target=_tg;
+    return false;
+  }catch(e){ return false; }
+}
 function editClick(ev){
+  try{ if(editEvtDedup(ev))return; }catch(_dedupE){}
+  try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e){}
+  /* Ctrl+Shift+单击进INLINE_EDIT浮层：复用editDblClick同一入口（定位/保存/转队列一致），不进CTRL_PICK拾取 */
+  if(ev&&(ev.ctrlKey||ev.metaKey)&&ev.shiftKey){
+    try{ ev.preventDefault(); ev.stopPropagation(); }catch(e){}
+    try{ if(CTRL_PICK&&CTRL_PICK.holding){ CTRL_PICK.holding=false; try{ CTRL_PICK.exit(); }catch(e){} } }catch(e2){}
+    try{
+      var _csT=(ev&&ev.target)||null;
+      if(_csT&&_csT.nodeType===1&&typeof editDblClick==='function'){
+        var _proxy={target:_csT,ctrlKey:false,metaKey:false,shiftKey:false,altKey:false,clientX:(ev&&ev.clientX)||0,clientY:(ev&&ev.clientY)||0,detail:(ev&&ev.detail)||0,preventDefault:function(){},stopPropagation:function(){}};
+        editDblClick(_proxy);
+      }
+    }catch(e3){}
+    return;
+  }
   if(ev.ctrlKey || ev.metaKey){
     if(CTRL_PICK && !CTRL_PICK.holding){
       CTRL_PICK.holding = true;
@@ -366,11 +408,24 @@ function editClick(ev){
   if(tag==='html'||tag==='body') return;
   EDIT_HOVER_EL = t;
   EDIT_LOCKED_EL = t;
+  try {
+    var _fd2 = null;
+    try { _fd2 = (typeof frame !== 'undefined' && frame && frame.contentDocument) ? frame.contentDocument : null; } catch (e) {}
+    if (!t.ownerDocument || !_fd2 || t.ownerDocument !== _fd2) {
+      try {
+        if (typeof showToast === 'function') showToast('仅支持绑定原型内的元素，请点击预览区元素。');
+        else if (typeof libStatus === 'function') libStatus('仅支持绑定原型内的元素，请点击预览区元素。');
+      } catch (e2) {}
+      return;
+    }
+  } catch (e) {}
   if(window.LinkBind) LinkBind.openInspector(t);
 }
 function editAttach(){
   var d=editFrameDoc(); if(!d)return;
-  if(d.__editAttached)return; d.__editAttached=true;
+  var _fw=null; try{ _fw=(typeof frame!=='undefined'&&frame&&frame.contentWindow)?frame.contentWindow:null; }catch(_fe){}
+  if(!d.__editAttached){
+  d.__editAttached=true;
   try{
     d.addEventListener('mousedown', function(ev){
       if(CTRL_PICK && CTRL_PICK.holding){
@@ -381,8 +436,271 @@ function editAttach(){
     d.addEventListener('click', editClick, true);
     d.addEventListener('mouseleave', function(){ editHideHover(); }, true);
   }catch(e){}
+  }
+  if(!d.__inlineAttached){
+    d.__inlineAttached=true;
+    try{ d.addEventListener('mousedown', inlineEditFrameMouseDown, true); }catch(e3){}
+    try{ d.addEventListener('scroll', function(){ try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)inlineEditPosition(); }catch(e){} },{capture:true,passive:true}); }catch(e4){}
+  }
+  /* 抢占式：window capture先于document，与原型库注册顺序无关；document保留兼容，靠editEvtDedup防重入 */
+  try{ if(_fw&&_fw.addEventListener){ _fw.addEventListener('click', editClick, true); } }catch(_we){}
 }
 /* 注：原此处对 frame.load 的 editAttach 重复注册已删除，职责由下方 Ctrl 拾取初始化代码（bindCtrlInspectListeners + 滚动重绘）统一接管 */
+/* ======= iter22 预览区就地改（Ctrl+Shift+单击）：纯文本模式，不限标签，仅直接文本叶可进 =======
+   初值按子节点顺序取直接文本节点内容与<br>转成的换行拼成纯文本（子元素内部不展平）；保存按\n拆分回填直接文本节点，<br>占一个换行位，多余并入末段，缺行保留原文，子元素不动；
+   选择器恰1定位+沙箱写盘+失败转AI队列链路不变；LinkBind 覆盖层与徽标排除；与 CTRL_PICK 互斥；AI 生成中禁用。 */
+var INLINE_EDIT={open:false,target:null,selector:'',file:'',dir:'',initHtml:'',initText:'',pop:null,ta:null,saveBtn:null,outsideHandler:null,savedRect:null,openAt:0};
+function inlineEditIsAiBusy(){ try{ if(typeof aiBusy!=='undefined'&&aiBusy)return true; }catch(e){} try{ if(window.aiBusy)return true; }catch(e2){} return false; }
+function inlineEditToast(msg){ try{ if(typeof showToast==='function'){ showToast(msg); return; } }catch(e){} try{ if(typeof libStatus==='function'){ libStatus(msg); return; } }catch(e2){} try{ alert(msg); }catch(e3){} }
+function inlineEditIsTextTag(tag){ return true; /* iter22 纯文本模式：不限标签（P/LI/TD/TH/H1-H6/div/span/a一视同仁），准入改由 inlineEditHasDirectText 判定；保留函数名防外部引用报错 */ }
+function inlineEditHasDirectText(el){ try{ if(!el||el.nodeType!==1||!el.childNodes)return false; var cn=el.childNodes; for(var i=0;i<cn.length;i++){ var n=cn[i]; if(n&&n.nodeType===3){ var v=String(n.nodeValue!=null?n.nodeValue:''); try{ if(v.trim()!=='')return true; }catch(e){ if(v.replace(/^\s+|\s+$/g,'')!=='')return true; } } } }catch(e){ return false; } return false; }
+function inlineEditGetDirectText(el){ try{ if(!el||!el.childNodes)return ''; var out='',cn=el.childNodes; for(var i=0;i<cn.length;i++){ var n=cn[i]; if(!n)continue; if(n.nodeType===3){ out+=String(n.nodeValue!=null?n.nodeValue:(n.textContent||'')); }else if(n.nodeType===1&&String(n.tagName||'').toLowerCase()==='br'){ out+='\n'; } } return out; }catch(e){ return ''; } }
+function inlineEditApplyDirectText(hitEl,newText){ try{ if(!hitEl||!hitEl.childNodes)return {ok:false,overflow:false,applied:0,total:0}; var norm=String(newText!=null?newText:'').replace(/\r\n/g,'\n').replace(/\r/g,'\n'); var lines=norm.split('\n'); var texts=[],cn=hitEl.childNodes; for(var i=0;i<cn.length;i++){ if(cn[i]&&cn[i].nodeType===3)texts.push(cn[i]); } if(!texts.length)return {ok:false,overflow:false,applied:0,total:0}; var overflow=false; for(var j=0;j<texts.length;j++){ if(j<lines.length){ if(j===texts.length-1&&lines.length>texts.length){ try{ texts[j].nodeValue=lines.slice(j).join('\n'); }catch(e2){ try{ texts[j].textContent=lines.slice(j).join('\n'); }catch(e3){} } overflow=true; }else{ try{ texts[j].nodeValue=lines[j]; }catch(e4){ try{ texts[j].textContent=lines[j]; }catch(e5){} } } } } return {ok:true,overflow:overflow,applied:Math.min(texts.length,lines.length),total:texts.length}; }catch(e){ return {ok:false,overflow:false,applied:0,total:0}; } }
+function inlineEditIsChrome(el){
+  try{
+    if(!el||!el.tagName)return true;
+    var tag=String(el.tagName).toLowerCase();
+    if(tag==='html'||tag==='body'||tag==='script'||tag==='style'||tag==='link'||tag==='meta'||tag==='iframe')return true;
+    if(el.hasAttribute&&el.hasAttribute('data-plrt'))return true;
+    if(el.closest){
+      try{ if(el.closest('[data-plrt]'))return true; }catch(e){}
+      try{ if(el.closest('.selection-box-overlay,.selection-badge,.anno-badge,#selectionOverlay,#editHover,#ctrlPickTip'))return true; }catch(e2){}
+    }
+    var cls=''; try{ cls=String(el.className||''); }catch(e){}
+    if(/selection-box-overlay|selection-badge|anno-badge/.test(cls))return true;
+    try{ if(el.id==='selectionOverlay'||el.id==='editHover'||el.id==='ctrlPickTip')return true; }catch(e){}
+    try{
+      if(el.parentElement&&String(el.parentElement.tagName||'').toLowerCase()==='body'){
+        var tx=String(el.textContent||'').trim();
+        if(tx.indexOf('跳转至 ')===0&&el.style&&String(el.style.zIndex)==='99999')return true;
+      }
+    }catch(e){}
+  }catch(e){ return false; }
+  return false;
+}
+function inlineEditCaptureScroll(){
+  var s={x:0,y:0,hash:'',sub:''};
+  try{ if(typeof editQueueCurHtmlFile==='function')s.sub=editQueueCurHtmlFile()||''; }catch(e){}
+  try{ if(frame&&frame.contentWindow){ s.x=frame.contentWindow.scrollX||0; s.y=frame.contentWindow.scrollY||0; try{ s.hash=frame.contentWindow.location.hash||''; }catch(e){} } }catch(e2){}
+  try{ var d=editFrameDoc(); if(d){ if(d.documentElement){ s.x=s.x||d.documentElement.scrollLeft||0; s.y=s.y||d.documentElement.scrollTop||0; } if(d.body){ s.x=s.x||d.body.scrollLeft||0; s.y=s.y||d.body.scrollTop||0; } } }catch(e3){}
+  return s;
+}
+function inlineEditSilentRefresh(saved,file){
+  try{
+    try{ window.__aiQuietRefresh=true; }catch(e){}
+    try{ if(saved){ window._refreshSavedSub=saved.sub||file||''; window._refreshSavedHash=saved.hash||''; } }catch(e2){}
+    var needSub=saved&&saved.sub&&/\.html$/i.test(String(saved.sub));
+    if(typeof loadSandboxSources==='function'){ loadSandboxSources(needSub?saved.sub:undefined); }
+    else if(typeof loadSubPage==='function'&&needSub&&typeof currentSource!=='undefined'&&currentSource){ try{ loadSubPage(currentSource,saved.sub); }catch(e){} try{ window.__aiQuietRefresh=false; }catch(e2){} }
+    else if(typeof loadSource==='function'&&typeof currentSource!=='undefined'&&currentSource){ try{ loadSource(currentSource,'preserve'); }catch(e){} try{ window.__aiQuietRefresh=false; }catch(e2){} }
+    else{ try{ window.__aiQuietRefresh=false; }catch(e){} }
+    var tries=0;
+    var timer=setInterval(function(){
+      tries++;
+      try{
+        var fw=frame&&frame.contentWindow?frame.contentWindow:null;
+        if(fw){
+          try{ if(saved.hash&&fw.location.hash!==saved.hash)fw.location.hash=saved.hash; }catch(e){}
+          try{ fw.scrollTo(saved.x||0,saved.y||0); }catch(e2){}
+          try{ var dd=fw.document; if(dd){ if(dd.documentElement){ dd.documentElement.scrollLeft=saved.x||0; dd.documentElement.scrollTop=saved.y||0; } if(dd.body){ dd.body.scrollLeft=saved.x||0; dd.body.scrollTop=saved.y||0; } } }catch(e3){}
+        }
+      }catch(e){}
+      if(tries>=8){ try{ clearInterval(timer); }catch(e){} }
+    },180);
+    try{
+      var onL=function(){ try{ var fw2=frame&&frame.contentWindow?frame.contentWindow:null; if(fw2){ try{ fw2.scrollTo(saved.x||0,saved.y||0); }catch(e){} } }catch(e){} try{ frame.removeEventListener('load',onL); }catch(e2){} };
+      if(frame)frame.addEventListener('load',onL);
+      setTimeout(function(){ try{ frame.removeEventListener('load',onL); }catch(e){} },2500);
+    }catch(e){}
+  }catch(e){ try{ window.__aiQuietRefresh=false; }catch(e2){} }
+}
+function inlineEditPosition(){
+  try{
+    var pop=INLINE_EDIT.pop,p=INLINE_EDIT.savedRect;
+    if(!pop||!p)return;
+    var w=440,h=220;
+    try{ w=pop.offsetWidth||440; h=pop.offsetHeight||220; }catch(e){}
+    var vw=window.innerWidth||1024,vh=window.innerHeight||768;
+    try{ if(!(vw>80))vw=1024; if(!(vh>80))vh=768; }catch(e2){}
+    var left=p.left;
+    try{
+      if(typeof left!=='number'||isNaN(left))left=8;
+      left=Math.max(8,Math.min(left,Math.max(8,vw-w-8)));
+    }catch(e3){ try{ left=8; }catch(e4){} }
+    var top=p.top+p.height+8;
+    try{
+      if(typeof top!=='number'||isNaN(top))top=8;
+      if(top+h>vh-8){ top=p.top-h-8; }
+      top=Math.max(8,Math.min(top,Math.max(8,vh-h-8)));
+    }catch(e5){ try{ top=8; }catch(e6){} }
+    try{ pop.style.left=left+'px'; pop.style.top=top+'px'; }catch(e7){}
+  }catch(e){}
+}
+function inlineEditCloseDom(){ try{ if(INLINE_EDIT.pop&&INLINE_EDIT.pop.parentNode)INLINE_EDIT.pop.parentNode.removeChild(INLINE_EDIT.pop); }catch(e){} INLINE_EDIT.pop=null; INLINE_EDIT.ta=null; INLINE_EDIT.saveBtn=null; }
+function inlineEditCloseNow(){
+  try{ if(window.MaskStack&&window.MaskStack.pop)window.MaskStack.pop('inlineEditPop'); }catch(e){}
+  inlineEditCloseDom();
+  INLINE_EDIT.open=false; INLINE_EDIT.target=null; INLINE_EDIT.selector=''; INLINE_EDIT.initHtml=''; INLINE_EDIT.initText=''; INLINE_EDIT.file=''; INLINE_EDIT.dir=''; INLINE_EDIT.savedRect=null;
+}
+function inlineEditTryClose(){
+  if(!INLINE_EDIT.open)return;
+  var cur='';
+  try{ cur=INLINE_EDIT.ta?INLINE_EDIT.ta.value:''; }catch(e){}
+  if(cur!==INLINE_EDIT.initText){
+    var ok=false;
+    try{ ok=window.confirm('内容已修改，确定放弃本次就地改吗？'); }catch(e){ ok=false; }
+    if(!ok)return;
+  }
+  inlineEditCloseNow();
+}
+function inlineEditOutsideDown(ev){
+  try{
+    if(!INLINE_EDIT.open||!INLINE_EDIT.pop)return;
+    if(INLINE_EDIT.openAt&&(Date.now()-INLINE_EDIT.openAt)<350)return;
+    if(INLINE_EDIT.pop.contains(ev.target))return;
+  }catch(e){ return; }
+  inlineEditTryClose();
+}
+function inlineEditFrameMouseDown(){
+  try{ if(!INLINE_EDIT.open)return; }catch(e){ return; }
+  try{ if(INLINE_EDIT.openAt&&(Date.now()-INLINE_EDIT.openAt)<350)return; }catch(e){}
+  inlineEditTryClose();
+}
+function inlineEditQueueFallback(newText,note){
+  try{
+    if(typeof editQueueAdd==='function'&&INLINE_EDIT.target)editQueueAdd(INLINE_EDIT.target,'将该元素内容改为：\n'+String(newText||''));
+  }catch(e){}
+  inlineEditToast(note||'已转AI队列，请用Ctrl+拾取提交。');
+}
+function inlineEditSave(){
+  if(!INLINE_EDIT.open||!INLINE_EDIT.target)return;
+  try{ if(inlineEditIsAiBusy()){ inlineEditToast('AI 正在生成，请先停止再就地改。'); return; } }catch(e){}
+  var ta=INLINE_EDIT.ta;
+  var newText=ta?ta.value:'';
+  if(newText===INLINE_EDIT.initText){ inlineEditToast('内容无变化，已关闭。'); inlineEditCloseNow(); return; }
+  var selector=INLINE_EDIT.selector,file=INLINE_EDIT.file,dir=INLINE_EDIT.dir,targetEl=INLINE_EDIT.target;
+  var sb=null;
+  try{ sb=(window.protoAPI&&window.protoAPI.sandbox)||null; }catch(e){}
+  if(!sb||typeof sb.readFile!=='function'||typeof sb.write!=='function'||!dir||!file){
+    inlineEditQueueFallback(newText,'当前原型不支持直接写盘，已转AI队列（见待提交列表）。');
+    inlineEditCloseNow();
+    return;
+  }
+  if(!selector){ inlineEditQueueFallback(newText,'选择器生成失败，已转AI队列，请用Ctrl+拾取提交。'); return; }
+  sb.readFile({dir:dir,file:file}).then(function(r){
+    if(!r||!r.ok){ inlineEditQueueFallback(newText,'源文件读取失败，已转AI队列：'+((r&&r.error)||'未知错误')); return; }
+    var srcHtml=String(r.content||'');
+    var pdoc=null;
+    try{ pdoc=new DOMParser().parseFromString(srcHtml,'text/html'); }catch(e){}
+    if(!pdoc){ inlineEditQueueFallback(newText,'源文件解析失败，已转AI队列。'); return; }
+    var hits=null;
+    try{ hits=pdoc.querySelectorAll(selector); }catch(e){ inlineEditQueueFallback(newText,'选择器在源文件无效，已转AI队列，请用Ctrl+拾取提交。'); return; }
+    if(!hits||hits.length!==1){ inlineEditQueueFallback(newText,'源文件定位命中'+(hits?hits.length:0)+'个（需恰好1个），已转AI队列，请用Ctrl+拾取提交。'); return; }
+    var _apply=null;
+    try{ _apply=inlineEditApplyDirectText(hits[0],newText); }catch(e){ inlineEditToast('写入内存DOM失败，请用Ctrl+拾取走AI队列。'); return; }
+    if(!_apply||!_apply.ok){ inlineEditQueueFallback(newText,'源文件无可编辑直接文字，已转AI队列，请用Ctrl+拾取提交。'); return; }
+    var _overflow=false;
+    try{ _overflow=!!_apply.overflow; }catch(e){}
+    var out='';
+    try{
+      var hasDoctype=/^\s*<!doctype/i.test(srcHtml);
+      out=(hasDoctype?'<!DOCTYPE html>\n':'')+pdoc.documentElement.outerHTML;
+    }catch(e){ inlineEditToast('序列化失败，请用Ctrl+拾取走AI队列。'); return; }
+    var saved=inlineEditCaptureScroll();
+    sb.write({dir:dir,file:file,content:out}).then(function(w){
+      if(!w||!w.ok){ inlineEditQueueFallback(newText,'写盘失败，已转AI队列：'+((w&&w.error)||'未知错误')); return; }
+      try{ if(typeof libStatus==='function')libStatus('已就地保存：'+file); }catch(e){}
+      inlineEditCloseNow();
+      try{ if(_overflow)inlineEditToast('换行多于原文文本段，多余已并入末段（<br>数量不变）。'); }catch(e){}
+      inlineEditSilentRefresh(saved,file);
+    }).catch(function(){ inlineEditQueueFallback(newText,'写盘异常，已转AI队列。'); });
+  }).catch(function(){ inlineEditQueueFallback(newText,'源文件读取异常，已转AI队列。'); });
+}
+function inlineEditBuildPop(p){
+  inlineEditCloseDom();
+  var pop=document.createElement('div');
+  pop.id='inlineEditPop'; pop.className='inline-edit-pop';
+  var hd=document.createElement('div'); hd.className='inline-edit-hd';
+  hd.textContent='修改'; pop.appendChild(hd);
+  var wrap=document.createElement('div'); wrap.className='inline-edit-wrap';
+  var ta=document.createElement('textarea'); ta.className='inline-edit-ta'; ta.spellcheck=false; ta.rows=4; ta.value=INLINE_EDIT.initText;
+  wrap.appendChild(ta);
+  var cancelBtn=document.createElement('button'); cancelBtn.type='button'; cancelBtn.className='inline-edit-btn inline-edit-inbtn inline-edit-incancel'; cancelBtn.textContent='放弃';
+  var saveBtn=document.createElement('button'); saveBtn.type='button'; saveBtn.className='inline-edit-btn primary inline-edit-inbtn inline-edit-insave'; saveBtn.textContent='保存';
+  wrap.appendChild(cancelBtn); wrap.appendChild(saveBtn); pop.appendChild(wrap);
+  document.body.appendChild(pop);
+  INLINE_EDIT.pop=pop; INLINE_EDIT.ta=ta; INLINE_EDIT.saveBtn=saveBtn;
+  ta.addEventListener('keydown',function(ev){
+    try{
+      if((ev.ctrlKey||ev.metaKey)&&(ev.key==='Enter'||ev.keyCode===13)){ ev.preventDefault(); ev.stopPropagation(); inlineEditSave(); return; }
+      if(ev.key==='Escape'||ev.keyCode===27){ ev.stopPropagation(); inlineEditTryClose(); return; }
+    }catch(e){}
+  },true);
+  pop.addEventListener('mousedown',function(ev){ try{ ev.stopPropagation(); }catch(e){} },true);
+  saveBtn.onclick=function(){ inlineEditSave(); };
+  cancelBtn.onclick=function(){ inlineEditTryClose(); };
+  try{ inlineEditPosition(); }catch(e){}
+  try{
+    var _doFocus=function(){ try{ ta.focus(); ta.select(); }catch(e2){ try{ ta.focus(); }catch(e3){} } };
+    if(window.requestAnimationFrame){ window.requestAnimationFrame(_doFocus); }else{ _doFocus(); }
+  }catch(e){ try{ ta.focus(); }catch(e2){} }
+  try{
+    if(!INLINE_EDIT.outsideHandler){
+      INLINE_EDIT.outsideHandler=function(ev){
+        if(!INLINE_EDIT.open||!INLINE_EDIT.pop)return;
+        try{ if(INLINE_EDIT.openAt&&(Date.now()-INLINE_EDIT.openAt)<350)return; }catch(e){}
+        try{ if(INLINE_EDIT.pop.contains(ev.target))return; }catch(e){ return; }
+        inlineEditTryClose();
+      };
+      document.addEventListener('mousedown',INLINE_EDIT.outsideHandler,true);
+    }
+  }catch(e){}
+  try{
+    if(!window.__inlineEditResizeBound){
+      window.__inlineEditResizeBound=true;
+      window.addEventListener('resize',function(){ try{ if(INLINE_EDIT.open)inlineEditPosition(); }catch(e){} });
+      window.addEventListener('scroll',function(){ try{ if(INLINE_EDIT.open)inlineEditPosition(); }catch(e){} },true);
+    }
+  }catch(e){}
+}
+function inlineEditOpen(targetEl){
+  try{ if(!targetEl||targetEl.nodeType!==1){ inlineEditToast('未能定位目标元素，请重试或用Ctrl+拾取走AI队列。'); return; } }catch(e){ try{ inlineEditToast('未能定位目标元素，请重试或用Ctrl+拾取走AI队列。'); }catch(e2){} return; }
+  var rect=null;
+  try{ rect=targetEl.getBoundingClientRect(); }catch(e){ try{ inlineEditToast('读取元素位置失败，请用Ctrl+拾取走AI队列。'); }catch(e2){} return; }
+  if(!rect){ try{ inlineEditToast('读取元素位置失败，请用Ctrl+拾取走AI队列。'); }catch(e){} return; }
+  var p=null;
+  try{ p=editRectToPage(rect); }catch(e){ p={left:100,top:100,width:200,height:24}; }
+  try{ INLINE_EDIT.selector=(typeof generateSelector==='function')?generateSelector(targetEl):''; }catch(e){ INLINE_EDIT.selector=''; }
+  try{ INLINE_EDIT.file=(typeof editQueueCurHtmlFile==='function')?editQueueCurHtmlFile():''; }catch(e){ INLINE_EDIT.file=''; }
+  try{ INLINE_EDIT.dir=(typeof currentSource!=='undefined'&&currentSource&&currentSource.sandboxDir)?currentSource.sandboxDir:''; }catch(e){ INLINE_EDIT.dir=''; }
+  try{ INLINE_EDIT.initText=inlineEditGetDirectText(targetEl); }catch(e){ INLINE_EDIT.initText=''; }
+  try{ INLINE_EDIT.initHtml=INLINE_EDIT.initText; }catch(e){}
+  INLINE_EDIT.target=targetEl;
+  try{ if(CTRL_PICK){ CTRL_PICK.holding=false; try{ CTRL_PICK.exit(); }catch(e){} } }catch(e2){}
+  try{ editHideHover(); }catch(e){}
+  try{ if(window.LinkBind&&typeof LinkBind.closeAllDrawers==='function')LinkBind.closeAllDrawers(); }catch(e){}
+  INLINE_EDIT.open=true; INLINE_EDIT.savedRect=p;
+  try{ INLINE_EDIT.openAt=Date.now(); }catch(e){ INLINE_EDIT.openAt=0; }
+  try{ inlineEditBuildPop(p); }catch(e){ try{ inlineEditToast('就地改浮层打开失败，请用Ctrl+拾取走AI队列。'); }catch(e2){} try{ inlineEditCloseNow(); }catch(e3){} return; }
+  try{ if(window.MaskStack&&window.MaskStack.push)window.MaskStack.push('inlineEditPop',function(){ inlineEditTryClose(); }); }catch(e){}
+}
+function editDblClick(ev){
+  try{ if(editEvtDedup(ev))return; }catch(_dedupE){}
+  try{
+    if(ev&&(ev.ctrlKey||ev.metaKey))return;
+    if(typeof CTRL_PICK!=='undefined'&&CTRL_PICK&&CTRL_PICK.holding)return;
+    if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open){ inlineEditToast('请先保存或放弃当前就地改。'); return; }
+    if(inlineEditIsAiBusy()){ inlineEditToast('AI 正在生成，请先停止再就地改。'); if(ev){ try{ ev.preventDefault(); ev.stopPropagation(); }catch(e){} } return; }
+    var t=ev?ev.target:null;
+    if(!t||t.nodeType!==1){ inlineEditToast('未能识别目标元素，请重试或用Ctrl+拾取走AI队列。'); return; }
+    if(inlineEditIsChrome(t)){ inlineEditToast('该元素为功能层不可编辑，请选择正文内容或用Ctrl+拾取走AI队列。'); return; }
+    var tag=String(t.tagName||'').toLowerCase();
+    if(tag==='html'||tag==='body'){ inlineEditToast('根元素不支持就地改，请选择正文内容。'); return; }
+    if(!inlineEditHasDirectText(t)){ inlineEditToast('该元素无可编辑文字'); if(ev){ try{ ev.preventDefault(); ev.stopPropagation(); }catch(e){} } return; }
+    if(ev){ try{ ev.preventDefault(); ev.stopPropagation(); }catch(e){} }
+    try{ inlineEditOpen(t); }catch(e){ try{ inlineEditToast('就地改打开失败，请用Ctrl+拾取走AI队列。'); }catch(e2){} }
+  }catch(e){ try{ inlineEditToast('就地改打开异常，请用Ctrl+拾取走AI队列。'); }catch(e2){} }
+}
 function editQueueCurHtmlFile(){ try{ if(typeof curHtmlFile==='function')return curHtmlFile(); }catch(e){} return (typeof currentSource!=='undefined'&&currentSource&&(currentSource.activeSubFile||currentSource.mainHtmlFile||currentSource.name))||''; }
 function editQueueAdd(el, text){
   el = el || EDIT_LOCKED_EL || EDIT_HOVER_EL;
@@ -615,6 +933,7 @@ function bindCtrlInspectListeners(targetWindow) {
   targetWindow.__ctrlPickBound = true;
 
   targetWindow.addEventListener('keydown', function(e) {
+    try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e2){}
     if ((e.key === 'Control' || e.key === 'Meta') && !e.altKey && !e.shiftKey) {
       /* 从目标窗口自身文档读取焦点元素（iframe 内部输入框同样生效） */
       var targetDoc = targetWindow.document;

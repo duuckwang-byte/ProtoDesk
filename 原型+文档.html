@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -83,27 +83,46 @@
      </div>
     </div>
     <div class="docs-panel">
-     <div class="docs-head">
-      <button class="docs-btn" id="btnToc" title="展开/收起文档目录">目录</button>
-      <span>页面功能说明</span>
-      <span class="docs-actions">
-       <button class="docs-btn" id="btnEditDoc" title="编辑当前页面说明">编辑</button>
+      <div class="docs-head">
+       <button class="docs-btn" id="btnToc" title="展开/收起文档目录">目录</button>
+       <button class="docs-btn" id="btnDocWinToggle" title="在独立窗口中打开文档">独立窗口</button>
+       <span class="docs-actions">
+        <span class="doc-export-wrap" id="docExportWrap">
+         <button class="docs-btn" id="btnDocExport" title="导出当前文档为长图/PDF/MD">导出▾</button>
+         <span class="doc-export-menu" id="docExportMenu" style="display:none">
+          <button class="doc-export-item" id="btnDocExportPng" title="导出2x高清长图PNG">高清长图PNG</button>
+          <button class="doc-export-item" id="btnDocExportPdf" title="导出矢量A4 PDF">A4 PDF</button>
+          <button class="doc-export-item" id="btnDocExportMd" title="下载当前文档Markdown">MD文档</button>
+         </span>
+        </span>
+        <button class="docs-btn" id="btnEditDoc" title="编辑当前页面说明">编辑</button>
        <button class="docs-btn" id="btnCancelDoc" style="display:none" title="放弃本次编辑，恢复为保存的内容">取消</button>
        <button class="docs-btn primary" id="btnSaveDoc" style="display:none" title="保存当前页面说明">保存</button>
-      </span>
-     </div>
-     <div class="docs-body">
+       </span>
+      </div>
+      <div class="doc-mode-tabs" id="docModeTabs">
+       <button type="button" class="doc-mode-tab on" id="btnDocTabDesc">功能说明</button>
+       <button type="button" class="doc-mode-tab" id="btnDocTabReq">最新需求</button>
+      </div>
+       <div class="doc-search-box" id="docSearchBox" style="display:none">
+       <input class="doc-search-input" id="docSearchInput" type="text" placeholder="搜索文档" spellcheck="false" autocomplete="off" />
+       <span class="doc-search-count" id="docSearchCount">0/0</span>
+       <button class="docs-btn doc-search-btn" id="docSearchPrev" title="上一个(Shift+Enter)">上一个</button>
+       <button class="docs-btn doc-search-btn" id="docSearchNext" title="下一个(Enter)">下一个</button>
+       <button class="docs-btn doc-search-btn" id="docSearchClose" title="关闭(Esc)">✕</button>
+      </div>
+      <div class="docs-body">
       <div class="doc-title" id="docTitle"></div>
       <div class="doc-content" id="docContent"></div>
       <div class="doc-edit" id="docEdit" style="display:none">
-       <div class="doc-edit-tip">支持 Markdown 语法（表格、标题、列表、加粗），<code>&lt;br&gt;</code> 可换行</div>
+       <div class="doc-edit-tip">支持 Markdown 语法（表格、标题、列表、加粗等）<button type="button" class="doc-shortcut-link" id="btnDocShortcut">快捷键</button></div>
        <textarea id="docEditArea" spellcheck="false" placeholder="在此编辑该页面的功能说明…"></textarea>
       </div>
      </div>
     </div>
     <div class="doc-toc" id="docToc" style="display:none"></div>
-   </div>
-  </main>
+    </div>
+   </main>
  </div>
 </div>
 <span class="sb-hotzone" title="打开菜单">
@@ -134,7 +153,7 @@
   <div class="doc-title">最新需求 · 当前迭代</div>
   <div class="doc-content" id="reqContent"></div>
   <div class="doc-edit" id="reqEdit" style="display:none">
-  <div class="doc-edit-tip">支持 Markdown 语法（表格、标题、列表、加粗），<code>&lt;br&gt;</code> 可换行</div>
+  <div class="doc-edit-tip">支持 Markdown 语法（表格、标题、列表、加粗等）<button type="button" class="doc-shortcut-link" id="btnReqShortcut">快捷键</button></div>
   <textarea id="reqEditArea" spellcheck="false" placeholder="在此编写当前迭代的需求…"></textarea>
   </div>
  </div>
@@ -297,8 +316,9 @@
    <nav class="settings-nav">
      <button class="settings-tab-btn active" data-tab="ai" id="tabNavAi" style="justify-content:flex-start;text-align:left"><i data-ic="cpu"></i> Agent设置</button>
      <button class="settings-tab-btn" data-tab="models" id="tabNavModels" style="justify-content:flex-start;text-align:left"><i data-ic="sliders"></i> 模型管理</button>
-     <button class="settings-tab-btn" data-tab="sandbox" id="tabNavSandbox" style="justify-content:flex-start;text-align:left"><i data-ic="folder"></i> 沙箱</button>
-     <button class="settings-tab-btn" data-tab="about" id="tabNavAbout" style="justify-content:flex-start;text-align:left"><i data-ic="info"></i> 关于软件</button>
+      <button class="settings-tab-btn" data-tab="sandbox" id="tabNavSandbox" style="justify-content:flex-start;text-align:left"><i data-ic="folder"></i> 沙箱</button>
+      <button class="settings-tab-btn" data-tab="shortcut" id="tabNavShortcut" style="justify-content:flex-start;text-align:left"><i data-ic="command"></i> 快捷键</button>
+      <button class="settings-tab-btn" data-tab="about" id="tabNavAbout" style="justify-content:flex-start;text-align:left"><i data-ic="info"></i> 关于软件</button>
     </nav>
    <div class="settings-body">
      <!-- Tab 1: AI 引擎与 API -->
@@ -358,7 +378,67 @@
      </div>
     </div>
 
-    <!-- Tab 4: 关于软件 -->
+    <!-- Tab 4: 快捷键 -->
+    <div class="settings-pane" id="paneSetShortcut" style="display:none">
+     <div class="set-section-title">快捷键一览</div>
+     <div class="set-tip">编辑框类仅在对应输入框聚焦时生效，Esc 由 MaskStack 按栈顶优先关闭，点遮罩同效。</div>
+      <div class="set-box">
+       <div class="set-field">
+        <label>预览拾取与就地改</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">按住 Ctrl</span><span class="set-shortcut-act">进入拾取态并显示准星，输入框聚焦或带 Shift / Alt 时不进入。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+单击</span><span class="set-shortcut-act">拾取或反选元素，松开后单选进检查器、多选进批量面板。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">松开 Ctrl</span><span class="set-shortcut-act">退出拾取态，有选中则弹出批量面板，失焦同效。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+Shift+单击</span><span class="set-shortcut-act">直接进入就地改浮层而不拾取。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">就地改内 Ctrl+Enter</span><span class="set-shortcut-act">保存本次就地改并写盘静默刷新。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">就地改内 Esc</span><span class="set-shortcut-act">放弃本次就地改，有修改时需确认，点外同效。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">待提交框内 Ctrl+Enter</span><span class="set-shortcut-act">保存该条修改需求。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+滚轮 / 双击舞台</span><span class="set-shortcut-act">舞台内微调内容缩放 / 复位到 100%。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">缩放框 Enter</span><span class="set-shortcut-act">应用百分比缩放，失焦同效。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">预览内 Ctrl+点击穿透</span><span class="set-shortcut-act">带 Ctrl 的点击不触发原型内跳转，留给拾取通道。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">双击侧栏项</span><span class="set-shortcut-act">重命名原型、子页面或会话标题，需沙箱可写盘。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>AI 对话</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Enter</span><span class="set-shortcut-act">发送当前输入，输入法组合中或带 Shift / Ctrl / Cmd 时不发送。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+Enter / Cmd+Enter</span><span class="set-shortcut-act">发送当前输入。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Shift+Enter</span><span class="set-shortcut-act">换行不发送。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>文档检索</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">文档面板内 Ctrl+F</span><span class="set-shortcut-act">浮出搜索条并显示命中计数。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">搜索条内 Enter / Shift+Enter</span><span class="set-shortcut-act">下一个 / 上一个命中并定位穿梭。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">搜索条内 Esc</span><span class="set-shortcut-act">关闭搜索条并完整还原文档高亮。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>段落微浮层</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">微浮层内 Ctrl+S</span><span class="set-shortcut-act">保存该段落块。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">微浮层内 Esc</span><span class="set-shortcut-act">关闭微浮层，点外同效。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>通用输入框</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">名称框 Enter</span><span class="set-shortcut-act">确认新建原型名称。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">项目框 Enter</span><span class="set-shortcut-act">确认新建项目。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>Esc 关闭体系</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Esc</span><span class="set-shortcut-act">由 MaskStack 关闭当前栈顶弹窗，点遮罩同效，文档面板仅 PC 端响应。</span></div>
+       </div>
+      </div>
+     </div>
+    </div>
+
+    <!-- Tab 5: 关于软件 -->
     <div class="settings-pane" id="paneSetAbout" style="display:none">
      <div class="set-section-title">关于 PlanB 原型工具</div>
      <div class="set-field">
@@ -369,10 +449,10 @@
       PlanB 是一款专注于极速交互、高保真线框原型与需求文档协同设计的 AI Agent 工作台。<br>
       支持本地优先存储、纯单文件导出分发与 OpenAI 兼容大模型直连。
      </div>
+     </div>
     </div>
    </div>
-  </div>
-   <div class="settings-foot">
+    <div class="settings-foot">
     <span class="settings-save-tip" id="settingsSaveTip" style="display:none;color:var(--ok);font-size:12.5px;font-weight:600;margin-right:auto;"><i data-ic="check"></i> 配置已保存并应用</span>
     <button class="docs-btn" id="settingsCancel">关闭</button>
     <button class="docs-btn primary" id="settingsOk">保存并应用</button>
@@ -521,11 +601,11 @@
   <div class="modal-body">
    <div class="modal-row"><span class="modal-hint" id="projHint">选择一个项目进入；当前窗口仅展示该项目下的原型，可随时切换项目。</span></div>
    <div class="proj-list" id="projList"></div>
-   <div class="proj-new">
-    <input class="modal-input" id="projNewName" type="text" maxlength="60" placeholder="输入新项目名称" spellcheck="false">
-    <button class="docs-btn" id="projNewBtn" title="新建项目并进入">＋ 新建</button>
+    <div class="proj-new">
+     <input class="modal-input" id="projNewName" type="text" maxlength="60" placeholder="输入新项目名称" spellcheck="false">
+     <button class="docs-btn" id="projNewBtn" title="新建项目并进入">＋ 新建</button>
+    </div>
    </div>
-  </div>
   <div class="modal-foot">
    <span class="modal-hint" id="projCount" style="margin-right:auto"></span>
    <button class="docs-btn primary" id="projOk">进入</button>
@@ -810,8 +890,9 @@
   <div class="ai-tab-header">
    <button class="ai-tab-btn active" id="tabChatBtn"><i data-ic="message-square"></i> 需求对话</button>
    <button class="ai-tab-btn" id="tabLogsBtn"><i data-ic="file-text"></i> 执行日志 (Trace)<span class="log-err-dot" id="logErrDot" style="display:none">!</span></button>
-  </div>
-  <span class="ai-cli ok" id="aiSbx" title="当前沙箱（模型工作目录）">沙箱：—</span>
+   </div>
+   <button class="docs-btn" id="btnAiWinToggle" title="在独立窗口中打开AI对话">独立窗口</button>
+   <span class="ai-cli ok" id="aiSbx" title="当前沙箱（模型工作目录）">沙箱：—</span>
   <span class="ai-cli warn" id="aiCli">检测中…</span>
   <span class="agent-pill-badge" id="aiAgentBadge" title="当前主力 Agent（设置中心矩阵切换）"><span class="dot"></span><span id="aiAgentName">OpenCode</span></span>
   <span class="ai-hist" id="aiHistBtn" title="历史版本：每次 AI 任务前自动保存，可一键恢复">⏱ 历史</span>
@@ -829,11 +910,11 @@
     <div class="ai-chat-view" id="aiChatView"></div>
     <!-- 视图 2：DSH 执行日志 -->
    <div class="ai-logs-view" id="aiLogsView" style="display:none">
-    <div class="ai-logs-toolbar">
-     <button class="docs-btn" id="btnCopyTrace"><i data-ic="copy"></i> 复制全部日志</button>
-     <button class="docs-btn" id="btnClearTrace"><i data-ic="trash"></i> 清空日志</button>
-     <button class="docs-btn" id="btnToggleAllTrace" title="展开/收起全部任务日志分组">全部展开/收起</button>
-     <label class="logs-autoscroll"><input type="checkbox" id="chkAutoScrollTrace" checked> 自动吸底</label>
+     <div class="ai-logs-toolbar">
+      <button class="docs-btn" id="btnCopyTrace"><i data-ic="copy"></i> 复制全部日志</button>
+      <button class="docs-btn" id="btnClearTrace"><i data-ic="trash"></i> 清空日志</button>
+      <button class="docs-btn" id="btnToggleAllTrace" title="展开/收起全部任务日志分组">全部展开/收起</button>
+      <label class="logs-autoscroll"><input type="checkbox" id="chkAutoScrollTrace" checked> 自动吸底</label>
      <span class="logs-count" id="logsCount">0 条记录</span>
     </div>
     <div class="ai-logs-console" id="aiLogsConsole"></div>
@@ -860,6 +941,40 @@
 <div id="thinkMask" class="modal-mask" style="display:none"><div class="modal" style="width:640px;max-height:68vh"><div class="modal-head">思考链全文 <span class="modal-x" id="thinkClose">✕</span></div><div class="modal-body"><pre class="tg-output" id="thinkPopupPre" style="max-height:52vh;white-space:pre-wrap;word-break:break-word"></pre></div><div class="modal-foot"><span class="modal-hint" id="thinkPopupMeta"></span><button class="docs-btn primary" id="thinkCopy">复制</button><button class="docs-btn" id="thinkClose2">关闭</button></div></div></div>
 <!-- 弹窗关闭后、任务仍在进行时显示的常驻「停止」浮标（终止只允许用户触发） -->
 <!-- （已移除：不再占用界面右下角） -->
+<!-- 文档编辑快捷键弹窗（MaskStack 模态，Esc/点遮罩关闭） -->
+<div class="modal-mask" id="docShortcutMask" style="display:none">
+ <div class="modal" id="docShortcutModal" style="width:560px;max-width:92vw;">
+  <div class="modal-head"><span>编辑快捷键</span><span class="modal-x" id="docShortcutClose" title="关闭">✕</span></div>
+  <div class="modal-body">
+   <table class="doc-shortcut-table">
+    <tr><th>快捷键</th><th>功能</th></tr>
+    <tr><td>Ctrl+S</td><td>原地保存（不退出编辑）</td></tr>
+    <tr><td>Esc</td><td>放弃本次编辑</td></tr>
+    <tr><td>Tab / Shift+Tab</td><td>缩进 / 减少缩进</td></tr>
+    <tr><td>回车</td><td>列表自动延续，空项回车退出列表</td></tr>
+    <tr><td>Ctrl+V</td><td>粘贴图片并插入引用</td></tr>
+    <tr><td>Ctrl+F</td><td>文档检索</td></tr>
+    <tr><td>Ctrl+B</td><td>粗体</td></tr>
+    <tr><td>Ctrl+I</td><td>斜体</td></tr>
+    <tr><td>Ctrl+Shift+S</td><td>删除线</td></tr>
+    <tr><td>Ctrl+1</td><td>一级标题</td></tr>
+    <tr><td>Ctrl+2</td><td>二级标题</td></tr>
+    <tr><td>Ctrl+3</td><td>三级标题</td></tr>
+    <tr><td>Ctrl+0</td><td>正文（清除标题）</td></tr>
+    <tr><td>Ctrl+Shift+U</td><td>无序列表</td></tr>
+    <tr><td>Ctrl+Shift+O</td><td>有序列表</td></tr>
+    <tr><td>Ctrl+Shift+T</td><td>任务列表</td></tr>
+    <tr><td>Ctrl+T</td><td>表格骨架</td></tr>
+     <tr><td>Ctrl+Shift+I</td><td>插入图片（文件）</td></tr>
+     <tr><td>Ctrl+Shift+P</td><td>图片抽屉</td></tr>
+     <tr><td>Ctrl+Z</td><td>撤销</td></tr>
+     <tr><td>Ctrl+Shift+Z / Ctrl+Y</td><td>重做</td></tr>
+   </table>
+   <div class="modal-hint">编辑框内生效；无选中时插入占位符并选中占位符文本。</div>
+  </div>
+   <div class="modal-foot"><button class="docs-btn primary" id="docShortcutOk" type="button">关闭</button></div>
+  </div>
+ </div>
 
 <!-- 主脚本（由 app.js 拆分为多文件，顺序即依赖序，勿乱调） -->
 <script src="js/icons.js"></script>
