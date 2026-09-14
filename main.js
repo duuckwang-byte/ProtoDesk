@@ -1781,7 +1781,7 @@ ipcMain.handle('sandbox:save-asset', async (ev, o) => {
     } catch (e) {}
     const target = path.normalize(path.join(assetsDir, fileName));
     if (!isSubPath(target, SANDBOX_ROOT) || !target.startsWith(path.normalize(assetsDir) + path.sep)) return { ok: false, error: '非法文件名' };
-    let b64 = String(o2.dataBase64 == null ? '' : o2.dataBase64);
+    let b64 = String(o2.dataUrl == null ? '' : o2.dataUrl);
     if (!b64) return { ok: false, error: '缺少图片数据' };
     const comma = b64.indexOf(',');
     if (b64.startsWith('data:') && comma >= 0) b64 = b64.slice(comma + 1);

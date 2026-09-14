@@ -900,7 +900,7 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 @keyframes i5pulseRed{ 0%,100%{ box-shadow:0 0 0 0 rgba(220,38,38,.4);} 50%{ box-shadow:0 0 0 6px rgba(220,38,38,0);} }
 /* Iteration6：API配置卡片矩阵（与CLI主力卡一致：active边框+徽标） */
 .api-profile-matrix{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
-.api-profile-card{ border:1.5px solid var(--line); border-radius:12px; padding:12px; background:var(--panel); display:flex; flex-direction:column; gap:8px; transition:border-color .15s, box-shadow .15s; }
+.api-profile-card{ border:1.5px solid var(--line); border-radius:12px; padding:10px; background:var(--panel); display:flex; flex-direction:column; gap:6px; transition:border-color .15s, box-shadow .15s; }
 .api-profile-card:hover{ border-color:var(--faint); }
 .api-profile-card.active{ border-color:var(--pri); background:var(--pri-soft); box-shadow:0 0 0 1px var(--pri); }
 .api-profile-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -908,8 +908,8 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 .api-profile-badge{ font-size:11px; font-weight:700; padding:2px 8px; border-radius:99px; background:var(--pri); color:var(--panel); white-space:nowrap; flex:none; }
 .api-profile-badge.idle{ background:var(--bg-subtle); color:var(--faint); border:1px solid var(--line); }
 .api-profile-sub{ font-size:11.5px; color:var(--sub); line-height:1.6; word-break:break-all; }
-.api-profile-actions{ display:flex; align-items:center; justify-content:flex-end; gap:6px; padding-top:6px; border-top:1px solid var(--line); flex-wrap:wrap; }
-.api-profile-add{ border:1.5px dashed var(--line); border-radius:12px; padding:12px; background:var(--panel); display:flex; align-items:center; justify-content:center; min-height:110px; cursor:pointer; font-size:13px; font-weight:700; color:var(--pri); transition:all .15s; }
+.api-profile-actions{ display:flex; align-items:center; justify-content:flex-end; gap:6px; padding-top:6px; border-top:1px solid var(--line); flex-wrap:wrap; margin-top:auto; }
+.api-profile-add{ border:1.5px dashed var(--line); border-radius:12px; padding:10px; background:var(--panel); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:13px; font-weight:700; color:var(--pri); transition:all .15s; }
 .api-profile-add:hover{ border-color:var(--pri); background:var(--pri-soft); }
 /* API服务商名称输入框沿用set-input，卡片标题单行省略已由api-profile-name承载 */
 #setApiProviderName{ width:100%; }

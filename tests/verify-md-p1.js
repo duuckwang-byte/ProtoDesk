@@ -248,6 +248,7 @@ function test15_MainPreload() {
   assert.ok(mainSrc.includes("ipcMain.handle('sandbox:read-asset-base64'"), 'main须有read-asset-base64通道');
   assert.ok(preloadSrc.includes('saveAsset'), 'preload须暴露saveAsset');
   assert.ok(preloadSrc.includes('readAssetBase64'), 'preload须暴露readAssetBase64');
+  assert.ok(mainSrc.includes('o2.dataUrl'), 'save-asset读取前端dataUrl字段');
 }
 
 // 断言16：无#docToolbar空块+CSS零残留+导出内联+图片文案（P5精简）
