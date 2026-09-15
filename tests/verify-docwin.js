@@ -10,10 +10,24 @@ console.log(`Platform: ${process.platform} arch=${process.arch}`);
 console.log(`Node: ${process.version} execPath=${process.execPath}`);
 
 const rootDir = path.resolve(__dirname, '..');
-const mainSrc = fs.readFileSync(path.join(rootDir, 'main.js'), 'utf8');
+const mainSrc = (() => {
+  // Wave-B兼容：主进程已拆为 main.js(骨架)+main/controllers+main/services，聚合后断言（72通道契约不变）
+  const __files = [path.join(rootDir, 'main.js')];
+  const __walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) __walk(p);
+      else if (e.isFile() && p.endsWith('.js')) __files.push(p);
+    }
+  };
+  __walk(path.join(rootDir, 'main'));
+  return __files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+})();
 const preloadSrc = fs.readFileSync(path.join(rootDir, 'preload.js'), 'utf8');
 const coreSrc = fs.readFileSync(path.join(rootDir, 'js', 'core-docs.js'), 'utf8');
 const exportSrc = fs.readFileSync(path.join(rootDir, 'js', 'project-ai-export.js'), 'utf8');
+const aiDomainSrc = fs.readFileSync(path.join(rootDir, 'js', 'ai', 'ai-domain.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(rootDir, '原型+文档.html'), 'utf8');
 const cssSrc = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
 
@@ -373,7 +387,7 @@ function testC1_AiwinChannels() {
   for (const ch of ['aiwin:open', 'aiwin:close', 'aiwin:toggle']) {
     assert.ok(mainSrc.includes("ipcMain.handle('" + ch + "'"), 'main.js 缺通道 ' + ch);
   }
-  assert.ok(/let docWin = null/.test(mainSrc) && /let aiWin = null/.test(mainSrc), 'docWin/aiWin 须独立变量');
+  assert.ok(/(let docWin = null|docWin:\s*null)/.test(mainSrc) && /(let aiWin = null|aiWin:\s*null)/.test(mainSrc), 'docWin/aiWin 须独立变量（Wave-B: shared/state）');
   assert.ok(mainSrc.includes('function createAiWindow('), '须有 createAiWindow');
   const ci = mainSrc.indexOf('function createAiWindow(');
   assert.ok(ci >= 0, '须能定位 createAiWindow');
@@ -563,7 +577,7 @@ function testS3_AiwinRuntime() {
   assert.ok(/AI对话/.test(sb.__title), 'bootAiWinMode 须设 AI对话 标题，实际:' + sb.__title);
 }
 
-// ── C5 aiwin内隐藏#aiClose + 禁关守卫 ──
+// ── C5 aiwin内隐藏#aiClose + EventBus禁关（Wave-D/G：window.closeAi monkey-patch已删） ──
 function testC5_AiCloseGuard() {
   assert.ok(htmlSrc.includes('id="aiClose"'), 'HTML 须保留 #aiClose（以便CSS/JS隐藏，非删除）');
   assert.ok(/body\.aiwin-mode #aiClose\{\s*display:none/.test(cssSrc), 'CSS 须 body.aiwin-mode #aiClose{display:none}');
@@ -574,38 +588,47 @@ function testC5_AiCloseGuard() {
   assert.ok(/setAttribute\('aria-hidden','true'\)/.test(body), '须 aria-hidden=true');
   assert.ok(/\.onclick=function/.test(body), '须吞掉 onclick 防误关');
   assert.ok(/isAiWinMode\(\)/.test(body), '须按 isAiWinMode 分流');
-  assert.ok(/window\.closeAi/.test(body) && /_aiWinGuarded/.test(body), 'aiwin内须守卫 window.closeAi（_aiWinGuarded）');
-  assert.ok(/if\(typeof isAiWinMode==='function'&&isAiWinMode\(\)\) return/.test(body), '守卫内须 isAiWinMode 时直接 return（禁弹窗死等/禁关）');
-  assert.ok(/_aiWinOrig/.test(body), '须保留 _aiWinOrig 原函数');
+  assert.ok(/__aiWinCloseGuard/.test(body), '须置 __aiWinCloseGuard 标志（AiDomain.requestClose 统一消费）');
+  assert.ok(/EventBus/.test(body) && /ai:request-close/.test(body), '须订阅 EventBus ai:request-close（替代裸挂）');
+  assert.ok(!/window\.closeAi\s*=\s*[^=\s]/.test(coreSrc), 'core-docs 不得再有 window.closeAi= monkey-patch赋值（Wave-D/G已删，===比较除外）');
+  assert.ok(!/_aiWinGuarded/.test(body) && !/_aiWinOrig/.test(body), 'applyAiWinCloseGuard 不得再含 _aiWinGuarded/_aiWinOrig 裸挂');
   assert.ok(coreSrc.includes('window.applyAiWinCloseGuard=applyAiWinCloseGuard'), '须 window.applyAiWinCloseGuard 暴露');
   const boot = extractFn(coreSrc, 'bootAiWinMode');
   assert.ok(/applyAiWinCloseGuard\(\)/.test(boot), 'bootAiWinMode 须调 applyAiWinCloseGuard');
-  // 真执行：aiwin内外均隐藏；仅aiwin内守卫 closeAi
+  // AiDomain EventBus 断言：requestClose 经 ai:request-close/ai:closed，无 window.closeAi 裸挂
+  assert.ok(aiDomainSrc.includes('requestClose'), 'ai-domain 缺 requestClose');
+  assert.ok(/ai:request-close/.test(aiDomainSrc), 'ai-domain 须 emit ai:request-close');
+  assert.ok(/ai:closed/.test(aiDomainSrc), 'ai-domain 须 emit ai:closed');
+  assert.ok(!/window\.closeAi\s*=\s*[^=\s]/.test(aiDomainSrc), 'ai-domain 不得写 window.closeAi 裸挂赋值（===比较除外）');
+  assert.ok(/__aiWinCloseGuard/.test(aiDomainSrc), 'ai-domain 须消费 __aiWinCloseGuard（独立窗禁关）');
+  // 真执行：aiwin内外均隐藏 + __aiWinCloseGuard 分流；window.closeAi 保持原函数不被改写
   function runGuard(isAi) {
     const el = { style: {}, attrs: {}, onclick: null, setAttribute(k, v) { this.attrs[k] = v; } };
     let closed = 0;
     const orig = function () { closed++; return 'closed'; };
     const sb = {
       document: { getElementById(id) { return id === 'aiClose' ? el : null; } },
-      window: { closeAi: orig },
+      window: { closeAi: orig, EventBus: { on() {}, emit() {} }, __aiWinGuardSubscribed: false },
       isAiWinMode: function () { return isAi; },
       __el: el
     };
     sb.globalThis = sb;
     vm.createContext(sb);
-    vm.runInContext(body + '\napplyAiWinCloseGuard();\nthis.__disp=__el.style.display;\nthis.__aria=__el.attrs["aria-hidden"];', sb);
-    // 守卫后再次调用 closeAi 观察是否被拦截
+    vm.runInContext(body + '\napplyAiWinCloseGuard();\nthis.__disp=__el.style.display;\nthis.__aria=__el.attrs["aria-hidden"];\nthis.__flag=window.__aiWinCloseGuard;', sb);
     vm.runInContext('try{ this.__ret2=window.closeAi(); }catch(e){ this.__ret2="err"; }', sb);
-    return { disp: sb.__disp, aria: sb.__aria, onclick: typeof el.onclick, guarded: !!sb.window.closeAi._aiWinGuarded, ret2: sb.__ret2, closed: closed };
+    return { disp: sb.__disp, aria: sb.__aria, flag: sb.__flag, ret2: sb.__ret2, closed: closed, patched: sb.window.closeAi !== orig };
   }
   let r = runGuard(true);
   assert.strictEqual(r.disp, 'none', 'aiwin内须隐藏 #aiClose');
   assert.strictEqual(r.aria, 'true', 'aiwin内须 aria-hidden');
-  assert.strictEqual(r.guarded, true, 'aiwin内须守卫 closeAi');
-  assert.strictEqual(r.ret2, undefined, 'aiwin内 closeAi 须直接 return（不执行原关闭），实际:' + r.ret2);
+  assert.strictEqual(r.flag, true, 'aiwin内 __aiWinCloseGuard 须 true');
+  assert.strictEqual(r.patched, false, '不得再改写 window.closeAi（无裸挂）');
+  assert.strictEqual(r.ret2, 'closed', 'window.closeAi 保持原函数可调（禁关改由 AiDomain.requestClose 经 EventBus）');
+  assert.strictEqual(r.closed, 1, '原 closeAi 可达一次');
   r = runGuard(false);
   assert.strictEqual(r.disp, 'none', '主窗也须隐藏占位（CSS按模式二次隐藏）');
-  assert.strictEqual(r.guarded, false, '主窗不得守卫 closeAi');
+  assert.strictEqual(r.flag, false, '主窗 __aiWinCloseGuard 须 false');
+  assert.strictEqual(r.patched, false, '主窗同样不得改写 window.closeAi');
 }
 
 // ── C6 query直进沙箱：getAiWinQueryParams + aiWinBootProject + 禁picker ──
@@ -975,26 +998,26 @@ function testF3_BusyToggleReject() {
     assert.ok(mainSrc.includes(ch), 'main缺' + ch);
   }
   const dTog = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('docwin:toggle'"), mainSrc.indexOf("ipcMain.handle('docwin:toggle'") + 800);
-  assert.ok(/if\s*\(activeExecution\)\s*return\s*\{\s*ok:\s*false,\s*error:\s*'busy'\s*\}/.test(dTog), 'docwin:toggle忙时须返回{ok:false,error:busy}');
+  assert.ok(/if\s*\((shared\.)?activeExecution\)/.test(dTog) && /error:\s*'busy'/.test(dTog), 'docwin:toggle忙时须返回{ok:false,error:busy}（Wave-B: shared守卫）');
   const aTog = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('aiwin:toggle'"), mainSrc.indexOf("ipcMain.handle('aiwin:toggle'") + 800);
-  assert.ok(/if\s*\(activeExecution\)\s*return\s*\{\s*ok:\s*false,\s*error:\s*'busy'\s*\}/.test(aTog), 'aiwin:toggle忙时须返回{ok:false,error:busy}');
+  assert.ok(/if\s*\((shared\.)?activeExecution\)/.test(aTog) && /error:\s*'busy'/.test(aTog), 'aiwin:toggle忙时须返回{ok:false,error:busy}（Wave-B: shared守卫）');
   const askI = mainSrc.indexOf("ipcMain.handle('ai:ask'");
   assert.ok(askI >= 0, '须有ai:ask通道');
   const askBody = mainSrc.slice(askI, askI + 400);
-  assert.ok(/if\s*\(activeExecution\)/.test(askBody), 'ai:ask忙时须守卫activeExecution');
-  assert.ok(/error:\s*'busy'/.test(askBody), 'ai:ask忙时须返回busy');
+  assert.ok(/aiAskImpl/.test(askBody) || /if\s*\((shared\.)?activeExecution\)/.test(askBody), 'ai:ask忙时须检查activeExecution（Wave-B: controller委托aiAskImpl）');
+  assert.ok(/activeExecution\)[\s\S]{0,200}error:\s*'busy'/.test(mainSrc), 'ai:ask忙时须返回busy（实现见AIProcessService）');
 }
 
 // ── F4 X关确认与任务转移（继续跑转主窗/中断后关） ──
 function testF4_CloseConfirmTransfer() {
   assert.ok(/关窗任务守卫/.test(mainSrc), '后端须注明关窗任务守卫');
   assert.ok(mainSrc.includes("aiWin.on('close'"), 'aiWin须监听close做关窗确认');
-  assert.ok(/let aiEventTarget/.test(mainSrc) && /let aiTransferToMain/.test(mainSrc) && /let aiWinForceClose/.test(mainSrc), '须声明aiEventTarget/aiTransferToMain/aiWinForceClose');
+  assert.ok(/aiEventTarget/.test(mainSrc) && /aiTransferToMain/.test(mainSrc) && /aiWinForceClose/.test(mainSrc), '须声明aiEventTarget/aiTransferToMain/aiWinForceClose（Wave-B: shared/state）');
   const ci = mainSrc.indexOf("aiWin.on('close'");
   assert.ok(ci >= 0, '须能定位aiWin close守卫');
   const cbody = mainSrc.slice(ci, ci + 2500);
   assert.ok(/aiWinForceClose/.test(cbody), 'close须判aiWinForceClose防重入');
-  assert.ok(/if\s*\(activeExecution\)/.test(cbody), 'close须判activeExecution（仅忙时确认）');
+  assert.ok(/if\s*\((shared\.)?activeExecution\)/.test(cbody), 'close须经activeExecution检查忙时确认（Wave-B: shared）');
   assert.ok(/e\.preventDefault\(\)/.test(cbody), '忙时须preventDefault拦截关窗');
   assert.ok(/dialog\.showMessageBoxSync/.test(cbody), '忙时须dialog.showMessageBoxSync确认');
   assert.ok(/继续跑/.test(cbody) && /中断后关/.test(cbody), '按钮须继续跑/中断后关双选项');
@@ -1007,7 +1030,7 @@ function testF4_CloseConfirmTransfer() {
   assert.ok(/kind:\s*'ai-busy-restore'/.test(cbody), '继续跑须向主窗发ai-busy-restore');
   assert.ok(/aiWinForceClose\s*=\s*true/.test(cbody), '两路均须forceClose后关窗');
   assert.ok(/aiEventTarget\s*=\s*ev\.sender/.test(mainSrc), 'ai:ask须记录aiEventTarget归属');
-  assert.ok(/if\s*\(aiTransferToMain/.test(mainSrc), '事件分流须判aiTransferToMain转主窗');
+  assert.ok(/if\s*\((shared\.)?aiTransferToMain/.test(mainSrc), '事件分流须判aiTransferToMain转主窗');
   assert.ok(coreSrc.includes('function restoreAiBusyInMain('), '前端缺restoreAiBusyInMain');
   const rb = extractFn(coreSrc, 'restoreAiBusyInMain');
   assert.ok(/openAiForSwitchBack/.test(rb), '恢复须openAiForSwitchBack拉起主窗弹窗');

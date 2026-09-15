@@ -1,6 +1,7 @@
-/* [js/core-docs.js] 核心：文档解析/渲染/编辑 + 功能说明面板 + 目录（TOC）（由 app.js 拆分，顺序勿乱调）
-   P1 重构：头部内联轻量 GFM 编译核（私有作用域，对外仅 renderMd 与 extractHeadings 等既有接口）；
-   单面板 100% 宽度原位流转，无双栏；零 CDN；样式仅纯色内联关键布局（禁用渐变）。 */
+/* [js/core-docs.js] Wave-D/G index：文档域门面（逻辑分层+文件夹切分，物理行暂留兼容副本）
+ * 域切分：js/doc/markdown-compiler.js（纯编译）/editor-controller.js（Store守卫）/toc-navigator.js（目录）
+ *          /mirror-sync.js（EventBus桥，无monkey-patch）。本文件保留实现供 vm 门禁过渡，下波删副本。
+ * SoC：mirrorPush/Back 已双发 MirrorSync；applyAiWinCloseGuard 已删 window.closeAi 裸挂（见 verify-docwin C5 EventBus）。 */
 
 var $=function(id){return document.getElementById(id);};
 window.Proto={$: $};
@@ -114,8 +115,35 @@ function persistSandboxDoc(){
  var f=null; try{ f=sandboxMdFile(); }catch(e){ return; }
  if(!f)return;
  var txt=currentSource.md||'';
- window.protoAPI.sandbox.write({dir:currentSource.sandboxDir,file:f,content:txt}).then(function(r){
-  if(r&&r.ok)libStatus('文档已保存到沙箱：'+f);
+ /* Wave-C/F 竞态修复: 保存时快照 {sourceId, ver, dir, file, content}, 写回时经 Store.guardDocWrite 校验;
+  * 若期间已切换原型 (sourceId 失配) 或同原型版本已推进 (stale-version), 阻断写回并 toast 提示,
+  * 杜绝“A 文档覆盖写入 B 文件”。无 Store (vm/导出) 时走 legacy 直写。 */
+ var _snap = null;
+ try {
+   if (typeof window !== 'undefined' && window.Store && typeof window.Store.beginDocSave === 'function') {
+     _snap = window.Store.beginDocSave({ dir: currentSource.sandboxDir, file: f, content: txt });
+   }
+ } catch (e) { _snap = null; }
+ var _dir = (_snap && _snap.dir) || currentSource.sandboxDir;
+ var _file = (_snap && _snap.file) || f;
+ var _content = (_snap && (_snap.content != null)) ? _snap.content : txt;
+ window.protoAPI.sandbox.write({dir:_dir,file:_file,content:_content}).then(function(r){
+  try {
+    if (_snap && typeof window !== 'undefined' && window.Store && typeof window.Store.guardDocWrite === 'function') {
+      var g = window.Store.guardDocWrite(_snap);
+      if (!g.ok) {
+        var _msg = (g.reason === 'stale-version')
+          ? '保存已阻断: 当前原型版本已变更 (并发保存), 请重新保存。'
+          : '保存已阻断: 已切换原型, 本次保存不会写入新原型, 请返回原原型重新保存。';
+        try { showToast(_msg); } catch (e2) {}
+        try { libStatus(_msg); } catch (e3) {}
+        try { if (window.EventBus && window.EventBus.emit) window.EventBus.emit('doc:save-blocked', g); } catch (e4) {}
+        return;
+      }
+      try { if (typeof window.Store.markDocSaved === 'function') window.Store.markDocSaved(_snap); } catch (e5) {}
+    }
+  } catch (e6) {}
+  if(r&&r.ok)libStatus('文档已保存到沙箱：'+_file);
   else if(r&&r.error)libStatus('文档写入沙箱失败（已存本地缓存，请检查目录权限）');
  });
 }
@@ -464,8 +492,9 @@ if(btnCancelDoc)btnCancelDoc.onclick=cancelEdit;
    支持：H1-H6 / 加粗 / 斜体 / 删除线 / 行内代码 / 围栏代码块 / 任务列表 /
    对齐表格（外包 .md-table-wrap）/ 引用块与 NOTE-TIP-WARNING callout / 图片。 */
 var __DocGfm=(function(){
- function esc(s){ return String(s==null?'':s).replace(/\&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
- function escAttr(s){ return esc(s).replace(/"/g,'&quot;'); }
+ /* Wave-C/F: 私有 esc 显式收敛至 utils (运行时只读委托, 无静态 import 以保 vm 门禁; ESM 化后转 import) */
+ function esc(s){ try { if (typeof window !== 'undefined' && window.Utils && typeof window.Utils.esc === 'function') return window.Utils.esc(s); } catch (e) {} return String(s==null?'':s).replace(/\&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+ function escAttr(s){ try { if (typeof window !== 'undefined' && window.Utils && typeof window.Utils.escAttr === 'function') return window.Utils.escAttr(s); } catch (e) {} return esc(s).replace(/"/g,'&quot;'); }
  function projNameOf(opts){
   if(opts&&opts.project)return String(opts.project);
   try{ if(typeof currentProject!=='undefined'&&currentProject)return String(currentProject); }catch(e){}
@@ -1208,10 +1237,7 @@ window.DocShuttle={
    return false;
   }
 };
-/* 文档→画布点击：route badge / 标题行可点，命中切换预览并闪烁，否则toast */
-function handleDocRouteJump(route){
- try{ return window.DocShuttle.docToCanvas(route); }catch(e){ try{ showToast('跳转失败'); }catch(e2){} return false; }
-}
+/* Wave-B: handleDocRouteJump 已删除（全仓零业务调用，仅定义；DocShuttle.docToCanvas 保留，verify-md-p3 OR断言仍绿） */
 /* 单文档：恒显示功能说明（<name>.md）；磁盘已存在的变更日志/需求规格保留不删，仅不再展示入口 */
 function docTitleFor(nm){
  try{ try{ return protoTitle(); }catch(e){ return '原型'; } }catch(e){ return String(nm||'功能说明'); }
@@ -1304,6 +1330,10 @@ function ensureTocSpy(){
 }
 /* 轻量 HTML 转义（目录与旧调用方共用） */
 function escHtml(s){return String(s).replace(/\&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+/* Wave-C/F Utils 转正: 本文件重复的 window.Utils 兜底装配已删除 (单一出口收敛至 js/utils.js ESM)。
+ * 本文件因 vm 门禁 (md-p1 等整文件 vm.runInContext) 暂保经典脚本形态, 未用静态 import;
+ * 运行时经 window.Utils 只读复用 (utils.js 模块 deferred 后挂载), 本地 escHtml/showToast 等保留为降级实现。
+ * 全量 ESM 化 (静态 import) 待 Wave-D (需先升级 vm 系测试至 ESM loader)。 */
 /* ═══════ 目录浮窗：定位 + 展开/收起 + 点击外部自动收起 ═══════
   移动端：位于功能说明面板内顶部（原位置）；
   PC 端：位于功能说明弹窗左侧紧挨、高度与弹窗相同 */
@@ -3602,7 +3632,8 @@ function mirrorPush(kind,payload){
   }
  }catch(e){}
  try{ docMirrorBCSend(kind,p); }catch(e){}
- try{ window.__lastMirrorPush={kind:String(kind||''),payload:p,ts:Date.now()}; }catch(e){}
+  try{ if(typeof MirrorSync!=='undefined'&&MirrorSync&&MirrorSync.notifyPush) MirrorSync.notifyPush(kind,p); }catch(e2){}
+  try{ window.__lastMirrorPush={kind:String(kind||''),payload:p,ts:Date.now()}; }catch(e){}
 }
 function mirrorBack(kind,payload){
  if(__docMirrorApplying) return;
@@ -3616,7 +3647,8 @@ function mirrorBack(kind,payload){
   }
  }catch(e){}
  try{ docMirrorBCSend(kind,p); }catch(e){}
- try{ window.__lastMirrorBack={kind:String(kind||''),payload:p,ts:Date.now()}; }catch(e){}
+  try{ if(typeof MirrorSync!=='undefined'&&MirrorSync&&MirrorSync.notifyBack) MirrorSync.notifyBack(kind,p); }catch(e2){}
+  try{ window.__lastMirrorBack={kind:String(kind||''),payload:p,ts:Date.now()}; }catch(e){}
 }
 function getDocReqState(){
  try{
@@ -4790,24 +4822,22 @@ function applyAiWinCloseGuard(){
    try{ c.onclick=function(e){ try{ if(e&&e.preventDefault) e.preventDefault(); }catch(err){} }; }catch(e){}
   }
  }catch(e){}
- try{
-  var inAi=false;
-  try{ inAi=isAiWinMode(); }catch(e){ inAi=false; }
-  if(inAi){
-   try{
-    if(window.closeAi&&!window.closeAi._aiWinGuarded){
-     var origClose=window.closeAi;
-     var guarded=function(){
-      try{ if(typeof isAiWinMode==='function'&&isAiWinMode()) return; }catch(e){}
-      try{ return origClose.apply(this,arguments); }catch(e){}
-     };
-     try{ guarded._aiWinGuarded=true; }catch(e){}
-     try{ guarded._aiWinOrig=origClose; }catch(e){}
-     try{ window.closeAi=guarded; }catch(e){}
-    }
-   }catch(e){}
-  }
- }catch(e){}
+  try{
+   var inAi=false;
+   try{ inAi=isAiWinMode(); }catch(e){ inAi=false; }
+   /* Wave-D/G: window.closeAi monkey-patch 已删除（SoC修复）。独立窗禁关经 EventBus ai:request-close
+    * + __aiWinCloseGuard 标志由 AiDomain.requestClose 统一执行；此处仅隐藏占位 + 订阅守卫，不再写 window.closeAi。 */
+   try { if (typeof window !== 'undefined') window.__aiWinCloseGuard = !!inAi; } catch (e) {}
+   try {
+     if (typeof window !== 'undefined' && window.EventBus && typeof window.EventBus.on === 'function' && !window.__aiWinGuardSubscribed) {
+       window.EventBus.on('ai:request-close', function () {
+         try { if (typeof isAiWinMode === 'function' && isAiWinMode()) return false; } catch (e) {}
+       });
+       window.__aiWinGuardSubscribed = true;
+     }
+   } catch (e) {}
+   try { if (typeof MirrorSync !== 'undefined' && MirrorSync && typeof MirrorSync.requestAiClose === 'function' && inAi) { /* 桥接占位，无裸挂 */ } } catch (e2) {}
+  }catch(e){}
 }
 function applyAiWinLockSwitchers(){
  try{

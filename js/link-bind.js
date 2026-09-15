@@ -1,5 +1,13 @@
 /* [js/link-bind.js] 跳转绑定运行时 + 外层消息处理 + 检查器/管理抽屉（T1+T2） */
 /* 暴露全局 window.LinkBind：原型 html 注入体 + 外层消息监听 + 跳转执行器 + 抽屉 UI */
+/* Wave-C/F: ESM 显式依赖 (escHtml/escAttr/showToast 经 utils 显式 import, 消灭隐式全局);
+ * Store 显式 import (队列/源切换协同, 本波声明+轻量订阅, 全量真相源切换 Wave-D)。
+ * stripped-classic 降级 (导出单文件): import 行被剥离后裸调用回退 window 全局 (经典脚本先行已挂载)。 */
+/* FIX: 经典<script>加载，禁用ESM import(整文件罢工)。内联回退+window.Utils双保险；
+ * Store经window.Store只读。_LbStore保留typeof守卫兼容。 */
+var escHtml = (typeof window !== 'undefined' && window.escHtml) || (typeof window !== 'undefined' && window.Utils && window.Utils.escHtml) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+var escAttr = (typeof window !== 'undefined' && window.escAttr) || (typeof window !== 'undefined' && window.Utils && window.Utils.escAttr) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+var showToast = (typeof window !== 'undefined' && window.showToast) || (typeof window !== 'undefined' && window.Utils && window.Utils.showToast) || function (msg) { try { if (typeof libStatus === 'function') { libStatus(msg); return; } } catch (e) {} try { alert(msg); } catch (e2) {} return null; };
 var LinkBind = (function () {
   'use strict';
 
@@ -302,6 +310,7 @@ var LinkBind = (function () {
 
   /* ═══════ 元素检查器抽屉 ═══════ */
   var inspectorEl = null;    /* 当前锁定的元素 */
+  var inspectorRemote = null; /* 沙箱跨域远端锁定 {selector,page,label,text,tagName}，有值时不依赖 live el */
   var inspectorLink = null;  /* 当前元素的绑定 */
   var inspectorMode = '';    /* 'view' | 'select' | 'bound' */
   var inspectorSelectTarget = null; /* 选择态预选的目标源 */
@@ -346,6 +355,43 @@ var LinkBind = (function () {
     if(window.MaskStack) window.MaskStack.push('linkInspMask', closeInspector); // P1-7 fix mask统一
   }
 
+  /* 沙箱跨域远端检查器：选择器/文本来自帧回传（nonce 匹配即来源可信），
+   * 后续跳转保存/标注/需求草稿均走选择器+文件读写链，不依赖 live el。 */
+  function openInspectorRemote(info) {
+    if (!info || !info.selector) { lbToast('未能定位目标元素，请重试。'); return; }
+    closeAllDrawers();
+    inspectorEl = null;
+    var sel = String(info.selector || '');
+    var pg = String((info && info.page !== undefined) ? info.page : framePageKey());
+    var label = String((info && (info.label || info.text)) || info.tagName || sel).slice(0, 30);
+    var txt = String((info && info.text) || '').slice(0, 30);
+    inspectorRemote = { selector: sel, page: pg, label: label, text: txt, tagName: String((info && info.tagName) || '') };
+    var links = (currentSource && currentSource._links) || [];
+    inspectorLink = null;
+    for (var i = 0; i < links.length; i++) {
+      if (links[i].selector === sel && links[i].page === pg) {
+        inspectorLink = links[i];
+        break;
+      }
+    }
+    inspectorMode = inspectorLink ? 'bound' : 'view';
+    inspectorSelectTarget = null;
+    renderInspector(sel, pg, label, txt);
+    var mask = $('linkInspMask');
+    if(mask) mask.onclick=function(){closeInspector();};
+    var drawer = $('linkInspector');
+    if (mask) mask.style.display = 'block';
+    if (drawer) drawer.classList.add('open');
+    loadReqDraft(sel, pg);
+    if (window.AnnotationEngine && typeof window.AnnotationEngine.loadInspectorAnno === 'function') {
+      window.AnnotationEngine.loadInspectorAnno(null, sel, pg);
+    }
+    if (window.AnnotationEngine && typeof window.AnnotationEngine.setInspectorRemoteInfo === 'function') {
+      try { window.AnnotationEngine.setInspectorRemoteInfo({ label: label, text: txt, tagName: String((info && info.tagName) || '') }); } catch (e) {}
+    }
+    if(window.MaskStack) window.MaskStack.push('linkInspMask', closeInspector); // P1-7 fix mask统一
+  }
+
   function closeInspector() {
     if(window.MaskStack) window.MaskStack.pop('linkInspMask'); // P1-7 fix
     var mask = $('linkInspMask');
@@ -353,6 +399,7 @@ var LinkBind = (function () {
     if (mask) mask.style.display = 'none';
     if (drawer) drawer.classList.remove('open');
     inspectorEl = null;
+    inspectorRemote = null;
     inspectorLink = null;
     inspectorMode = '';
     inspectorSelectTarget = null;
@@ -511,7 +558,12 @@ var LinkBind = (function () {
   /* 打戳绑定：selector 在源文件恰好命中1个才建绑定；live+源文件双写 data-plink；links.json 加 plid */
   function saveJumpBinding(sel, pg, targetName, targetPage) {
     if (!currentSource || !currentSource.sandboxDir) return;
-    if (!lbIsPreviewEl(inspectorEl)) { lbToast('仅支持绑定原型内的元素，请点击预览区元素。'); return; }
+    if (!lbIsPreviewEl(inspectorEl)) {
+      /* 沙箱跨域远端锁定（inspectorRemote）无 live el：转为选择器非空校验后放行 */
+      if (typeof inspectorRemote !== 'undefined' && inspectorRemote) {
+        if (!sel) { lbToast('选择器生成失败，无法绑定。'); return; }
+      } else { lbToast('仅支持绑定原型内的元素，请点击预览区元素。'); return; }
+    }
     if (!sel) { lbToast('选择器生成失败，无法绑定。'); return; }
     if (!targetName) { lbToast('请先选择跳转目标原型。'); return; }
     var dir = currentSource.sandboxDir;
@@ -547,16 +599,18 @@ var LinkBind = (function () {
       sb.write({ dir: dir, file: file, content: out }).then(function (w) {
         if (!w || !w.ok) { lbToast('源文件写盘失败，绑定已取消：' + ((w && w.error) || '未知错误')); return; }
         var links = currentSource._links || [];
-        var btnName = (typeof extractElementText === 'function') ? extractElementText(liveEl) : '';
+        var remoteLbl = (typeof inspectorRemote !== 'undefined' && inspectorRemote && (inspectorRemote.label || inspectorRemote.text)) || '';
+        var remoteTxt = (typeof inspectorRemote !== 'undefined' && inspectorRemote && inspectorRemote.text) || '';
+        var btnName = remoteLbl || ((typeof extractElementText === 'function') ? extractElementText(liveEl) : '');
         var foundIdx = -1;
         for (var i = 0; i < links.length; i++) {
           if (links[i].selector === sel && links[i].page === pg) {
             links[i].btnName = btnName;
             links[i].target = targetName;
             links[i].targetPage = targetPage || '';
-            links[i].label = editElementLabel(liveEl);
+            links[i].label = remoteLbl || editElementLabel(liveEl);
             links[i].text = '';
-            try { links[i].text = String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) {}
+            try { links[i].text = remoteTxt || String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { if (!links[i].text) links[i].text = remoteTxt; }
             links[i].ts = Date.now();
             if (!links[i].plid) links[i].plid = plid;
             if (!links[i].id) links[i].id = links[i].plid || plid;
@@ -568,8 +622,8 @@ var LinkBind = (function () {
           var newLink = {
             id: plid, plid: plid, page: pg, selector: sel,
             btnName: btnName,
-            label: editElementLabel(liveEl),
-            text: (function () { try { return String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { return ''; } })(),
+            label: remoteLbl || editElementLabel(liveEl),
+            text: remoteTxt || (function () { try { return String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { return ''; } })(),
             target: targetName, targetPage: targetPage || '',
             ts: Date.now()
           };
@@ -578,16 +632,32 @@ var LinkBind = (function () {
         }
         currentSource._links = links;
         window.protoAPI.links.write(currentSource.sandboxDir, { links: links });
+        /* 跨域 live 帧即时打戳（同源直写已在 liveEl/setAttribute 完成；沙箱下经桥补戳） */
+        try { if (typeof sandboxSendStamp === 'function' && plid && sel) sandboxSendStamp(plid, sel, pg); } catch (eSt) {}
         updateLinkBadge();
-        libStatus('已保存跳转：' + (btnName ? '【' + btnName + '】' : editElementLabel(liveEl)) + ' → ' + targetName + (targetPage ? ' · ' + targetPage : ''));
+        libStatus('已保存跳转：' + (btnName ? '【' + btnName + '】' : (remoteLbl || editElementLabel(liveEl))) + ' → ' + targetName + (targetPage ? ' · ' + targetPage : ''));
         inspectorLink = links[foundIdx];
         inspectorMode = 'bound';
         var jumpChip = $('liJumpChip');
         var jumpBody = $('liJumpBody');
         var sel2 = sel;
-        try { sel2 = generateSelector(liveEl); } catch (e2) {}
-        var pg2 = framePageKey();
+        try { sel2 = inspectorRemote ? sel : generateSelector(liveEl); } catch (e2) {}
+        var pg2 = pg;
+        try { if (!inspectorRemote) pg2 = framePageKey(); } catch (e3) {}
         renderJumpSection(sel2, pg2, jumpChip, jumpBody);
+        /* 默认刷新原型：保存成功后走手动刷新同一链路（磁盘重读→内存同步→帧重载），
+         * 子页面与面板状态保持（复用 _refreshSavedSub 机制），所见即所得 */
+        try{
+          var _rbf = '';
+          try{ _rbf = (typeof lbCurHtmlFile === 'function') ? lbCurHtmlFile() : ''; }catch(e4){}
+          try{ window._refreshSavedSub = _rbf; }catch(e5){}
+          try{ window._refreshSavedHash = ''; }catch(e6){}
+          try{ window.__aiQuietRefresh = true; }catch(e7){}
+          if(typeof loadSandboxSources === 'function'){
+            loadSandboxSources(_rbf && /\.html$/i.test(String(_rbf)) ? _rbf : undefined);
+          }
+        }catch(e8){}
+        try{ lbToast('已保存跳转，正在刷新原型…'); }catch(e9){}
       }).catch(function () { lbToast('源文件写盘异常，绑定已取消。'); });
     }).catch(function () { lbToast('源文件读取异常，绑定已取消。'); });
   }
@@ -1112,6 +1182,7 @@ var LinkBind = (function () {
     broadcastMode: broadcastMode,
     closeAllDrawers: closeAllDrawers,
     openInspector: openInspector,
+    openInspectorRemote: openInspectorRemote,
     closeInspector: closeInspector,
     openLinkMgr: openLinkMgr,
     closeLinkMgr: closeLinkMgr,
@@ -1121,3 +1192,6 @@ var LinkBind = (function () {
     onFrameLoad: onFrameLoad
   };
 })();
+/* FIX: 经典<script>加载，移除ESM export(以window.LinkBind为准，见下) */
+try { if (typeof window !== 'undefined') window.LinkBind = window.LinkBind || LinkBind; } catch (e) {}
+/* 注: _LbStore 为显式依赖声明 (Wave-D 全量切换队列/源真相源; 本波保持经典互操作)。 */

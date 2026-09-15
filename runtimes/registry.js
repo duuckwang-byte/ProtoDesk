@@ -1,3 +1,10 @@
+/**
+ * runtimes/registry.js — Wave-E 契约补记 (只加注释, 实现不变)
+ * 26 适配器注册表 (BASE_AGENT_DEFS), id 唯一守卫.
+ * @typedef {Object} RuntimeAgentDef {id:string, name:string, bin:string, buildArgs:Function}
+ * @param {string} id 适配器 id (如 opencode)
+ * @returns {RuntimeAgentDef|null} 适配器定义或 null
+ */
 const opencodeDef = require('./defs/opencode');
 const claudeDef = require('./defs/claude');
 const cursorAgentDef = require('./defs/cursor-agent');

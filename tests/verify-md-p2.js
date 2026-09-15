@@ -11,7 +11,20 @@ console.log(`Node: ${process.version} execPath=${process.execPath}`);
 
 const rootDir = path.resolve(__dirname, '..');
 const coreSrc = fs.readFileSync(path.join(rootDir, 'js', 'core-docs.js'), 'utf8');
-const mainSrc = fs.readFileSync(path.join(rootDir, 'main.js'), 'utf8');
+const mainSrc = (() => {
+  // Wave-B兼容：主进程已拆为 main.js(骨架)+main/controllers+main/services，聚合后断言（72通道契约不变）
+  const __files = [path.join(rootDir, 'main.js')];
+  const __walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) __walk(p);
+      else if (e.isFile() && p.endsWith('.js')) __files.push(p);
+    }
+  };
+  __walk(path.join(rootDir, 'main'));
+  return __files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+})();
 const preloadSrc = fs.readFileSync(path.join(rootDir, 'preload.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(rootDir, '原型+文档.html'), 'utf8');
 const cssSrc = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
@@ -230,7 +243,7 @@ function test9_MainTwoChannels() {
   assert.ok(mainSrc.includes("ipcMain.handle('sandbox:delete-asset'"), 'main须有sandbox:delete-asset通道');
   assert.ok(mainSrc.includes('validProtoDir(o2.dir)'), '两通道须经validProtoDir校验');
   assert.ok(mainSrc.includes('目录不在沙箱范围内'), '目录外须拒绝为目录不在沙箱范围内');
-  assert.ok(mainSrc.includes('isSubPath(target, SANDBOX_ROOT)') || mainSrc.includes('isSubPath(full, SANDBOX_ROOT)'), '须经isSubPath防穿越');
+  assert.ok(mainSrc.includes('isSubPath(target, SANDBOX_ROOT)') || mainSrc.includes('isSubPath(full, SANDBOX_ROOT)') || mainSrc.includes('isSubPath(target, paths.SANDBOX_ROOT)') || mainSrc.includes('isSubPath(full, paths.SANDBOX_ROOT)'), '须经isSubPath防穿越');
 }
 
 // 断言10：主进程白名单+删除守卫（非法名/目录外拒绝）

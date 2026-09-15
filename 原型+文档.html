@@ -79,7 +79,7 @@
    <div class="stage-frame" id="stageFrame">
     <div class="phone-holder" id="phoneHolder">
      <div class="phone-wrap" id="phoneWrap">
-      <iframe id="frame" src="about:blank" title="原型预览"></iframe>
+      <iframe id="frame" src="about:blank" sandbox="allow-scripts allow-forms" title="原型预览"></iframe>
      </div>
     </div>
     <div class="docs-panel">
@@ -316,6 +316,7 @@
    <nav class="settings-nav">
      <button class="settings-tab-btn active" data-tab="ai" id="tabNavAi" style="justify-content:flex-start;text-align:left"><i data-ic="cpu"></i> Agent设置</button>
      <button class="settings-tab-btn" data-tab="models" id="tabNavModels" style="justify-content:flex-start;text-align:left"><i data-ic="sliders"></i> 模型管理</button>
+     <button class="settings-tab-btn" data-tab="uispec" id="tabNavUispec" style="justify-content:flex-start;text-align:left"><i data-ic="file-text"></i> 设计规范</button>
       <button class="settings-tab-btn" data-tab="sandbox" id="tabNavSandbox" style="justify-content:flex-start;text-align:left"><i data-ic="folder"></i> 沙箱</button>
       <button class="settings-tab-btn" data-tab="shortcut" id="tabNavShortcut" style="justify-content:flex-start;text-align:left"><i data-ic="command"></i> 快捷键</button>
       <button class="settings-tab-btn" data-tab="about" id="tabNavAbout" style="justify-content:flex-start;text-align:left"><i data-ic="info"></i> 关于软件</button>
@@ -362,6 +363,17 @@
       <input class="set-input" id="newModelInput" placeholder="添加自定义模型 ID (如 claude-3-5-sonnet)">
       <button class="docs-btn" id="btnAddCustomModel"><i data-ic="plus"></i> 添加</button>
      </div>
+     </div>
+
+    <!-- Tab: 设计规范（移动/PC 分开展示卡片，每端最多选中一个） -->
+    <div class="settings-pane" id="paneSetUispec" style="display:none">
+     <div class="set-section-title">设计规范（AI 生成原型时遵循）</div>
+     <div class="set-tip">移动端与 PC 端各选一个生效（可不选）。选中后新建/修改对应端原型即按该规范生成；直接改 specs/ 下 md 文件即时生效。</div>
+      <div class="mode-seg-tab">
+       <button class="seg-tab on" id="uispecSubMobile" type="button">移动端</button>
+       <button class="seg-tab" id="uispecSubPc" type="button">PC 端</button>
+      </div>
+     <div class="uispec-grid" id="uispecCardList"><div class="set-tip">正在读取规范列表…</div></div>
     </div>
 
     <!-- Tab 3: 沙箱与环境 -->
@@ -538,6 +550,35 @@
     <span class="modal-hint" id="fetchSelectCount" style="margin-right:auto"></span>
     <button class="docs-btn" id="modelFetchCancel">取消</button>
     <button class="docs-btn primary" id="modelFetchOk">完成</button>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ 新增设计规范：选本地 md + 名称/描述 ═══════ -->
+<div class="modal-mask" id="uispecAddMask" style="display:none">
+ <div class="modal" style="width:440px;max-width:92vw">
+  <div class="modal-head"><span id="uispecAddTitle">新增设计规范</span><span class="modal-x" id="uispecAddClose">✕</span></div>
+   <div class="modal-body">
+    <div class="set-field" id="uispecAddFileRow">
+     <label>规范文件（.md）：</label>
+     <div class="set-row">
+      <span class="set-val" id="uispecAddFileName" style="flex:1">未选择</span>
+      <button class="docs-btn" id="uispecPickFile" type="button">选择文件</button>
+     </div>
+    </div>
+    <div class="set-field">
+     <label>名称：</label>
+     <input class="set-input" id="uispecAddName" type="text" maxlength="60" placeholder="如 移动端B2B规范">
+    </div>
+    <div class="set-field">
+     <label>描述：</label>
+     <input class="set-input" id="uispecAddDesc" type="text" maxlength="120" placeholder="一句话说明适用场景（可空，自动取正文首行）">
+    </div>
+    <div class="set-tip" id="uispecAddTip">将归属到当前 Tab（移动端/PC 端）下展示。</div>
+   </div>
+  <div class="modal-foot">
+   <button class="docs-btn" id="uispecAddCancel">取消</button>
+   <button class="docs-btn primary" id="uispecAddSave">新增</button>
   </div>
  </div>
 </div>
@@ -976,15 +1017,27 @@
   </div>
  </div>
 
-<!-- 主脚本（由 app.js 拆分为多文件，顺序即依赖序，勿乱调） -->
+<!-- 主脚本（Wave-D/G: 16 经典 + 2 ESM = 18；域模块先于门面，顺序勿乱调）
+  文档域4 (markdown-compiler/editor-controller/toc-navigator/mirror-sync) 先于 core-docs 门面；
+  Git域/AI域/导出编译器先于 project-ai-export 门面（SoC委托）；经典同步执行供 vm 门禁兼容。
+  ESM 2 (utils/store) deferred 于经典之后。导出单文件仍经 stripEsmForExport 零模块降级（仅 icons+export-template）。 -->
 <script src="js/icons.js"></script>
 <script src="js/mask-manager.js"></script>
+<script src="js/doc/markdown-compiler.js"></script>
+<script src="js/doc/editor-controller.js"></script>
+<script src="js/doc/toc-navigator.js"></script>
+<script src="js/doc/mirror-sync.js"></script>
 <script src="js/core-docs.js"></script>
 <script src="js/nav-zoom.js"></script>
 <script src="js/sandbox-core.js"></script>
+<script src="js/git-ui/git-domain.js"></script>
+<script src="js/ai/ai-domain.js"></script>
+<script src="js/project-ai-export-compiler.js"></script>
 <script src="js/project-ai-export.js"></script>
 <script id="main-script" src="js/edit-entry.js"></script>
 <script src="js/link-bind.js"></script>
 <script src="js/annotation-core.js"></script>
+<script type="module" src="js/utils.js"></script>
+<script type="module" src="js/store.js"></script>
 </body>
 </html>

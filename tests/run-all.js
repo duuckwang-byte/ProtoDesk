@@ -1,4 +1,4 @@
-// T7 门禁总控：串行跑 24 套 verify（纯 Node，无 Electron），任一失败 exitCode=1
+// T7 门禁总控：串行跑 25 套 verify（纯 Node，无 Electron），任一失败 exitCode=1
 'use strict';
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
@@ -8,6 +8,7 @@ const NODE = process.execPath;
 
 const SUITES = [
   ['pack', 'check-pack.js'],
+  ['git-security', 'verify-git-security.js'],
   ['static-verify', 'static-verify.js'],
   ['platform', 'verify-platform.js'],
   ['runtimes', 'verify-runtimes.js'],
@@ -31,6 +32,7 @@ const SUITES = [
   ['inline-edit', 'verify-inline-edit.js'],
   ['link-stamp', 'verify-link-stamp.js'],
   ['spec-uilib', 'verify-spec-uilib.js'],
+  ['ui-specs', 'verify-ui-specs.js'],
 ];
 
 function pad(s, n) {

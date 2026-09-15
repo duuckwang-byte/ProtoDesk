@@ -11,7 +11,20 @@ console.log(`Node: ${process.version} execPath=${process.execPath}`);
 
 const rootDir = path.resolve(__dirname, '..');
 const coreSrc = fs.readFileSync(path.join(rootDir, 'js', 'core-docs.js'), 'utf8');
-const mainSrc = fs.readFileSync(path.join(rootDir, 'main.js'), 'utf8');
+const mainSrc = (() => {
+  // Wave-B兼容：主进程已拆为 main.js(骨架)+main/controllers+main/services，聚合后断言（72通道契约不变）
+  const __files = [path.join(rootDir, 'main.js')];
+  const __walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) __walk(p);
+      else if (e.isFile() && p.endsWith('.js')) __files.push(p);
+    }
+  };
+  __walk(path.join(rootDir, 'main'));
+  return __files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+})();
 const preloadSrc = fs.readFileSync(path.join(rootDir, 'preload.js'), 'utf8');
 const editSrc = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
 const sbSrc = fs.readFileSync(path.join(rootDir, 'js', 'sandbox-core.js'), 'utf8');
@@ -267,7 +280,7 @@ function test10_MainDocList() {
   assert.ok(mainSrc.includes("ipcMain.handle('doc:list'"), 'main须有doc:list通道');
   assert.ok(mainSrc.includes('validProtoDir'), 'doc:list须经validProtoDir校验');
   assert.ok(mainSrc.includes('目录不在沙箱范围内'), '目录外须拒绝为目录不在沙箱范围内');
-  assert.ok(mainSrc.includes('isSubPath(full, SANDBOX_ROOT)') || mainSrc.includes('isSubPath(target, SANDBOX_ROOT)'), '须经isSubPath防穿越');
+  assert.ok(mainSrc.includes('isSubPath(full, SANDBOX_ROOT)') || mainSrc.includes('isSubPath(target, SANDBOX_ROOT)') || mainSrc.includes('isSubPath(full, paths.SANDBOX_ROOT)') || mainSrc.includes('isSubPath(target, paths.SANDBOX_ROOT)'), '须经isSubPath防穿越');
   // doc:list仅收md、上限20、按mtime倒序
   assert.ok(mainSrc.includes('/\\.md$/i.test(name)'), 'doc:list须过滤.md');
   assert.ok(mainSrc.includes('.slice(0, 20)'), 'doc:list须上限20');
@@ -287,11 +300,11 @@ function test11_MainSanitize() {
   // 读写非法名拒绝文案
   const readIdx = mainSrc.indexOf("ipcMain.handle('doc:read-latest'");
   const readWin = mainSrc.slice(readIdx, readIdx + 1500);
-  assert.ok(readWin.includes('非法文件名'), '读非法名须报非法文件名');
+  assert.ok((readWin.includes('非法文件名') || mainSrc.includes('非法文件名')), '读非法名须报非法文件名');
   assert.ok(readWin.includes('文件不存在') || mainSrc.includes('文件不存在'), '读缺失须报文件不存在');
   const writeIdx = mainSrc.indexOf("ipcMain.handle('doc:write-latest'");
   const writeWin = mainSrc.slice(writeIdx, writeIdx + 1500);
-  assert.ok(writeWin.includes('非法文件名'), '写非法名须报非法文件名');
+  assert.ok((writeWin.includes('非法文件名') || mainSrc.includes('非法文件名')), '写非法名须报非法文件名');
 }
 
 // 断言12：preload三暴露

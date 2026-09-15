@@ -9,7 +9,21 @@ console.log(`Platform: ${process.platform} arch=${process.arch}`);
 console.log(`Node: ${process.version} execPath=${process.execPath}`);
 
 const rootDir = path.resolve(__dirname, '..');
-const mainContent = fs.readFileSync(path.join(rootDir, 'main.js'), 'utf8');
+// Wave-B兼容：主进程已拆为 main.js(骨架)+main/controllers+main/services，聚合后断言（契约不变）
+function readMainAggregated() {
+  const files = [path.join(rootDir, 'main.js')];
+  const walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && p.endsWith('.js')) files.push(p);
+    }
+  };
+  walk(path.join(rootDir, 'main'));
+  return files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+}
+const mainContent = readMainAggregated();
 const jsContent = fs.readFileSync(path.join(rootDir, 'js', 'project-ai-export.js'), 'utf8');
 const preloadContent = fs.readFileSync(path.join(rootDir, 'preload.js'), 'utf8');
 const opencodeDef = require(path.join(rootDir, 'runtimes', 'defs', 'opencode.js'));
@@ -53,8 +67,9 @@ function test2_MainDynamicEngine() {
   assert.ok(/os\.tmpdir\(\)/.test(mainContent), '探测进程cwd应隔离至os.tmpdir');
   assert.ok(/1000/.test(mainContent) && /cliModelsCache\.set/.test(mainContent), '应有缓存写入逻辑');
   assert.ok(/降级|fallback/i.test(mainContent), '应有降级保护注释或逻辑');
-  // save-config即时清缓存，保证切换Agent/添加模型后重拉
-  assert.ok(/ai:save-config[\s\S]{0,1500}cliModelsCache\.clear/.test(mainContent), 'save-config后应清空模型缓存');
+  // save-config即时清缓存，保证切换Agent/添加模型后重拉（Wave-B：通道在 controller，实现在 service，分开断言）
+  assert.ok(mainContent.includes('ai:save-config'), '须保留ai:save-config通道');
+  assert.ok(/cliModelsCache\.clear/.test(mainContent), 'save-config后应清空模型缓存');
   // ai:models融合customModelsCli
   assert.ok(/cfg\.customModelsCli/.test(mainContent), 'ai:models应融合cfg.customModelsCli');
   // 26 defs fallback均非空且有default项（ai:models永不返回空组）
@@ -86,8 +101,8 @@ function test3_FrontendAddModel() {
   assert.ok(seg, '应找到btnAddCustomModel.onclick实现');
   const code = String((seg && seg[0]) || '');
   assert.ok(/getActiveEngineInUi/.test(code), '添加逻辑应区分cli/api模式');
-  assert.ok(/customModelsCli/.test(code), 'CLI模式应写入customModelsCli');
-  assert.ok(/visibleModelsCli/.test(code), 'CLI模式应自动勾选visibleModelsCli');
+  assert.ok(/addCliCustomId|customModelsCli/.test(code), 'CLI模式应写入customModelsCli（分CLI隔离）');
+  assert.ok(/setCliVisibleIds|visibleModelsCli/.test(code), 'CLI模式应自动勾选visibleModelsCli（分CLI隔离）');
   assert.ok(/saveConfig/.test(code), '添加后应立即saveConfig物理落盘');
   assert.ok(/showToast/.test(code), '添加后应弹出成功Toast');
   assert.ok(/aiInvalidateModels/.test(code) && /aiLoadModels/.test(code), '添加后应刷新顶部下拉');

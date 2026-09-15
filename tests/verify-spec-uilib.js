@@ -18,7 +18,23 @@ console.log(`Platform: ${process.platform} arch=${process.arch}`);
 console.log(`Node: ${process.version} execPath=${process.execPath}`);
 
 const rootDir = path.resolve(__dirname, '..');
-const mainSrc = fs.readFileSync(path.join(rootDir, 'main.js'), 'utf8');
+const mainSrc = (() => {
+  // Wave-B兼容：主进程已拆为 main.js(骨架)+main/controllers+main/services，聚合后断言（72通道契约不变）
+  const __files = [path.join(rootDir, 'main.js')];
+  const __walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) __walk(p);
+      else if (e.isFile() && p.endsWith('.js')) __files.push(p);
+    }
+  };
+  __walk(path.join(rootDir, 'main'));
+  return __files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+})();
+const svcSrc = fs.readFileSync(path.join(rootDir, 'main', 'services', 'sandbox-storage-service.js'), 'utf8');
+function implOf(ch) { const parts = String(ch).split(/[^A-Za-z0-9]+/).filter(Boolean); const base = parts[0] + parts.slice(1).map((q) => q[0].toUpperCase() + q.slice(1)).join(''); return base[0].toLowerCase() + base.slice(1) + 'Impl'; }
+function sliceSvc(chA, chB) { return sliceBetween(svcSrc, 'function ' + implOf(chA) + '(', chB ? 'function ' + implOf(chB) + '(' : ''); }
 const preloadSrc = fs.readFileSync(path.join(rootDir, 'preload.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(rootDir, '原型+文档.html'), 'utf8');
 const cssSrc = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
@@ -53,7 +69,7 @@ function testA1_TwelveChannels() {
   assert.strictEqual(hits.length, 12, '规范/组件/绑定通道须恰12个，实际(' + hits.length + '):' + hits.join(','));
   // 全部 {ok,error} 收敛：每个 handler 块含 ok:false 与 ok:true
   for (const ch of chans) {
-    const body = sliceBetween(mainSrc, "ipcMain.handle('" + ch + "'", "ipcMain.handle('");
+    const body = sliceBetween(svcSrc, 'function ' + implOf(ch) + '(', 'function ');
     assert.ok(body.includes('ok: false') || body.includes('ok:false'), ch + ' 须有 ok:false 收敛');
     assert.ok(body.includes('ok: true') || body.includes('ok:true'), ch + ' 须有 ok:true 收敛');
   }
@@ -95,34 +111,34 @@ function testA2_PresetsAndNamespaces() {
 // ── A3 库CRUD签名（保留） ──
 function testA3_CrudSignatures() {
   // spec:create-from-file {srcPath,name,desc}
-  let b = sliceBetween(mainSrc, "ipcMain.handle('spec:create-from-file'", "ipcMain.handle('spec:create-from-text'");
+  let b = sliceSvc('spec:create-from-file', 'spec:create-from-text');
   assert.ok(b.includes('srcPath'), 'create-from-file 签名须含 srcPath');
   assert.ok(b.includes('o2.name') && b.includes('o2.desc'), 'create-from-file 签名须含 name/desc');
   assert.ok(b.includes('{ok, item') || b.includes('{ ok: true, item'), 'create-from-file 须返回 {ok,item}');
   // spec:create-from-text {name,desc,content}
-  b = sliceBetween(mainSrc, "ipcMain.handle('spec:create-from-text'", "ipcMain.handle('spec:update'");
+  b = sliceSvc('spec:create-from-text', 'spec:update');
   assert.ok(b.includes('o2.name') && b.includes('o2.desc') && b.includes('o2.content'), 'create-from-text 签名须含 name/desc/content');
   assert.ok(b.includes('内容不能为空'), 'create-from-text 空内容须拒绝');
   // spec:update {id,name?,desc?,content?}
-  b = sliceBetween(mainSrc, "ipcMain.handle('spec:update'", "ipcMain.handle('spec:rename'");
+  b = sliceSvc('spec:update', 'spec:rename');
   assert.ok(b.includes('sanitizeLibId(o2.id)'), 'update 须校验 id 白名单');
   assert.ok(b.includes('o2.name !== undefined') && b.includes('o2.desc !== undefined') && b.includes('o2.content !== undefined'), 'update 须支持 name?/desc?/content? 三可选');
   assert.ok(b.includes('updatedAt'), 'update 须刷新 updatedAt');
   // spec:rename {id,name} 只改库
-  b = sliceBetween(mainSrc, "ipcMain.handle('spec:rename'", "ipcMain.handle('spec:remove'");
+  b = sliceSvc('spec:rename', 'spec:remove');
   assert.ok(b.includes('sanitizeLibId(o2.id)'), 'rename 须校验 id');
   assert.ok(b.includes('String(o2.name'), 'rename 签名须含 name');
   // spec:read {id} -> {ok,content}
-  b = sliceBetween(mainSrc, "ipcMain.handle('spec:read'", "ipcMain.handle('uilib:list'");
+  b = sliceSvc('spec:read', 'uilib:list');
   assert.ok(b.includes('sanitizeLibId(o2.id)'), 'read 须校验 id');
   assert.ok(b.includes('content'), 'read 须返回 content');
   // uilib:save {id?,name,version?,css[],js[],deps?,initScript?,snippet?} name必填
-  b = sliceBetween(mainSrc, "ipcMain.handle('uilib:save'", "ipcMain.handle('uilib:remove'");
+  b = sliceSvc('uilib:save', 'uilib:remove');
   assert.ok(b.includes('名称不能为空'), 'uilib:save name 必填须拒绝空名');
   assert.ok(b.includes('normalizeUrlArray(o2.css)') && b.includes('normalizeUrlArray(o2.js)'), 'uilib:save 须校验 css[]/js[] 数组');
   assert.ok(b.includes('o2.version') && b.includes('o2.deps') && b.includes('o2.initScript') && b.includes('o2.snippet'), 'uilib:save 签名须含 version/deps/initScript/snippet');
   // uilib:remove {id}
-  b = sliceBetween(mainSrc, "ipcMain.handle('uilib:remove'", "ipcMain.handle('project:get-binding'");
+  b = sliceSvc('uilib:remove', 'project:get-binding');
   assert.ok(b.includes('sanitizeLibId(o2.id)'), 'uilib:remove 须校验 id');
   assert.ok(b.includes('splice(idx, 1)'), 'uilib:remove 须 splice 删除');
 }
@@ -137,23 +153,23 @@ function testA4_DupSuffix2() {
   // 四处调用：file/text/update/rename + uilib save(新增/编辑)
   const calls = (mainSrc.match(/ensureUniqueLibName\(/g) || []).length;
   assert.ok(calls >= 6, 'ensureUniqueLibName 调用须≥6处（规范file/text/update/rename+组件新增/编辑），实际' + calls);
-  assert.ok(sliceBetween(mainSrc, "ipcMain.handle('spec:create-from-file'", "ipcMain.handle('spec:create-from-text'").includes('ensureUniqueLibName(items, name, null)'), 'file 入库须重名加(2)');
-  assert.ok(sliceBetween(mainSrc, "ipcMain.handle('spec:update'", "ipcMain.handle('spec:rename'").includes('ensureUniqueLibName(items, nn, id)'), 'update 须重名加(2)且排除自身');
+  assert.ok(sliceSvc('spec:create-from-file', 'spec:create-from-text').includes('ensureUniqueLibName(items, name, null)'), 'file 入库须重名加(2)');
+  assert.ok(sliceSvc('spec:update', 'spec:rename').includes('ensureUniqueLibName(items, nn, id)'), 'update 须重名加(2)且排除自身');
 }
 
 // ── A5 非md/超大/非UTF8拒绝（后端保留+前端新增弹窗文案缺席） ──
 function testA5_FileGuards() {
   assert.ok(mainSrc.includes('const SPEC_MAX_BYTES = 200 * 1024'), '须定义 SPEC_MAX_BYTES=200KB');
-  const b = sliceBetween(mainSrc, "ipcMain.handle('spec:create-from-file'", "ipcMain.handle('spec:create-from-text'");
+  const b = sliceSvc('spec:create-from-file', 'spec:create-from-text');
   assert.ok(b.includes("path.extname(srcPath).toLowerCase() !== '.md'"), '须校验后缀仅 .md');
   assert.ok(b.includes('仅支持 .md 文件入库'), '非md拒绝文案须为“仅支持 .md 文件入库”');
-  assert.ok(b.includes('st.size > SPEC_MAX_BYTES') && b.includes('文件超过200KB，拒绝入库'), '超大（stat size）须拒绝');
-  assert.ok(b.includes('buf.length > SPEC_MAX_BYTES'), '超大（buffer length）须二次拒绝');
+  assert.ok((b.includes('st.size > SPEC_MAX_BYTES') || b.includes('st.size > paths.SPEC_MAX_BYTES')) && b.includes('文件超过200KB，拒绝入库'), '超大（stat size）须拒绝');
+  assert.ok((b.includes('buf.length > SPEC_MAX_BYTES') || b.includes('buf.length > paths.SPEC_MAX_BYTES')), '超大（buffer length）须二次拒绝');
   assert.ok(b.includes('isUtf8Buffer(buf)') && b.includes('文件非UTF-8编码，拒绝入库'), '非UTF-8须拒绝');
   assert.ok(mainSrc.includes('function isUtf8Buffer(buf)'), '须定义 isUtf8Buffer（TextDecoder fatal）');
-  const t = sliceBetween(mainSrc, "ipcMain.handle('spec:create-from-text'", "ipcMain.handle('spec:update'");
+  const t = sliceSvc('spec:create-from-text', 'spec:update');
   assert.ok(t.includes('Buffer.byteLength(content') && t.includes('SPEC_MAX_BYTES'), '手写 content 须按字节判超大');
-  const u = sliceBetween(mainSrc, "ipcMain.handle('spec:update'", "ipcMain.handle('spec:rename'");
+  const u = sliceSvc('spec:update', 'spec:rename');
   assert.ok(u.includes('Buffer.byteLength(nc') && u.includes('内容超过200KB，拒绝保存'), '编辑 content 超大须拒绝保存');
   // 前端UI已删：新增弹窗文案不得再残留
   assert.ok(!htmlSrc.includes('仅 .md'), '新增弹窗已删：html不得再含“仅 .md”提示');
@@ -164,16 +180,16 @@ function testA5_FileGuards() {
 // ── A6 拷贝隔离（后端保留+删除确认弹窗缺席） ──
 function testA6_CopyIsolation() {
   // 选用=拷贝：set-binding copyFileSync
-  const sb = sliceBetween(mainSrc, "ipcMain.handle('project:set-binding'", "ipcMain.handle('pick-text-file'");
+  const sb = sliceSvc('project:set-binding', 'pick-text-file');
   assert.ok(sb.includes('fs.copyFileSync(src, dst)'), '选用须 copyFileSync 拷贝为快照');
   assert.ok(sb.includes("path.join(projDir, 'design-spec.md')"), '快照须落 sandbox/<项目>/design-spec.md');
   // spec:remove 只删库：unlink+splice+writeIndex，且不碰快照（去注释后判定，避免下个handler注释干扰）
-  const rm = stripComments(sliceBetween(mainSrc, "ipcMain.handle('spec:remove'", "ipcMain.handle('spec:read'"));
+  const rm = stripComments(sliceSvc('spec:remove', 'spec:read'));
   assert.ok(rm.includes('fs.unlinkSync(target)') || rm.includes('unlinkSync(target)'), 'spec:remove 须删 specs/<id>.md');
   assert.ok(rm.includes('items.splice(idx, 1)') && rm.includes('writeSpecsIndex(items)'), 'spec:remove 须 splice+写回 index');
   assert.ok(!rm.includes('project.json') && !rm.includes('design-spec'), 'spec:remove 不得碰 project.json/design-spec.md（快照保留）');
   // uilib:remove 同理只删库
-  const ur = stripComments(sliceBetween(mainSrc, "ipcMain.handle('uilib:remove'", "ipcMain.handle('project:get-binding'"));
+  const ur = stripComments(sliceSvc('uilib:remove', 'project:get-binding'));
   assert.ok(ur.includes('items.splice(idx, 1)') && ur.includes('writeUilibsIndex(items)'), 'uilib:remove 须 splice+写回');
   assert.ok(!ur.includes('project.json') && !ur.includes('design-spec'), 'uilib:remove 不得碰快照');
   // spec:rename/update 只改库不碰快照
@@ -187,16 +203,16 @@ function testA6_CopyIsolation() {
 
 // ── A7 绑定仅写当前项目（后端保留+前端SpecBind缺席） ──
 function testA7_BindingCurrentProjectOnly() {
-  const sb = sliceBetween(mainSrc, "ipcMain.handle('project:set-binding'", "ipcMain.handle('pick-text-file'");
+  const sb = sliceSvc('project:set-binding', 'pick-text-file');
   assert.ok(sb.includes('sanitizeProjectName(raw)'), 'set-binding 须清洗项目名');
-  assert.ok(sb.includes('isSubPath(projDir, SANDBOX_ROOT)') && sb.includes('isSubPath(dst, SANDBOX_ROOT)') && sb.includes('isSubPath(bf, SANDBOX_ROOT)'), 'set-binding 路径须三处 isSubPath 收敛');
+  assert.ok((sb.includes('isSubPath(projDir, SANDBOX_ROOT)') || sb.includes('isSubPath(projDir, paths.SANDBOX_ROOT)')) && (sb.includes('isSubPath(dst, SANDBOX_ROOT)') || sb.includes('isSubPath(dst, paths.SANDBOX_ROOT)')) && (sb.includes('isSubPath(bf, SANDBOX_ROOT)') || sb.includes('isSubPath(bf, paths.SANDBOX_ROOT)')), 'set-binding 路径须三处 isSubPath 收敛');
   assert.ok(sb.includes("hasOwnProperty.call(o2, 'specId')") && sb.includes("hasOwnProperty.call(o2, 'uiLibId')"), 'set-binding 须按 specId/uiLibId 有无分别更新（不全量覆盖）');
   assert.ok(sb.includes("path.join(projDir, 'project.json')"), 'set-binding 仅写当前项目 project.json');
   assert.ok(sb.includes("path.join(projDir, 'design-spec.md')") || sb.includes("path.join(projDir,'design-spec.md')"), 'set-binding 规范快照仅写当前项目');
   // 不写其他项目：块内无 readdir/遍历项目写盘
   assert.ok(!/readdirSync\(SANDBOX_ROOT\)/.test(sb), 'set-binding 不得遍历沙箱根写多项目');
   // get-binding 缺失返回空绑定不写盘
-  const gb = sliceBetween(mainSrc, "ipcMain.handle('project:get-binding'", "ipcMain.handle('project:set-binding'");
+  const gb = sliceSvc('project:get-binding', 'project:set-binding');
   assert.ok(gb.includes('emptyProjectBinding()'), 'get-binding 缺失须返回空绑定');
   assert.ok(gb.includes("if (!fs.existsSync(projDir)) return { ok: true, binding: emptyProjectBinding() }"), '旧项目无绑定须直接返回空而不写盘');
   assert.ok(!gb.includes('mkdirSync') && !gb.includes('writeFileSync'), 'get-binding 不得写盘（mkdir/write）');
@@ -246,14 +262,17 @@ function testA9_EmptyFallback() {
   assert.ok(promptSrc.includes('## 四、'), '提示词须保留前四节');
 }
 
-// ── A10 9脚本未增+卡片逻辑缺席 ──
+// ── A10 11脚本(9经典+utils/store ESM)+EXPORT轻量解耦+卡片逻辑缺席 (Wave-D/G) ──
 function testA10_NineScripts() {
   const re = /<script\s+[^>]*src="([^"]+)"[^>]*>/g;
   const list = [];
   let m;
   while ((m = re.exec(htmlSrc))) list.push(m[1]);
-  const expect = ['js/icons.js', 'js/mask-manager.js', 'js/core-docs.js', 'js/nav-zoom.js', 'js/sandbox-core.js', 'js/project-ai-export.js', 'js/edit-entry.js', 'js/link-bind.js', 'js/annotation-core.js'];
-  assert.deepStrictEqual(list, expect, '脚本须恰9个且顺序不动，实际:' + JSON.stringify(list));
+  const expect = ['js/icons.js', 'js/mask-manager.js', 'js/doc/markdown-compiler.js', 'js/doc/editor-controller.js', 'js/doc/toc-navigator.js', 'js/doc/mirror-sync.js', 'js/core-docs.js', 'js/nav-zoom.js', 'js/sandbox-core.js', 'js/git-ui/git-domain.js', 'js/ai/ai-domain.js', 'js/project-ai-export-compiler.js', 'js/project-ai-export.js', 'js/edit-entry.js', 'js/link-bind.js', 'js/annotation-core.js', 'js/utils.js', 'js/store.js'];
+  assert.deepStrictEqual(list, expect, '脚本须为18个(16经典域先于门面+utils/store ESM, Wave-D/G), 实际:' + JSON.stringify(list));
+  const expM2 = paeSrc.match(/var EXPORT_SCRIPT_FILES\s*=\s*(\[[^\]]*\])/);
+  const expList2 = expM2 ? eval(expM2[1]) : [];
+  assert.deepStrictEqual(expList2, ['js/icons.js', 'js/export-template.js'], 'EXPORT须轻量2项解耦(Wave-D/G), 实际:' + JSON.stringify(expList2));
   assert.ok(!htmlSrc.includes('spec-uilib-bar.js'), '不得新增独立 spec-uilib-bar.js');
   // 底部卡片逻辑已删：不得再残留
   assert.ok(!sandboxSrc.includes('function SpecBarRefresh('), '底部卡片已删：sandbox不得再含 SpecBarRefresh');

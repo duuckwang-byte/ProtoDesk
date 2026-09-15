@@ -11,7 +11,20 @@ console.log(`Node: ${process.version} execPath=${process.execPath}`);
 
 const rootDir = path.resolve(__dirname, '..');
 const coreSrc = fs.readFileSync(path.join(rootDir, 'js', 'core-docs.js'), 'utf8');
-const mainSrc = fs.readFileSync(path.join(rootDir, 'main.js'), 'utf8');
+const mainSrc = (() => {
+  // Wave-B兼容：主进程已拆为 main.js(骨架)+main/controllers+main/services，聚合后断言（72通道契约不变）
+  const __files = [path.join(rootDir, 'main.js')];
+  const __walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) __walk(p);
+      else if (e.isFile() && p.endsWith('.js')) __files.push(p);
+    }
+  };
+  __walk(path.join(rootDir, 'main'));
+  return __files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+})();
 const preloadSrc = fs.readFileSync(path.join(rootDir, 'preload.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(rootDir, '原型+文档.html'), 'utf8');
 const cssSrc = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');

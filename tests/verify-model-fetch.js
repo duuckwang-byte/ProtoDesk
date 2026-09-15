@@ -22,13 +22,14 @@ function mkListEl() {
 }
 const GROUPS = [{ label: 'P', provider: 'p', models: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }];
 
-// ---- 1. 页面只显已选 + 删除按钮 ----
+// ---- 1. 页面只显已选 + 删除按钮（可见集合按 CLI 分 CLI 隔离） ----
 async function testPageFilter() {
   const listEl = mkListEl();
   const fake$ = () => listEl;
-  const fnSrc = extract('renderModelManagerList');
+  const helper = extract('curCliId') + '\n' + extract('getCliVisibleIds') + '\n';
+  const fnSrc = helper + extract('renderModelManagerList');
   const fn = new Function('$', 'escHtml', 'escAttr', 'getActiveEngineInUi', 'window',
-    fnSrc + '\nreturn renderModelManagerList({visibleModelsCli:["b"]});');
+    fnSrc + '\nreturn renderModelManagerList({agentId:"opencode",visibleModelsCli:{opencode:["b"]}});');
   const fakeWindow = { protoAPI: { ai: { listModels: () => Promise.resolve({ ok: true, groups: GROUPS, engine: 'cli' }) } } };
   fn(fake$, escHtml, escAttr, () => 'cli', fakeWindow);
   await new Promise((r) => setImmediate(r));
@@ -36,28 +37,30 @@ async function testPageFilter() {
   assert.ok(h.includes('>b<') || h.includes('"b"'), '已选项b应显示');
   assert.ok(!h.includes('"a"') && !h.includes('"c"'), '未选项a/c应隐藏');
   assert.ok(h.includes('model-del'), '应有删除按钮');
-  // visible==null 时全显（首跑兼容）
+  // 从未选过的 CLI 显示为空（不再回填全量）
   const listEl2 = mkListEl();
   const fn2 = new Function('$', 'escHtml', 'escAttr', 'getActiveEngineInUi', 'window',
-    fnSrc + '\nreturn renderModelManagerList({});');
+    fnSrc + '\nreturn renderModelManagerList({agentId:"opencode",visibleModelsCli:{}});');
   fn2(() => listEl2, escHtml, escAttr, () => 'cli', fakeWindow);
   await new Promise((r) => setImmediate(r));
-  assert.ok(listEl2.innerHTML.includes('"a"') && listEl2.innerHTML.includes('"c"'), 'visible==null时应全显');
+  assert.ok(!listEl2.innerHTML.includes('"a"') && !listEl2.innerHTML.includes('"c"'), '从未选择的CLI应显示为空');
+  assert.ok(/暂无已选模型/.test(listEl2.innerHTML), '空选择应有引导提示');
 }
 
-// ---- 2. 删除语义：只出可见集合，不碰custom ----
+// ---- 2. 删除语义：只出当前 CLI 可见集合，不碰custom与其他 CLI ----
 async function testDeleteSemantics() {
-  const helper = extract('setVisibleModels') + '\n' + extract('persistVisibleAndRefresh') + '\n' + extract('removeVisibleModel');
+  const helper = extract('curCliId') + '\n' + extract('normalizeCliModelMaps') + '\n' + extract('getCliVisibleIds') + '\n' + extract('setCliVisibleIds') + '\n' + extract('setVisibleModels') + '\n' + extract('persistVisibleAndRefresh') + '\n' + extract('removeVisibleModel');
   const calls = { saved: null };
   const fakeWindow = { protoAPI: { ai: { saveConfig: (cfg) => { calls.saved = cfg; return Promise.resolve({}); } } } };
   const fn = new Function('getActiveEngineInUi', 'window', 'showToast', 'aiInvalidateModels', 'aiLoadModels', 'renderModelManagerList', 'curAiConfigInit',
     'var curAiConfig = curAiConfigInit;\n' + helper + '\nvar left = removeVisibleModel("b");\nreturn {left:left, mem:curAiConfig};');
-  const r = fn(() => 'cli', fakeWindow, () => {}, () => {}, () => {}, () => {}, { visibleModelsCli: ['a', 'b'], customModelsCli: ['a', 'b', 'c'] });
+  const init = { agentId: 'opencode', visibleModelsCli: { opencode: ['a', 'b'], qoder: ['q1'] }, customModelsCli: { opencode: ['a', 'b', 'c'] } };
+  const r = fn(() => 'cli', fakeWindow, () => {}, () => {}, () => {}, () => {}, init);
   await new Promise((rs) => setImmediate(rs));
-  assert.deepStrictEqual(r.left, ['a'], '删除应返回剩余集合');
-  assert.deepStrictEqual(r.mem.visibleModelsCli, ['a'], '内存可见集合应更新');
-  assert.deepStrictEqual(r.mem.customModelsCli, ['a', 'b', 'c'], 'customModelsCli不得被删除影响');
-  assert.deepStrictEqual(calls.saved.visibleModelsCli, ['a'], '应即时落盘');
+  assert.deepStrictEqual(r.left, ['a'], '删除应返回当前CLI剩余集合');
+  assert.deepStrictEqual(r.mem.visibleModelsCli, { opencode: ['a'], qoder: ['q1'] }, '内存可见集合应仅更新当前CLI');
+  assert.deepStrictEqual(r.mem.customModelsCli, { opencode: ['a', 'b', 'c'] }, 'customModelsCli不得被删除影响');
+  assert.deepStrictEqual(calls.saved.visibleModelsCli, { opencode: ['a'], qoder: ['q1'] }, '应即时落盘（含他CLI条目）');
 }
 
 // ---- 3. 确认并集：勾选写入可见 + 合并入custom（防拉取覆盖丢数据） ----

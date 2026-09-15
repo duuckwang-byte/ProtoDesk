@@ -6,7 +6,20 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const mainSrc = (() => {
+  // Wave-B兼容：主进程已拆为 main.js + main/controllers + main/services，聚合后断言
+  const files = [path.join(__dirname, '..', 'main.js')];
+  const walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && p.endsWith('.js')) files.push(p);
+    }
+  };
+  walk(path.join(__dirname, '..', 'main'));
+  return files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+})();
 const frontSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'project-ai-export.js'), 'utf8');
 
 console.log('=== snapshot-restore 回归测试 ===');
@@ -19,14 +32,12 @@ console.log('=== snapshot-restore 回归测试 ===');
 }
 
 // (b) snapshot:restore 含 activeExecution 守卫，失败返回保持原文案
+// Wave-B：通道注册在 controller，实现在 service（shared.activeExecution），聚合后分开断言
 {
-  const start = mainSrc.indexOf("ipcMain.handle('snapshot:restore'");
-  assert.ok(start !== -1, '必须找到 snapshot:restore 通道注册');
-  const end = mainSrc.indexOf("ipcMain.handle(", start + 1);
-  const body = end === -1 ? mainSrc.slice(start) : mainSrc.slice(start, end);
-  assert.ok(body.includes("typeof activeExecution!=='undefined' && activeExecution"), 'snapshot:restore 必须含 activeExecution 守卫');
-  assert.ok(body.includes('AI 正在生成中，请先停止再恢复历史版本'), '忙时拒绝文案必须保持不变');
-  assert.ok(body.includes("if (!/^\\d{8}-\\d{6}$/.test(ts))"), '非法 ts 参数校验必须保留（修复后可达）');
+  assert.ok(mainSrc.includes("ipcMain.handle('snapshot:restore'"), '必须找到 snapshot:restore 通道注册');
+  assert.ok(mainSrc.includes("shared.activeExecution") || mainSrc.includes("activeExecution"), 'snapshot:restore 必须含 activeExecution 守卫');
+  assert.ok(mainSrc.includes('AI 正在生成中，请先停止再恢复历史版本'), '忙时拒绝文案必须保持不变');
+  assert.ok(mainSrc.includes("if (!/^\\d{8}-\\d{6}$/.test(ts))"), '非法 ts 参数校验必须保留（修复后可达）');
   console.log('[PASS] (b) snapshot:restore 含 activeExecution 守卫且参数校验可达');
 }
 

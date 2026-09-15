@@ -126,11 +126,73 @@ async function test3_EnvPathPrepend() {
     `原 PATH 条目应保留，实际 ${result.Path}`
   );
 
-  // 抗自签名证书拦截
+  // P0-B 默认安全+显式可选：默认不注入 NODE_TLS_REJECT_UNAUTHORIZED
   assert.strictEqual(
-    result.NODE_TLS_REJECT_UNAUTHORIZED, '0',
-    'NODE_TLS_REJECT_UNAUTHORIZED 应为 0'
+    result.NODE_TLS_REJECT_UNAUTHORIZED, undefined,
+    '默认不应注入 NODE_TLS_REJECT_UNAUTHORIZED（默认安全，显式 opt-in 才放行）'
   );
+  assert.strictEqual(
+    result.NODE_EXTRA_CA_CERTS, undefined,
+    '默认不应注入 NODE_EXTRA_CA_CERTS'
+  );
+
+  // 显式 opt-in（PLAN_D_ALLOW_INSECURE_TLS=1）才注入 '0'，且必须 console.warn
+  let warned = [];
+  const origWarn = console.warn;
+  try {
+    console.warn = (...a) => { warned.push(a.join(' ')); };
+    const insecure = applyAgentLaunchEnv({ Path: 'C:\\Windows', PLAN_D_ALLOW_INSECURE_TLS: '1' });
+    assert.strictEqual(
+      insecure.NODE_TLS_REJECT_UNAUTHORIZED, '0',
+      'PLAN_D_ALLOW_INSECURE_TLS=1 时应显式注入 NODE_TLS_REJECT_UNAUTHORIZED=0'
+    );
+    assert.ok(
+      warned.some((m) => /WARNING/.test(m) && /PLAN_D_ALLOW_INSECURE_TLS/.test(m)),
+      `不安全模式必须打 warning 日志，实际 warn=${JSON.stringify(warned)}`
+    );
+  } finally {
+    console.warn = origWarn;
+  }
+
+  // 非 opt-in 取值（'0'/''/未设）不得放行，且默认路径下无 warn 污染
+  {
+    const off = applyAgentLaunchEnv({ Path: 'C:\\Windows', PLAN_D_ALLOW_INSECURE_TLS: '0' });
+    assert.strictEqual(
+      off.NODE_TLS_REJECT_UNAUTHORIZED, undefined,
+      "PLAN_D_ALLOW_INSECURE_TLS='0' 不应放行"
+    );
+  }
+
+  // 自签 CA：PLAN_D_EXTRA_CA_CERTS 别名透传为标准 NODE_EXTRA_CA_CERTS，且不降级校验
+  {
+    const ca = applyAgentLaunchEnv({ Path: 'C:\\Windows', PLAN_D_EXTRA_CA_CERTS: 'C:\\certs\\ca.pem' });
+    assert.strictEqual(
+      ca.NODE_EXTRA_CA_CERTS, 'C:\\certs\\ca.pem',
+      'PLAN_D_EXTRA_CA_CERTS 应透传为 NODE_EXTRA_CA_CERTS'
+    );
+    assert.strictEqual(
+      ca.NODE_TLS_REJECT_UNAUTHORIZED, undefined,
+      '仅配置自签 CA 时不应顺带关闭证书校验'
+    );
+  }
+
+  // 标准 NODE_EXTRA_CA_CERTS 本身透传；已显式设置时别名不得覆盖
+  {
+    const direct = applyAgentLaunchEnv({ Path: 'C:\\Windows', NODE_EXTRA_CA_CERTS: 'D:\\ca\\direct.pem' });
+    assert.strictEqual(
+      direct.NODE_EXTRA_CA_CERTS, 'D:\\ca\\direct.pem',
+      'NODE_EXTRA_CA_CERTS 应原样透传'
+    );
+    const both = applyAgentLaunchEnv({
+      Path: 'C:\\Windows',
+      NODE_EXTRA_CA_CERTS: 'D:\\ca\\direct.pem',
+      PLAN_D_EXTRA_CA_CERTS: 'C:\\certs\\alias.pem',
+    });
+    assert.strictEqual(
+      both.NODE_EXTRA_CA_CERTS, 'D:\\ca\\direct.pem',
+      'NODE_EXTRA_CA_CERTS 已显式设置时，PLAN_D_EXTRA_CA_CERTS 不得覆盖'
+    );
+  }
 }
 
 // ---------- 测试4：进程树递归强杀 ----------

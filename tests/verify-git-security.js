@@ -9,6 +9,21 @@ const ROOT = path.resolve(__dirname, '..');
 const gitAuth = require('../git/auth');
 const gitConfigStore = require('../git/config-store');
 
+// Wave-B兼容：主进程已拆为 main.js + main/controllers + main/services，聚合后断言（72通道契约不变）
+function readMainAggregated() {
+  const files = [path.join(ROOT, 'main.js')];
+  const walk = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const pp = path.join(d, e.name);
+      if (e.isDirectory()) walk(pp);
+      else if (e.isFile() && pp.endsWith('.js')) files.push(pp);
+    }
+  };
+  walk(path.join(ROOT, 'main'));
+  return files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
+}
+
 let passed = 0;
 let failed = 0;
 function ok(name, fn) {
@@ -116,16 +131,14 @@ async function main() {
   });
 
   // ── C. argv无Token ──
-  await ok('C01 buildGitAuthUrl零调用(仅定义)', () => {
-    const m = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  await ok('C01 buildGitAuthUrl已删除(零残留)', () => {
+    const m = readMainAggregated();
     const all = (m.match(/buildGitAuthUrl\s*\(/g) || []).length;
-    // 1处为 function buildGitAuthUrl( 定义本身
-    assert.strictEqual(all, 1, `buildGitAuthUrl( 应仅出现1次(定义), 实际:${all}`);
-    const callSites = m.split('\n').filter((ln) => /buildGitAuthUrl\s*\(/.test(ln) && !/function\s+buildGitAuthUrl/.test(ln));
-    assert.strictEqual(callSites.length, 0, `不应有活跃调用, 实际:${JSON.stringify(callSites.slice(0, 2))}`);
+    // Wave-B已删除废弃拼URL函数：定义与调用均为0（新链路走gitAuth.buildGitAuthEnv + 裸URL）
+    assert.strictEqual(all, 0, `buildGitAuthUrl( 应为0(已删除), 实际:${all}`);
   });
   await ok('C02 runGit含argv凭据URL红线(AUTH_URL_BLOCKED)', () => {
-    const m = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const m = readMainAggregated();
     const i = m.indexOf('function runGit(');
     assert.ok(i >= 0, 'runGit缺失');
     const body = m.slice(i, i + 2500);
@@ -179,7 +192,7 @@ async function main() {
 
   // ── E. 嵌套.git默认不删 ──
   await ok('E01 ensureSandboxGitRepo零rmSync(默认不删)', () => {
-    const m = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const m = readMainAggregated();
     const s = m.indexOf('async function ensureSandboxGitRepo');
     assert.ok(s >= 0, 'ensureSandboxGitRepo缺失');
     const e = m.indexOf("ipcMain.handle('git:config-get'", s);
@@ -188,7 +201,7 @@ async function main() {
     assert.ok(body.includes('needHeal') || body.includes('NEED_HEAL') || /no auto delete/i.test(body) || body.includes('不上报') || body.includes('上报'), 'ensure应走needHeal上报');
   });
   await ok('E02 checkGitHealNeeded收口嵌套/缺库/坏库', () => {
-    const m = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const m = readMainAggregated();
     const s = m.indexOf('async function checkGitHealNeeded');
     assert.ok(s >= 0, 'checkGitHealNeeded缺失');
     const body = m.slice(s, s + 1500);
@@ -196,14 +209,14 @@ async function main() {
     assert.ok(body.includes('needHeal'), '应返回needHeal');
   });
   await ok('E03 heal-repair先备份后隔离(非rm -rf)', () => {
-    const m = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const m = readMainAggregated();
     assert.ok(m.includes(".heal-backup"), '应含.heal-backup备份');
     assert.ok(/\.bak-/.test(m), '应含.bak-隔离改名');
   });
 
   // ── F. force无令牌/无确认不执行 ──
   await ok('F01 后端仅force显式才加--force', () => {
-    const m = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const m = readMainAggregated();
     assert.ok(/if\s*\(force\)\s*pushArgs\.push\('--force'\)/.test(m), '应为 if (force) pushArgs.push(--force)');
     assert.ok(m.includes('const force = !!(o && o.force)'), 'force应来自o.force显式标志');
   });

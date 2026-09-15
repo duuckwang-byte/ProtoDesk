@@ -1,4 +1,6 @@
 /* [js/mask-manager.js] 统一遮罩栈 + 单一 Esc 监听（P1-7 双Esc/遮罩 I-02 P1-6联动 治理） - 增强版：17弹窗统一双关闭（点遮罩 + Esc）*/
+/* Wave-C/F: 转标准 ESM (export MaskStack) + 经典兼容垫片; 内部 esc() 为遮罩栈顶关闭, 非 HTML 转义 (与 utils.esc 无关, 不导入以避名冲突) */
+/* FIX: 经典<script>加载，禁用ESM export(浏览器会整文件罢工)，以window.MaskStack为准 */
 var MaskStack = (function () {
   'use strict';
   var stack = [];
@@ -29,17 +31,28 @@ var MaskStack = (function () {
     if (!id) return;
     for (var i = stack.length - 1; i >= 0; i--) {
       if (stack[i].id === id) {
-        // 清理 onclick 残留，避免旧闭包残留
+        // 清理 onclick 残留，但须恢复 register 绑定的常驻处理器：
+        // 旧逻辑直接置 null，导致二次打开后点遮罩失效（只剩 Esc）。现优先恢复注册态。
         try {
           var reg = registry[id] || registry[stack[i].id];
           var maskId = (reg && reg.maskId) ? reg.maskId : id;
           var el = document.getElementById(maskId) || document.getElementById(id);
-          if (el) el.onclick = null;
-          // 若 id 为逻辑面板名，尝试清理对应 mask
+          if (el) {
+            if (reg && typeof reg._onClick === 'function') { try { el.onclick = reg._onClick; } catch (e0) {} }
+            else { try { el.onclick = null; } catch (e0b) {} }
+          }
+          // 若 id 为逻辑面板名，尝试恢复对应 mask 的注册态
           var altMap = { 'linkInspector':'linkInspMask','linkMgr':'linkMgrMask','multiEdit':'multiEditMask','editDrawer':'editDrawerMask','annoMgr':'annoMgrMask','settings':'settingsMask','settingsMask':'settingsMask','export':'exportMask','exportMask':'exportMask','kind':'kindMask','kindMask':'kindMask','name':'nameMask','nameMask':'nameMask','proj':'projMask','projMask':'projMask','snap':'snapMask','snapMask':'snapMask','gitPush':'gitPushMask','gitPushMask':'gitPushMask','gitPull':'gitPullMask','gitPullMask':'gitPullMask','gitConfig':'gitConfigMask','gitConfigMask':'gitConfigMask','ai':'aiMask','aiMask':'aiMask','docsMask':'docsMask','reqMask':'reqMask' };
           var alt = altMap[id];
-          if (alt) { var ae = document.getElementById(alt); if (ae) ae.onclick = null; }
-          if (reg && reg.maskId) { var me = document.getElementById(reg.maskId); if (me) me.onclick = null; }
+          if (alt) {
+            var ae = document.getElementById(alt);
+            var areg = registry[alt];
+            if (ae) {
+              if (areg && typeof areg._onClick === 'function') { try { ae.onclick = areg._onClick; } catch (e1) {} }
+              else { try { ae.onclick = null; } catch (e1b) {} }
+            }
+          }
+          if (reg && reg.maskId) { var me = document.getElementById(reg.maskId); if (me) { if (typeof reg._onClick === 'function') { try { me.onclick = reg._onClick; } catch (e2) {} } else { try { me.onclick = null; } catch (e2b) {} } } }
         } catch (e) {}
         stack.splice(i, 1); break;
       }
@@ -49,6 +62,8 @@ var MaskStack = (function () {
     return stack[stack.length - 1] || null;
   }
   function esc() {
+    /* 拾取态优先：Esc 先退出 Ctrl 拾取/清空准星，不关闭弹窗；再按 Esc 才关栈顶 */
+    try { if (window.CTRL_PICK && window.CTRL_PICK.holding && typeof window.__cancelCtrlPick === 'function') { window.__cancelCtrlPick(); return; } } catch (e) {}
     var t = top();
     if (!t) return;
     // 移动端例外：docsMask/reqMask 仅 PC 端响应 Esc
@@ -70,12 +85,13 @@ var MaskStack = (function () {
     // docsMask/reqMask 默认 pcOnly:true
     if ((maskId === 'docsMask' || maskId === 'reqMask') && !opts) opts = { pcOnly: true };
     if ((maskId === 'docsMask' || maskId === 'reqMask') && opts && typeof opts.pcOnly === 'undefined') opts.pcOnly = true;
-    registry[maskId] = { maskId: maskId, panelId: panelId, closeFn: closeFn, opts: opts || null };
-    if (panelId) registry[panelId] = { maskId: maskId, panelId: panelId, closeFn: closeFn, opts: opts || null };
+    var onClick = function (e) { try { if (e && e.target && e.target !== el) return; } catch (ee) {} if (opts && opts.pcOnly && !isPc()) return; closeFn(); };
+    registry[maskId] = { maskId: maskId, panelId: panelId, closeFn: closeFn, opts: opts || null, _onClick: onClick };
+    if (panelId) registry[panelId] = { maskId: maskId, panelId: panelId, closeFn: closeFn, opts: opts || null, _onClick: onClick };
     var el = document.getElementById(maskId);
     if (el) {
       // 核心：pcOnly 时移动端不响应（通过 kind-pc 判定），PC 端才执行 closeFn
-      el.onclick = (e) => { if(e.target !== el) return; if(opts && opts.pcOnly && !isPc()) return; closeFn(); };
+      el.onclick = onClick;
       // 备用：亦支持 window.innerWidth>600 && pcMode() 判定（与 isPc 一致）
       // el.onclick = () => { if(opts && opts.pcOnly && !isPc()) return; closeFn(); };
     }
@@ -90,4 +106,6 @@ var MaskStack = (function () {
   });
   return { stack: stack, push: push, pop: pop, top: top, esc: esc, register: register, isPc: isPc, _registry: registry };
 })();
-window.MaskStack = MaskStack;
+/* FIX: 经典<script>加载，移除 export default(以window.MaskStack为准) */
+/* ---- 经典兼容垫片 (Wave-D 移除; 保留 window.MaskStack 字符串供门禁) ---- */
+try { if (typeof window !== 'undefined') window.MaskStack = window.MaskStack || MaskStack; } catch (e) {}

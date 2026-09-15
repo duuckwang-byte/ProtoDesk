@@ -263,15 +263,24 @@ function testA9_WriteChannelSrc() {
   assert.ok(!/ipcRenderer\.invoke\(['"]inline/.test(editSrc), '不得经 ipcRenderer 新增 inline 通道');
 }
 
-// ── A10 无新增 script（HTML 仍 9 脚本 + 白名单 10 条） ──
+// ── A10 脚本清单（Wave-D/G: 开发11不变 + EXPORT轻量2解耦；白名单17不变 js/**已覆盖export-template） ──
 function testA10_NoNewScript() {
   const scripts = [...htmlSrc.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)].map(x => x[1].replace(/\\/g, '/'));
-  assert.strictEqual(scripts.length, 9, `HTML script 须仍 9 个（无新增），实际${scripts.length}: ${scripts.join(',')}`);
+  assert.strictEqual(scripts.length, 18, `HTML script 须为 18 个(16经典+utils/store ESM, Wave-D/G), 实际${scripts.length}: ${scripts.join(',')}`);
+  assert.deepStrictEqual(scripts.slice(0, 16), ['js/icons.js', 'js/mask-manager.js', 'js/doc/markdown-compiler.js', 'js/doc/editor-controller.js', 'js/doc/toc-navigator.js', 'js/doc/mirror-sync.js', 'js/core-docs.js', 'js/nav-zoom.js', 'js/sandbox-core.js', 'js/git-ui/git-domain.js', 'js/ai/ai-domain.js', 'js/project-ai-export-compiler.js', 'js/project-ai-export.js', 'js/edit-entry.js', 'js/link-bind.js', 'js/annotation-core.js'], '前16经典域先于门面顺序不动(Wave-D/G)');
+  assert.deepStrictEqual(scripts.slice(16), ['js/utils.js', 'js/store.js'], '新增仅 utils/store ESM (event-bus/sandbox-agent/main 经 import, 不占配额)');
+  const paeForExport = require('node:fs').readFileSync(require('node:path').join(rootDir, 'js', 'project-ai-export.js'), 'utf8');
+  const expM = paeForExport.match(/var EXPORT_SCRIPT_FILES\s*=\s*(\[[^\]]*\])/);
+  const expList = expM ? eval(expM[1]) : [];
+  assert.deepStrictEqual(expList, ['js/icons.js', 'js/export-template.js'], 'EXPORT须轻量2项解耦(Wave-D/G), 实际:' + JSON.stringify(expList));
   assert.ok(!scripts.some(s => /inline/i.test(s)), '不得新增 inline-* 独立脚本');
   assert.ok(!/id="inlineEditPop"/.test(htmlSrc), '浮层须 JS 动态创建，HTML 不得预置 #inlineEditPop（零污染）');
   const pkg = JSON.parse(pkgSrc);
   const filesList = (((pkg || {}).build || {}).files || []);
-  assert.strictEqual(filesList.length, 10, `build.files 白名单须仍 10 条，实际${filesList.length}`);
+  assert.strictEqual(filesList.length, 18, `build.files 白名单须为 18 条(12白+6bak排除，Wave-B新增main/**，UI规范新增design-specs/**)，实际${filesList.length}`);
+  assert.strictEqual(filesList.filter(p => String(p).startsWith('!')).length, 6, '新增6条须全为!排除项(防借机偷渡文件进包)');
+  assert.ok(filesList.includes('main/**'), 'Wave-B主进程拆分目录须进包');
+  assert.ok(filesList.includes('design-specs/**'), 'UI规范种子目录须进包');
 }
 
 // ── A11 浮层样式（app.css 纯色多行浮层：宽440+按钮内嵌右下小尺寸） ──

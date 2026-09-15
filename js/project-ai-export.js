@@ -1,4 +1,14 @@
-/* [js/project-ai-export.js] 项目选择 + 沙箱扫描 + 设置 + AI 对话/快照历史 + 导出（由 app.js 拆分，顺序勿乱调） */
+/* [js/project-ai-export.js] Wave-D/G index：项目/AI/Git/导出门面（逻辑分层+文件夹切分，物理行暂留兼容）
+ * 域切分：js/git-ui/git-domain.js（Git SoC分层）/js/ai/ai-domain.js（AI会话+原型校验）/js/project-ai-export-compiler.js（导出编译）
+ *          /js/doc/**（文档域）/js/export-template.js（轻量只读渲染）。本文件保留门面委托与I5/AI设置实现，下波续拆。
+ * SoC：executeGitPush→GitDomain；newPrototype→AiDomain（无alert/无260魔法数）；closeAi→AiDomain.requestClose（EventBus）。 */
+/* Wave-C/F: ESM 显式依赖 (esc/escHtml/escAttr/showToast/copyToClipboard 经 utils 显式 import;
+ * Store/EventBus 显式 import; 导出清单 9→11 与 HTML 同序)。
+ * stripped-classic 降级: import 行剥离后裸调用回退 window 全局。 */
+/* FIX: 经典<script>加载，禁用ESM import(整文件罢工)。内联回退+window.Utils双保险；
+ * Store/EventBus经window只读。_PaeStore/_paeBus/_paeEscAttr保留typeof守卫兼容。 */
+var escHtml = (typeof window !== 'undefined' && window.escHtml) || (typeof window !== 'undefined' && window.Utils && window.Utils.escHtml) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+var showToast = (typeof window !== 'undefined' && window.showToast) || (typeof window !== 'undefined' && window.Utils && window.Utils.showToast) || function (msg) { try { if (typeof libStatus === 'function') { libStatus(msg); return; } } catch (e) {} try { alert(msg); } catch (e2) {} return null; };
 /* ═══════ 原型库持久化：新增原型 / 导入 md / 编辑文档后保存，刷新自动恢复 ═══════
    存 sources 元数据 + content(html)，docs 用 sourceDocKey 单存；默认内置源与预设库源不重复存 */
 var LIB_SOURCES_KEY='protoLib_sources_v1';
@@ -270,6 +280,7 @@ if(btnAddSourceEl)btnAddSourceEl.onclick=function(){
 };
 
 /* ═══════ 复制代码片段辅助函数 ═══════ */
+/* Wave-B: 剪贴板收敛1/5（底层改走 window.Utils.copyToClipboard，保留按钮回显；fallback保留原生以兼容无Utils时） */
 window.copySnippet = function(btn) {
   var wrap = btn ? btn.closest('.code-block-wrap') : null;
   var codeEl = wrap ? wrap.querySelector('code') : null;
@@ -280,6 +291,7 @@ window.copySnippet = function(btn) {
     btn.innerHTML = ic('check') + '已复制';
     setTimeout(function() { btn.innerHTML = orig; }, 1800);
   };
+  try{ if(typeof window!=='undefined'&&window.Utils&&window.Utils.copyToClipboard){ var U=window.Utils.copyToClipboard; try{ if(navigator&&navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(markDone, function(){ U(txt,''); markDone(); }); return; } }catch(e){} U(txt,''); markDone(); return; } }catch(e){}
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(txt).then(markDone);
   } else {
@@ -500,7 +512,9 @@ function gitRemoteUrlMsg(u) {
   }
   return '';
 }
+/* Wave-B: 剪贴板收敛2/5（gitCopyText 改走 Utils.copyToClipboard，保留 toast 语义；fallback保留） */
 function gitCopyText(txt, okMsg) {
+  try{ if(typeof window!=='undefined'&&window.Utils&&window.Utils.copyToClipboard){ window.Utils.copyToClipboard(txt, okMsg); return; } }catch(e){}
   var s = String(txt == null ? '' : txt);
   function done() { try { if (typeof showToast === 'function') showToast(okMsg || '已复制'); } catch (e) {} }
   try {
@@ -1105,81 +1119,43 @@ if (btnGitPushClearAll) {
 var btnGitPushForce = $('btnGitPushForce');
 
 function executeGitPush(force) {
-  if (!currentProject || !window.protoAPI || !window.protoAPI.git) return;
-  var files = gitCollectChecked(gitPushTreeList);
-  if (!files.length) { showGitError({ title: '尚未勾选文件', body: '请至少勾选一个需要发布的文件。', detail: '已选 0 项', primaryText: '知道了', primaryFn: function() {} }); return; }
-
-  var msg = (gitPushMessage && gitPushMessage.value.trim()) || '更新原型与文档数据';
-  var branch = getActiveBranch(gitPushBranchSelect, gitPushBranchCustom);
-  var bMsg = gitBranchRuleMsg(branch);
-  if (bMsg) { showGitError({ code: 'INVALID_BRANCH', detail: bMsg, primaryText: '修正分支名', primaryFn: function() {} }); return; }
-  var foreign = gitForeignProjects(files);
-  if (!force && foreign.length) {
-    gitPendingCrossProj = { kind: 'push', files: files, message: msg, branch: branch };
-    var t = $('gitCrossProjConfirmText');
-    if (t) t.textContent = '本次将跨项目推送到同一远端同一分支 [' + branch + ']，异项目文件将一并推送，不可单独撤回。';
-    var l = $('gitCrossProjConfirmList');
-    if (l) l.textContent = '异项目清单：' + foreign.slice(0, 5).join('、') + (foreign.length > 5 ? (' 等 ' + foreign.length + ' 项') : '') + '\n本次共 ' + files.length + ' 个文件。';
-    var ack = $('gitCrossProjConfirmAck'); if (ack) ack.checked = false;
-    gitOpenMask('gitCrossProjConfirmMask');
-    return;
-  }
-
-  if (gitPushSubmit) { gitPushSubmit.disabled = true; }
-  if (btnGitPushForce) btnGitPushForce.disabled = true;
-  if (gitPushSubmit) gitPushSubmit.textContent = force ? '强制覆盖中…' : '上传中…';
-  if (gitPushStatus) { gitPushStatus.style.display = 'none'; }
-
-  window.protoAPI.git.push({
-    project: currentProject,
-    files: files,
-    message: msg,
-    branch: branch,
-    force: !!force
-  }).then(function(r) {
-    if (r && r.ok) {
-      if (btnGitPushForce) btnGitPushForce.style.display = 'none';
-      if (gitPushStatus) {
-        gitPushStatus.className = 'git-status-msg ok';
-        var extra = force ? '远端历史已被改写。' : '';
-        gitPushStatus.textContent = (force ? '强制覆盖发布成功！' : '发布成功！') + '已上传 ' + (r.filesCount || files.length) + ' 个文件至分支 [' + (r.branch || branch) + ']。' + extra;
-        gitPushStatus.style.display = 'block';
-      }
-      setTimeout(function() { closeGitPushModal(); }, 1600);
-    } else if (r && r.code === 'NEED_HEAL') {
-      if (gitPushSubmit) { gitPushSubmit.disabled = false; gitPushSubmit.textContent = '确认上传'; }
-      if (btnGitPushForce) btnGitPushForce.disabled = false;
-      gitOpenHealConfirm(r, function() { executeGitPush(!!force); });
-    } else if (r && r.code === 'NEED_CONFIG') {
-      if (gitPushSubmit) { gitPushSubmit.disabled = false; gitPushSubmit.textContent = '确认上传'; }
-      if (btnGitPushForce) btnGitPushForce.disabled = false;
-      gitShowPushEmptyConfig(true);
-    } else {
-      if (gitPushSubmit) { gitPushSubmit.disabled = false; gitPushSubmit.textContent = '重试上传'; }
-      if (btnGitPushForce) {
-        btnGitPushForce.disabled = false;
-        btnGitPushForce.style.display = (r && r.canForce) ? 'inline-block' : 'none';
-      }
-      var info = gitErrorInfo((r && r.code) || '', (r && r.error) || '');
-      if (gitPushStatus) {
-        gitPushStatus.className = 'git-status-msg err';
-        gitPushStatus.textContent = info.title + '：' + info.body;
-        gitPushStatus.style.display = 'block';
-      }
-      if (r && (r.canForce || r.needPull)) {
-        showGitError({ code: '', title: info.title, body: info.body, detail: String((r && r.error) || ''), primaryText: '拉取同步后重试', primaryFn: function() { try { closeGitPushModal(); } catch (e) {} openGitPullModal(); }, secondaryText: (r && r.canForce) ? '强制覆盖上传' : '', secondaryFn: function() { gitOpenForceConfirm(branch, files); } });
-      }
+  /* Wave-D/G SoC修复：编排委托 GitDomain（收集/校验/IPC/渲染/定时各归其层），本函数仅组装 ctx（无混杂）。 */
+  try {
+    if (typeof GitDomain !== 'undefined' && GitDomain && typeof GitDomain.executeGitPush === 'function') {
+      var _msg = '更新原型与文档数据';
+      try { _msg = (typeof gitPushMessage !== 'undefined' && gitPushMessage && gitPushMessage.value.trim()) || _msg; } catch (e) {}
+      var _branch = '';
+      try { _branch = (typeof getActiveBranch === 'function') ? getActiveBranch(gitPushBranchSelect, gitPushBranchCustom) : ''; } catch (e2) {}
+      var _files = [];
+      try { _files = (typeof gitCollectChecked === 'function') ? gitCollectChecked(gitPushTreeList) : []; } catch (e3) {}
+      GitDomain.executeGitPush({
+        force: !!force, files: _files, message: _msg, branch: _branch,
+        treeList: (typeof gitPushTreeList !== 'undefined') ? gitPushTreeList : null,
+        branchSelect: (typeof gitPushBranchSelect !== 'undefined') ? gitPushBranchSelect : null,
+        branchCustom: (typeof gitPushBranchCustom !== 'undefined') ? gitPushBranchCustom : null,
+        els: { submit: (typeof gitPushSubmit !== 'undefined') ? gitPushSubmit : null, force: (typeof btnGitPushForce !== 'undefined') ? btnGitPushForce : null, status: (typeof gitPushStatus !== 'undefined') ? gitPushStatus : null },
+        closeModal: (typeof closeGitPushModal === 'function') ? closeGitPushModal : function () {},
+        onCrossProject: function (info) {
+          try { gitPendingCrossProj = { kind: 'push', files: info.files, message: info.message, branch: info.branch }; } catch (e) {}
+          try { var t = $('gitCrossProjConfirmText'); if (t) t.textContent = '本次将跨项目推送到同一远端同一分支 [' + info.branch + ']，异项目文件将一并推送，不可单独撤回。'; } catch (e2) {}
+          try { var l = $('gitCrossProjConfirmList'); if (l) l.textContent = '异项目清单：' + info.foreign.slice(0, 5).join('、') + (info.foreign.length > 5 ? (' 等 ' + info.foreign.length + ' 项') : '') + '\n本次共 ' + info.files.length + ' 个文件。'; } catch (e3) {}
+          try { var ack = $('gitCrossProjConfirmAck'); if (ack) ack.checked = false; } catch (e4) {}
+          try { gitOpenMask('gitCrossProjConfirmMask'); } catch (e5) {}
+        },
+        onNeedHeal: function (r, retry) { try { gitOpenHealConfirm(r, retry); } catch (e) {} },
+        onNeedConfig: function () { try { gitShowPushEmptyConfig(true); } catch (e) {} },
+        onRoutableError: function (r, info) {
+          try {
+            if (r && (r.canForce || r.needPull)) {
+              showGitError({ code: '', title: info.title, body: info.body, detail: String((r && r.error) || ''), primaryText: '拉取同步后重试', primaryFn: function () { try { closeGitPushModal(); } catch (e) {} openGitPullModal(); }, secondaryText: (r && r.canForce) ? '强制覆盖上传' : '', secondaryFn: function () { gitOpenForceConfirm(_branch, _files); } });
+            }
+          } catch (e) {}
+        }
+      });
+      return;
     }
-  }).catch(function(err) {
-    if (gitPushSubmit) { gitPushSubmit.disabled = false; gitPushSubmit.textContent = '重试上传'; }
-    if (btnGitPushForce) btnGitPushForce.disabled = false;
-    var info2 = gitErrorInfo('', String(err && err.message || err));
-    if (gitPushStatus) {
-      gitPushStatus.className = 'git-status-msg err';
-      gitPushStatus.textContent = info2.title + '：' + info2.body;
-      gitPushStatus.style.display = 'block';
-    }
-  });
+  } catch (e) {}
+  try { if (typeof showToast === 'function') showToast('Git 域未加载。'); } catch (e2) {}
 }
 function gitOpenForceConfirm(branch, files) {
   var t = $('gitForceConfirmText');
@@ -1223,26 +1199,18 @@ function gitOpenForceConfirm(branch, files) {
   if (x) x.onclick = close;
 })();
 function executeGitPushWithForeign(files, msg, branch) {
-  if (gitPushSubmit) { gitPushSubmit.disabled = true; gitPushSubmit.textContent = '上传中…'; }
-  if (btnGitPushForce) btnGitPushForce.disabled = true;
-  window.protoAPI.git.push({ project: currentProject, files: files, message: msg, branch: branch, force: false }).then(function(r) {
-    if (r && r.ok) {
-      if (btnGitPushForce) btnGitPushForce.style.display = 'none';
-      if (gitPushStatus) { gitPushStatus.className = 'git-status-msg ok'; gitPushStatus.textContent = '发布成功！已上传 ' + (r.filesCount || files.length) + ' 个文件至分支 [' + (r.branch || branch) + ']。'; gitPushStatus.style.display = 'block'; }
-      setTimeout(function() { closeGitPushModal(); }, 1600);
-    } else if (r && r.code === 'NEED_HEAL') {
-      if (gitPushSubmit) { gitPushSubmit.disabled = false; gitPushSubmit.textContent = '确认上传'; }
-      gitOpenHealConfirm(r, function() { executeGitPushWithForeign(files, msg, branch); });
-    } else {
-      if (gitPushSubmit) { gitPushSubmit.disabled = false; gitPushSubmit.textContent = '重试上传'; }
-      if (btnGitPushForce) { btnGitPushForce.disabled = false; btnGitPushForce.style.display = (r && r.canForce) ? 'inline-block' : 'none'; }
-      var info = gitErrorInfo((r && r.code) || '', (r && r.error) || '');
-      if (gitPushStatus) { gitPushStatus.className = 'git-status-msg err'; gitPushStatus.textContent = info.title + '：' + info.body; gitPushStatus.style.display = 'block'; }
+  /* Wave-D/G SoC修复：委托 GitDomain（含 GIT_PUSH_CLOSE_DELAY_MS），无裸 1600。 */
+  try {
+    if (typeof GitDomain !== 'undefined' && GitDomain && typeof GitDomain.executeGitPushWithForeign === 'function') {
+      GitDomain.executeGitPushWithForeign({
+        files: files, message: msg, branch: branch,
+        els: { submit: (typeof gitPushSubmit !== 'undefined') ? gitPushSubmit : null, force: (typeof btnGitPushForce !== 'undefined') ? btnGitPushForce : null, status: (typeof gitPushStatus !== 'undefined') ? gitPushStatus : null },
+        closeModal: (typeof closeGitPushModal === 'function') ? closeGitPushModal : function () {},
+        onNeedHeal: function (r, retry) { try { gitOpenHealConfirm(r, retry); } catch (e) {} }
+      });
+      return;
     }
-  }).catch(function(err) {
-    if (gitPushSubmit) { gitPushSubmit.disabled = false; gitPushSubmit.textContent = '重试上传'; }
-    if (gitPushStatus) { gitPushStatus.className = 'git-status-msg err'; gitPushStatus.textContent = String(err && err.message || err); gitPushStatus.style.display = 'block'; }
-  });
+  } catch (e) {}
 }
 
 if (gitPushSubmit) {
@@ -1751,8 +1719,8 @@ if (btnExportPureHtmlEl) btnExportPureHtmlEl.onclick = exportCurrentPureHtml;
 
 /* ═══════ 设置弹窗（升级为 680px 分栏/Tab 现代化布局） ═══════ */
 var settingsMask=$('settingsMask'),settingsClose=$('settingsClose'),settingsCancel=$('settingsCancel'),settingsOk=$('settingsOk'),btnSettings=$('btnSettings');
-var tabNavAi=$('tabNavAi'),tabNavModels=$('tabNavModels'),tabNavSandbox=$('tabNavSandbox'),tabNavShortcut=$('tabNavShortcut'),tabNavAbout=$('tabNavAbout');
-var paneSetAi=$('paneSetAi'),paneSetModels=$('paneSetModels'),paneSetSandbox=$('paneSetSandbox'),paneSetShortcut=$('paneSetShortcut'),paneSetAbout=$('paneSetAbout');
+var tabNavAi=$('tabNavAi'),tabNavModels=$('tabNavModels'),tabNavUispec=$('tabNavUispec'),tabNavSandbox=$('tabNavSandbox'),tabNavShortcut=$('tabNavShortcut'),tabNavAbout=$('tabNavAbout');
+var paneSetAi=$('paneSetAi'),paneSetModels=$('paneSetModels'),paneSetUispec=$('paneSetUispec'),paneSetSandbox=$('paneSetSandbox'),paneSetShortcut=$('paneSetShortcut'),paneSetAbout=$('paneSetAbout');
 var engCli=$('engCli'),engApi=$('engApi'),boxCliCfg=$('boxCliCfg'),boxApiCfg=$('boxApiCfg');
 var setApiPreset=$('setApiPreset'),setApiBaseUrl=$('setApiBaseUrl'),setApiKey=$('setApiKey'),setApiModel=$('setApiModel'),setApiEye=$('setApiEye');
 var setApiProviderName=$('setApiProviderName');
@@ -1760,6 +1728,66 @@ var btnTestApi=$('btnTestApi'),testApiStatus=$('testApiStatus');
 var setModelSearch=$('setModelSearch'),btnClearAllModels=$('btnClearAllModels');
 var modelCheckList=$('modelCheckList'),newModelInput=$('newModelInput'),btnAddCustomModel=$('btnAddCustomModel');
 var curAiConfig=null;
+/* CLI 模型可见/自定义列表按 CLI 分 CLI 隔离 {agentId:[ids]}（旧版为全局数组，读时兼容、载入时迁移）。
+ * 未选过的 CLI 取到 [] → 管理页显示为空（下拉仍可从全量选，见 aiRenderModelOptions 保底）。 */
+function curCliId(cfg){
+  try{
+    var c=(cfg===undefined)?curAiConfig:cfg;
+    return String((c&&(c.agentId||c.mainAgent))||'opencode');
+  }catch(e){ return 'opencode'; }
+}
+function normalizeCliModelMaps(cfg){
+  cfg=cfg||{};
+  var cur=String((cfg.agentId||cfg.mainAgent)||'opencode');
+  ['visibleModelsCli','customModelsCli'].forEach(function(k){
+    var v=cfg[k];
+    if(Array.isArray(v)){ var m={}; m[cur]=v.slice(); cfg[k]=m; }
+    else if(!v||typeof v!=='object'){ cfg[k]={}; }
+    else{ var out={}; try{ Object.keys(v).forEach(function(id){ if(Array.isArray(v[id]))out[id]=v[id].slice(); }); }catch(e){} cfg[k]=out; }
+  });
+  return cfg;
+}
+function getCliVisibleIds(cfg){
+  try{
+    var c=(cfg===undefined)?curAiConfig:cfg;
+    var v=c&&c.visibleModelsCli;
+    if(Array.isArray(v))return v.slice();
+    if(v&&typeof v==='object'){ var a=v[curCliId(c)]; return Array.isArray(a)?a.slice():[]; }
+  }catch(e){}
+  return [];
+}
+function setCliVisibleIds(ids){
+  try{
+    curAiConfig=curAiConfig||{};
+    var v=curAiConfig.visibleModelsCli;
+    var m=(v&&typeof v==='object'&&!Array.isArray(v))?v:{};
+    if(Array.isArray(v)){ m={}; m[curCliId()]=v.slice(); }
+    m[curCliId()]=(ids||[]).slice();
+    curAiConfig.visibleModelsCli=m;
+  }catch(e){}
+}
+function getCliCustomIds(cfg){
+  try{
+    var c=(cfg===undefined)?curAiConfig:cfg;
+    var v=c&&c.customModelsCli;
+    if(Array.isArray(v))return v.slice();
+    if(v&&typeof v==='object'){ var a=v[curCliId(c)]; return Array.isArray(a)?a.slice():[]; }
+  }catch(e){}
+  return [];
+}
+function addCliCustomId(id){
+  try{
+    if(!id)return;
+    curAiConfig=curAiConfig||{};
+    var v=curAiConfig.customModelsCli;
+    var m=(v&&typeof v==='object'&&!Array.isArray(v))?v:{};
+    if(Array.isArray(v)){ m={}; m[curCliId()]=v.slice(); }
+    var k=curCliId();
+    m[k]=m[k]||[];
+    if(m[k].indexOf(id)<0)m[k].push(id);
+    curAiConfig.customModelsCli=m;
+  }catch(e){}
+}
 /* Iteration5: 多 CLI + 多协议 + 全局默认模型（只增量，不改既有通道名） */
 var setApiProtocol=$('setApiProtocol'),btnFetchModels=$('btnFetchModels'),fetchModelStatus=$('fetchModelStatus');
 var byokTestPanel=$('byokTestPanel'),testStatusBadge=$('testStatusBadge'),testMessageText=$('testMessageText'),baseUrlHint=$('baseUrlHint');
@@ -1865,6 +1893,7 @@ function switchSettingsTab(tab){
   var tabs=[
     { key:'ai', btn:tabNavAi, pane:paneSetAi },
     { key:'models', btn:tabNavModels, pane:paneSetModels },
+    { key:'uispec', btn:tabNavUispec, pane:paneSetUispec },
     { key:'sandbox', btn:tabNavSandbox, pane:paneSetSandbox },
     { key:'shortcut', btn:tabNavShortcut, pane:paneSetShortcut },
     { key:'about', btn:tabNavAbout, pane:paneSetAbout }
@@ -1876,6 +1905,7 @@ function switchSettingsTab(tab){
 }
 if(tabNavAi)tabNavAi.onclick=function(){ switchSettingsTab('ai'); };
 if(tabNavModels)tabNavModels.onclick=function(){ switchSettingsTab('models'); };
+if(tabNavUispec)tabNavUispec.onclick=function(){ switchSettingsTab('uispec'); try{ refreshUispecList(); }catch(e){} };
 if(tabNavSandbox)tabNavSandbox.onclick=function(){ switchSettingsTab('sandbox'); };
 if(tabNavShortcut)tabNavShortcut.onclick=function(){ switchSettingsTab('shortcut'); };
 if(tabNavAbout)tabNavAbout.onclick=function(){ switchSettingsTab('about'); };
@@ -1893,7 +1923,7 @@ function syncCurrentChecklistToMemory(){
   var eng = getActiveEngineInUi();
   var selected = getSelectedModelIds();
   if(eng === 'cli'){
-    curAiConfig.visibleModelsCli = selected;
+    setCliVisibleIds(selected);
   } else {
     curAiConfig.visibleModelsApi = selected;
   }
@@ -2039,7 +2069,7 @@ function renderModelManagerList(cfg){
       return;
     }
     var isCli=(engHint==='cli');
-    var visible=isCli?(cfg&&cfg.visibleModelsCli):(cfg&&cfg.visibleModelsApi);
+    var visible=isCli?getCliVisibleIds(cfg):(cfg&&cfg.visibleModelsApi);
     var html='';
     r.groups.forEach(function(g){
       var items=g.models||[];
@@ -2096,10 +2126,8 @@ if(btnAddCustomModel){
     curAiConfig=curAiConfig||{};
     var eng=getActiveEngineInUi();
     if(eng==='cli'){
-      curAiConfig.customModelsCli=curAiConfig.customModelsCli||[];
-      if(curAiConfig.customModelsCli.indexOf(val)<0)curAiConfig.customModelsCli.push(val);
-      curAiConfig.visibleModelsCli=curAiConfig.visibleModelsCli||[];
-      if(curAiConfig.visibleModelsCli.indexOf(val)<0)curAiConfig.visibleModelsCli.push(val);
+      addCliCustomId(val);
+      var _vv=getCliVisibleIds(); if(_vv.indexOf(val)<0){ _vv.push(val); setCliVisibleIds(_vv); }
     }else{
       curAiConfig.api=curAiConfig.api||{};
       curAiConfig.api.customModels=curAiConfig.api.customModels||[];
@@ -2142,27 +2170,31 @@ function scheduleFetchPersist(){
 function applyFetchToggle(id, checked){
   if(!id)return;
   curAiConfig=curAiConfig||{};
+  normalizeCliModelMaps(curAiConfig);
   var isCli=getActiveEngineInUi()==='cli';
-  var vKey=isCli?'visibleModelsCli':'visibleModelsApi';
-  var vis=curAiConfig[vKey];
-  if(!Array.isArray(vis)){
-    var all=[];
-    (fetchCacheGroups||[]).forEach(function(g){
-      (g.models||[]).forEach(function(m){
-        var mid=typeof m==='string'?m:(m&&(m.id||m.name))||'';
-        if(mid&&all.indexOf(mid)<0)all.push(mid);
+  if(isCli){
+    /* 分 CLI 隔离：从未选过的 CLI 即空选择（不回填全量），只切换用户本次勾选 */
+    var vis=getCliVisibleIds();
+  }else{
+    vis=curAiConfig.visibleModelsApi;
+    if(!Array.isArray(vis)){
+      var all2=[];
+      (fetchCacheGroups||[]).forEach(function(g){
+        (g.models||[]).forEach(function(m){
+          var mid2=typeof m==='string'?m:(m&&(m.id||m.name))||'';
+          if(mid2&&all2.indexOf(mid2)<0)all2.push(mid2);
+        });
       });
-    });
-    vis=all;
-    curAiConfig[vKey]=vis;
+      vis=all2;
+      curAiConfig.visibleModelsApi=vis;
+    }
   }
   var at=vis.indexOf(id);
   if(checked){
     if(at<0)vis.push(id);
-    if(isCli){
-      curAiConfig.customModelsCli=curAiConfig.customModelsCli||[];
-      if(curAiConfig.customModelsCli.indexOf(id)<0)curAiConfig.customModelsCli.push(id);
-    }else{
+    if(isCli){ setCliVisibleIds(vis); addCliCustomId(id); }
+    else{
+      curAiConfig.visibleModelsApi=vis;
       curAiConfig.api=curAiConfig.api||{};
       curAiConfig.api.customModels=curAiConfig.api.customModels||[];
       if(curAiConfig.api.customModels.indexOf(id)<0)curAiConfig.api.customModels.push(id);
@@ -2172,6 +2204,7 @@ function applyFetchToggle(id, checked){
     }
   }else{
     if(at>=0)vis.splice(at,1);
+    if(isCli)setCliVisibleIds(vis); else curAiConfig.visibleModelsApi=vis;
   }
   if(typeof renderModelManagerList==='function')renderModelManagerList(curAiConfig);
   if(typeof aiInvalidateModels==='function')aiInvalidateModels();
@@ -2192,7 +2225,7 @@ function refreshFetchCount(){
 }
 function setVisibleModels(ids){
   curAiConfig=curAiConfig||{};
-  if(getActiveEngineInUi()==='cli'){ curAiConfig.visibleModelsCli=ids.slice(); }
+  if(getActiveEngineInUi()==='cli'){ setCliVisibleIds(ids); }
   else{ curAiConfig.visibleModelsApi=ids.slice(); }
 }
 function persistVisibleAndRefresh(msg){
@@ -2232,7 +2265,8 @@ function openModelFetch(){
 function closeModelFetch(){ if(window.MaskStack) window.MaskStack.pop('modelFetchMask'); if(modelFetchMask)modelFetchMask.style.display='none'; }
 function getFetchVisible(){
   var isCli=getActiveEngineInUi()==='cli';
-  var v=isCli?(curAiConfig&&curAiConfig.visibleModelsCli):(curAiConfig&&curAiConfig.visibleModelsApi);
+  if(isCli)return getCliVisibleIds();
+  var v=curAiConfig&&curAiConfig.visibleModelsApi;
   return v||null; /* null = 全选 */
 }
 function renderFetchList(q){
@@ -2284,8 +2318,7 @@ function confirmFetchSelection(){
   curAiConfig=curAiConfig||{};
   var isCli=getActiveEngineInUi()==='cli';
   if(isCli){
-    curAiConfig.customModelsCli=curAiConfig.customModelsCli||[];
-    ids.forEach(function(id){ if(curAiConfig.customModelsCli.indexOf(id)<0)curAiConfig.customModelsCli.push(id); });
+    (ids||[]).forEach(function(id){ addCliCustomId(id); });
   }else{
     curAiConfig.api=curAiConfig.api||{};
     curAiConfig.api.customModels=curAiConfig.api.customModels||[];
@@ -2303,7 +2336,8 @@ function removeVisibleModel(id){
   if(!id)return [];
   var isCli=getActiveEngineInUi()==='cli';
   curAiConfig=curAiConfig||{};
-  var arr=isCli?(curAiConfig.visibleModelsCli||[]):(curAiConfig.visibleModelsApi||[]);
+  normalizeCliModelMaps(curAiConfig);
+  var arr=isCli?getCliVisibleIds():(curAiConfig.visibleModelsApi||[]);
   arr=arr.filter(function(x){ return x!==id; });
   setVisibleModels(arr);
   persistVisibleAndRefresh('已取消勾选：'+id);
@@ -2471,12 +2505,13 @@ function loadSettingsToUi(){
   if(testApiStatus)testApiStatus.textContent='';
   if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.getConfig){
     window.protoAPI.ai.getConfig().then(function(cfg){
-      curAiConfig=cfg||{};
+      curAiConfig=normalizeCliModelMaps(cfg||{});
       try{ ensureApiProfiles(); }catch(e){}
       try{ syncActiveProfileToMirror(); }catch(e){}
       setEngineUi(curAiConfig.engine||'cli', true);
       try{ renderApiProfileMatrix(); }catch(e){}
       renderModelManagerList(curAiConfig);
+      try{ refreshUispecList(); }catch(e){}
     });
   }else{
     try{ ensureApiProfiles(); }catch(e){}
@@ -2495,11 +2530,223 @@ function showSettingsSaveTip(){
   }, 3500);
 }
 
+/* ═══════ 设计规范 Tab：移动/PC 分开展示卡片，每端最多选中一个 ═══════
+ * 卡片=规范文件（名称+描述）；选中态存 ai-config（activeUiSpecMobile/activeUiSpecPc），两端互不影响；
+ * 新增卡：选本地 md + 名称/描述，经 spec:create-from-file 入库后打上当前 Tab 端别。 */
+var uispecCurTab='mobile', uispecItems=[];
+var uispecAddSrcPath='';
+function uispecActiveId(tab){
+  try{
+    var c=curAiConfig||{};
+    var v=(tab==='pc')?c.activeUiSpecPc:c.activeUiSpecMobile;
+    return (typeof v==='string'&&v)?v:null;
+  }catch(e){ return null; }
+}
+function uispecSwitchSub(tab){
+  uispecCurTab=(tab==='pc')?'pc':'mobile';
+  var bm=$('uispecSubMobile'), bp=$('uispecSubPc');
+  if(bm)bm.classList.toggle('on',uispecCurTab==='mobile');
+  if(bp)bp.classList.toggle('on',uispecCurTab==='pc');
+  renderUispecCards();
+}
+function renderUispecCards(){
+  var box=$('uispecCardList');
+  if(!box)return;
+  var tab=uispecCurTab;
+  var activeId=uispecActiveId(tab);
+  var h='';
+  (uispecItems||[]).forEach(function(it){
+    if(!it||!it.id)return;
+    var k=String(it.kind||'').toLowerCase();
+    if(k&&k!==tab)return; /* 有端别的只进对应 Tab；无端别的两边都展示 */
+    var on=(String(it.id)===String(activeId));
+    h+='<div class="uispec-card'+(on?' active':'')+'" data-id="'+escAttr(it.id)+'">'
+      +'<div class="uispec-card-top"><div class="uispec-card-name">'+escHtml(it.name||it.id)+'<span class="uispec-card-flag">使用中</span></div>'
+      +'<div class="uispec-card-ops"><span class="uispec-op" data-act="edit" data-id="'+escAttr(it.id)+'" title="编辑名称与描述">编辑</span><span class="uispec-op danger" data-act="del" data-id="'+escAttr(it.id)+'" title="删除该规范（同时删除 md 文件）">删除</span></div></div>'
+      +'<div class="uispec-card-desc">'+escHtml(it.desc||'暂无描述')+'</div>'
+      +'</div>';
+  });
+  h+='<div class="uispec-add" id="uispecAddCard" title="从本地选择 md 文件新增规范">＋ 新增规范</div>';
+  box.innerHTML=h;
+  Array.prototype.forEach.call(box.querySelectorAll('.uispec-card'),function(c){
+    c.onclick=function(){ uispecToggleActive(c.getAttribute('data-id')); };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('.uispec-op'),function(x){
+    x.onclick=function(ev){
+      try{ if(ev&&ev.stopPropagation)ev.stopPropagation(); }catch(e){}
+      var aid=x.getAttribute('data-id');
+      if(x.getAttribute('data-act')==='edit')openUispecAdd(aid);
+      else uispecDeleteSpec(aid);
+    };
+  });
+  var addBtn=$('uispecAddCard');
+  if(addBtn)addBtn.onclick=function(){ openUispecAdd(); };
+}
+function refreshUispecList(){
+  var box=$('uispecCardList');
+  if(box)box.innerHTML='<div class="set-tip">正在读取规范列表…</div>';
+  if(!(window.protoAPI&&window.protoAPI.spec&&window.protoAPI.spec.list)){
+    if(box)box.innerHTML='<div class="set-tip">仅桌面端支持设计规范</div>';
+    return;
+  }
+  window.protoAPI.spec.list().then(function(r){
+    uispecItems=(r&&((r.items||r.list)))||[];
+    renderUispecCards();
+  }).catch(function(){ if(box)box.innerHTML='<div class="set-tip">读取规范列表失败</div>'; });
+}
+function uispecToggleActive(id){
+  var tab=uispecCurTab;
+  var key=(tab==='pc')?'activeUiSpecPc':'activeUiSpecMobile';
+  var cur=uispecActiveId(tab);
+  var next=(cur&&String(cur)===String(id))?null:String(id||'');
+  if(!next)next=null;
+  var patch={};
+  patch[key]=next;
+  /* 反馈必须可见：toast + 状态栏双写；保存后回读校验，落盘不一致直接报因（静默失败是最差体验） */
+  var feedback=function(msg){
+    try{ showToast(msg); }catch(e){}
+    try{ if(typeof libStatus==='function')libStatus(msg); }catch(e2){}
+  };
+  var done=function(ok, errMsg){
+    if(ok){ try{ curAiConfig=curAiConfig||{}; curAiConfig[key]=next; }catch(e){} }
+    try{ renderUispecCards(); }catch(e2){}
+    feedback(ok?(next?'已启用该端设计规范':'已取消该端设计规范'):('保存失败：'+(errMsg||'未知错误')));
+  };
+  if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig){
+    window.protoAPI.ai.saveConfig(patch).then(function(r){
+      if(r&&r.ok===false){ done(false, r.error); return; }
+      if(window.protoAPI.ai.getConfig){
+        window.protoAPI.ai.getConfig().then(function(cfg){
+          var v=null;
+          try{ v=cfg?cfg[key]:null; }catch(e){ v=null; }
+          if(String(v||'')===String(next||''))done(true);
+          else done(false, '回读不一致，请重试');
+        }).catch(function(){ done(true); });
+      }else{ done(true); }
+    }).catch(function(e){ done(false, (e&&e.message)||e); });
+  }else{ done(true); }
+}
+/* 删除规范：物理删除（索引条目 + specs/ 下 md 文件）；若正被某端选中则同步取消选中；
+ * 删的是出厂内置则记墓碑，增量补齐不再复活。 */
+function uispecDeleteSpec(id){
+  if(!id)return;
+  var target=null;
+  (uispecItems||[]).forEach(function(it){ if(it&&String(it.id)===String(id))target=it; });
+  var nm=(target&&(target.name||target.id))||id;
+  try{
+    if(!window.confirm('删除设计规范「'+nm+'」？\n将同时删除对应的 md 文件，该操作不可恢复。'))return;
+  }catch(e){ return; }
+  if(!(window.protoAPI&&window.protoAPI.spec&&window.protoAPI.spec.remove)){ try{ showToast('仅桌面端支持删除规范'); }catch(e){} return; }
+  window.protoAPI.spec.remove({ id:id }).then(function(r){
+    if(!r||!r.ok){ try{ showToast('删除失败：'+((r&&r.error)||'未知错误')); }catch(e){} return; }
+    var patch={}, needSave=false;
+    try{
+      curAiConfig=curAiConfig||{};
+      if(String(curAiConfig.activeUiSpecMobile||'')===String(id)){ patch.activeUiSpecMobile=null; curAiConfig.activeUiSpecMobile=null; needSave=true; }
+      if(String(curAiConfig.activeUiSpecPc||'')===String(id)){ patch.activeUiSpecPc=null; curAiConfig.activeUiSpecPc=null; needSave=true; }
+      if(target&&target.builtin&&target.uiSpec){
+        var arr=Array.isArray(curAiConfig.removedBuiltinSpecs)?curAiConfig.removedBuiltinSpecs.slice():[];
+        if(arr.indexOf(String(id))<0)arr.push(String(id));
+        patch.removedBuiltinSpecs=arr; curAiConfig.removedBuiltinSpecs=arr; needSave=true;
+      }
+    }catch(e){}
+    var done=function(){ refreshUispecList(); try{ showToast('已删除规范'); }catch(e){} try{ if(typeof libStatus==='function')libStatus('已删除规范'); }catch(e2){} };
+    if(needSave&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig){
+      window.protoAPI.ai.saveConfig(patch).then(function(){ done(); }).catch(function(){ done(); });
+    }else{ done(); }
+  }).catch(function(e){ try{ showToast('删除失败：'+(e&&e.message||e)); }catch(e2){} });
+}
+var uispecEditId=null; /* 新增弹窗复用为编辑：null=新增，否则为被编辑的规范 id */
+function openUispecAdd(editId){
+  uispecEditId=editId||null;
+  uispecAddSrcPath='';
+  var nm=$('uispecAddName'), ds=$('uispecAddDesc'), fn=$('uispecAddFileName'), tip=$('uispecAddTip');
+  var titleEl=$('uispecAddTitle'), fileRow=$('uispecAddFileRow'), saveBtn0=$('uispecAddSave');
+  var editTarget=null;
+  if(uispecEditId){
+    (uispecItems||[]).forEach(function(it){ if(it&&String(it.id)===String(uispecEditId))editTarget=it; });
+    if(!editTarget){ try{ showToast('规范不存在，请刷新后重试'); }catch(e){} return; }
+  }
+  if(titleEl)titleEl.textContent=uispecEditId?'编辑设计规范':'新增设计规范';
+  if(fileRow)fileRow.style.display=uispecEditId?'none':'';
+  if(saveBtn0)saveBtn0.textContent=uispecEditId?'保存':'新增';
+  if(nm)nm.value=editTarget?(editTarget.name||''):'';
+  if(ds)ds.value=editTarget?(editTarget.desc||''):'';
+  if(fn)fn.textContent='未选择';
+  if(tip)tip.textContent=uispecEditId?'仅修改名称与描述，不动规范正文文件。':'将归属到「'+(uispecCurTab==='pc'?'PC 端':'移动端')+'」下展示。';
+  var mask=$('uispecAddMask');
+  if(mask)mask.style.display='flex';
+  if(window.MaskStack)window.MaskStack.push('uispecAddMask', closeUispecAdd);
+}
+function closeUispecAdd(){
+  if(window.MaskStack)window.MaskStack.pop('uispecAddMask');
+  var mask=$('uispecAddMask');
+  if(mask)mask.style.display='none';
+  uispecEditId=null;
+}
+(function bindUispecStatic(){
+  var bm=$('uispecSubMobile'), bp=$('uispecSubPc');
+  if(bm)bm.onclick=function(){ uispecSwitchSub('mobile'); };
+  if(bp)bp.onclick=function(){ uispecSwitchSub('pc'); };
+  var pickBtn=$('uispecPickFile');
+  if(pickBtn)pickBtn.onclick=function(){
+    if(!(window.protoAPI&&window.protoAPI.pickTextFile)){ try{ showToast('仅桌面端支持选择本地文件'); }catch(e){} return; }
+    window.protoAPI.pickTextFile({ title:'选择设计规范md文件', filters:[{ name:'Markdown', extensions:['md'] }] }).then(function(r){
+      if(!r||!r.path)return;
+      uispecAddSrcPath=r.path;
+      var fn=$('uispecAddFileName');
+      if(fn)fn.textContent=r.name||r.path;
+      var nm=$('uispecAddName');
+      if(nm&&!nm.value){
+        var base=String(r.name||'').replace(/\.md$/i,'');
+        nm.value=base;
+      }
+    }).catch(function(){});
+  };
+  var closeBtn=$('uispecAddClose'), cancelBtn=$('uispecAddCancel');
+  if(closeBtn)closeBtn.onclick=function(){ closeUispecAdd(); };
+  if(cancelBtn)cancelBtn.onclick=function(){ closeUispecAdd(); };
+  var saveBtn=$('uispecAddSave');
+  if(saveBtn)saveBtn.onclick=function(){
+    var nm=$('uispecAddName'), ds=$('uispecAddDesc');
+    var name=nm?nm.value.trim():'', desc=ds?ds.value.trim():'';
+    if(!name){ try{ showToast('请填写规范名称'); }catch(e){} return; }
+    if(!(window.protoAPI&&window.protoAPI.spec)){ try{ showToast('仅桌面端支持规范管理'); }catch(e){} return; }
+    /* 编辑模式：只改名称与描述，不动正文文件 */
+    if(uispecEditId){
+      if(!window.protoAPI.spec.update){ try{ showToast('仅桌面端支持编辑规范'); }catch(e){} return; }
+      var eid=uispecEditId;
+      window.protoAPI.spec.update({ id:eid, name:name, desc:desc }).then(function(r){
+        if(!r||!r.ok){ try{ showToast('保存失败：'+((r&&r.error)||'未知错误')); }catch(e){} return; }
+        closeUispecAdd();
+        refreshUispecList();
+        try{ showToast('已保存'); }catch(e){}
+        try{ if(typeof libStatus==='function')libStatus('已保存规范'); }catch(e2){}
+      }).catch(function(e){ try{ showToast('保存失败：'+(e&&e.message||e)); }catch(e2){} });
+      return;
+    }
+    if(!uispecAddSrcPath){ try{ showToast('请先选择规范 md 文件'); }catch(e){} return; }
+    if(!window.protoAPI.spec.createFromFile){ try{ showToast('仅桌面端支持新增规范'); }catch(e){} return; }
+    var tabKind=uispecCurTab;
+    window.protoAPI.spec.createFromFile({ srcPath:uispecAddSrcPath, name:name, desc:desc }).then(function(r){
+      if(!r||!r.ok||!r.item||!r.item.id){ try{ showToast('新增失败：'+((r&&r.error)||'未知错误')); }catch(e){} return; }
+      var after=function(){
+        closeUispecAdd();
+        refreshUispecList();
+        try{ showToast('已新增规范'); }catch(e){}
+      };
+      if(window.protoAPI.spec.update){
+        window.protoAPI.spec.update({ id:r.item.id, kind:tabKind }).then(function(){ after(); }).catch(function(){ after(); });
+      }else{ after(); }
+    }).catch(function(e){ try{ showToast('新增失败：'+(e&&e.message||e)); }catch(e2){} });
+  };
+})();
+
 function saveSettingsFromUi(){
   syncCurrentChecklistToMemory();
   var engine = getActiveEngineInUi();
   var isCli = (engine === 'cli');
-  var activeVisible = isCli ? ((curAiConfig&&curAiConfig.visibleModelsCli)||[]) : ((curAiConfig&&curAiConfig.visibleModelsApi)||[]);
+  var activeVisible = isCli ? getCliVisibleIds() : ((curAiConfig&&curAiConfig.visibleModelsApi)||[]);
   try{ ensureApiProfiles(); }catch(e){}
   try{ syncActiveProfileToMirror(); }catch(e){}
   var _act=null;
@@ -2531,14 +2778,14 @@ function saveSettingsFromUi(){
     engine:engine,
     agentId:(curAiConfig&&curAiConfig.agentId)||'opencode',
     mainAgent:(curAiConfig&&curAiConfig.mainAgent)||(curAiConfig&&curAiConfig.agentId)||'opencode',
-    customModelsCli:(curAiConfig&&curAiConfig.customModelsCli)||[],
+    customModelsCli:(function(){ try{ normalizeCliModelMaps(curAiConfig); var _m=curAiConfig&&curAiConfig.customModelsCli; if(Array.isArray(_m))return _m.slice(); if(_m&&typeof _m==='object'){ var _o={}; Object.keys(_m).forEach(function(k){ if(Array.isArray(_m[k]))_o[k]=_m[k].slice(); }); return _o; } }catch(e){} return {}; })(),
     api:apiData,
     byok:_byok,
     apiConfig:_apiCfg,
     apiProfiles:_profiles,
     activeApiProfileId:curAiConfig?curAiConfig.activeApiProfileId:null,
     visibleModels:activeVisible,
-    visibleModelsCli:curAiConfig?curAiConfig.visibleModelsCli||null:null,
+    visibleModelsCli:(function(){ try{ var _v=curAiConfig&&curAiConfig.visibleModelsCli; if(Array.isArray(_v))return _v.slice(); if(_v&&typeof _v==='object'){ var _o={}; Object.keys(_v).forEach(function(k){ if(Array.isArray(_v[k]))_o[k]=_v[k].slice(); }); return _o; } }catch(e){} return {}; })(),
     visibleModelsApi:curAiConfig?curAiConfig.visibleModelsApi||null:null
   };
   if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig){
@@ -2789,6 +3036,8 @@ if(btnCopyTrace)btnCopyTrace.onclick=function(){
     if(g.output)out.push('[OUTPUT] '+g.output);
   }
   var full=out.join('\n');
+  /* Wave-B: 剪贴板收敛3/5（Trace日志复制改走 Utils，保留alert回显） */
+  try{ if(typeof window!=='undefined'&&window.Utils&&window.Utils.copyToClipboard){ window.Utils.copyToClipboard(full,''); alert('已复制全部 Trace 日志'); return; } }catch(e){}
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(full).then(function(){ alert('已复制全部 Trace 日志'); });
   }else{
@@ -3090,6 +3339,8 @@ function createAiCopyBtn(textOrFn){
  return btn;
 }
 function fallbackAiCopy(txt, btn){
+ /* Wave-B: 剪贴板收敛4/5（AI气泡复制fallback改走 Utils，保留按钮态） */
+ try{ if(typeof window!=='undefined'&&window.Utils&&window.Utils.copyToClipboard){ window.Utils.copyToClipboard(txt,''); btn.textContent='已复制'; btn.classList.add('copied'); setTimeout(function(){ btn.textContent='复制'; btn.classList.remove('copied'); }, 1500); return; } }catch(e){}
  try{
   var ta=document.createElement('textarea');
   ta.value=txt;
@@ -3495,15 +3746,15 @@ function i5RetryLast(){
 }
 window.i5RetryLast=i5RetryLast;
 function i5CopyInstall(){
+ /* Wave-B: 剪贴板收敛5/5（安装命令复制改走 Utils，保留toast） */
+ try{ if(typeof window!=='undefined'&&window.Utils&&window.Utils.copyToClipboard){ window.Utils.copyToClipboard('npm i -g opencode-cli','安装命令已复制'); return; } }catch(e){}
  var cmd='npm i -g opencode-cli';
  try{ if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(cmd).then(function(){ showToast('安装命令已复制'); }); else throw new Error('noclip'); }
  catch(e){ try{ var ta=document.createElement('textarea'); ta.value=cmd; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast('安装命令已复制'); }catch(ee){} }
 }
 window.i5CopyInstall=i5CopyInstall;
 var _i5Tools=[];
-function i5SyncTopBar(){
- try{ i5SetupTopModelSelect(); }catch(e){}
-}
+/* Wave-B: i5SyncTopBar 已删除（全仓零调用；保留 i5SyncTopModel 因被 i5SetupTopModelSelect 调用，删前grep确认） */
 function i5SetupTopModelSelect(topEl, baseEl){
  if(baseEl)aiModelEl=baseEl;
  return i5SyncTopModel();
@@ -3731,10 +3982,12 @@ function sweepStrayMasks(){
   if(aiInputEl)aiInputEl.focus();
  }
   function closeAi(){
-   /* 仅收起对话框，不中断进行中的对话（生成在后台继续，重新打开可查看） */
-   if(window.MaskStack) window.MaskStack.pop('aiMask'); // P1-7 fix
+   /* Wave-D/G SoC修复：委托 AiDomain.requestClose（EventBus ai:request-close/ai:closed + Store感知，无裸挂）。 */
+   try { if (typeof AiDomain !== 'undefined' && AiDomain && typeof AiDomain.requestClose === 'function') { AiDomain.requestClose('user'); return; } } catch (e) {}
+   try { if (typeof window !== 'undefined' && window.EventBus && typeof window.EventBus.emit === 'function') window.EventBus.emit('ai:request-close', {}); } catch (e4) {}
+   if(window.MaskStack) window.MaskStack.pop('aiMask');
    if(aiMaskEl)aiMaskEl.style.display='none';
-   sweepStrayMasks(); /* 关闭后一并清除游离遮罩，避免页面残留灰罩 */
+   sweepStrayMasks();
   }
  /* T3.3:MaskStack唯一ESC入口回调。等价旧双监听净效果（取消+关闭）：
     ✕按钮/遮罩点击仍走closeAi（后台继续），仅ESC经此取消后关闭 */
@@ -3842,7 +4095,7 @@ function aiDoSend(){
    var activePg = (typeof aiDetectCurrentPage==='function' ? aiDetectCurrentPage() : '');
    var targetFile = (aiTargetPageSelect && aiTargetPageSelect.value) || (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || '';
    /* 回滚说明：规范注入位置加错（用户出完原型再做），aiDoSend恢复直通原文t；快照helpers保留供导出附录/预读+后续复用 */
-   window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, enableTools:_enk}).then(function(r){
+    window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, uiKind:((typeof currentSource!=='undefined'&&currentSource&&(currentSource.kind||''))||'mobile'), enableTools:_enk}).then(function(r){
    if(r&&r.error==='busy'){ aiBubbleError('（已有任务在运行，请稍候）'); }
    else if(r&&!r.ok){ if(aiStreaming)aiBubbleError(String(r.error||'发送失败')); else aiSetBusy(false); }
   }).catch(function(e){ aiBubbleError('发送失败：'+(e&&e.message||e)); });
@@ -3892,26 +4145,17 @@ function setKindPick(k){
 }
 function closeKindModal(){ if(window.MaskStack) window.MaskStack.pop('kindMask'); if(kindMaskEl)kindMaskEl.style.display='none'; }
 function newPrototype(kind){
- if(!(window.protoAPI&&window.protoAPI.sandbox)){ alert('新建原型仅桌面端（exe）可用。'); return; }
- var label=(kind==='pc')?'PC 端':'移动端';
- var opt={ title:'新建'+label+'原型', label:'原型名称',
-   hint:'将创建独立文件夹沙箱（含空 html 与 md），并自动打开大模型对话。',
-   value:'' };
- askNamePrompt(opt,function(nm){
-  if(nm==null||nm==='')return;
-  if(/[\\\/:*?"<>|]|\.\./.test(nm)){ alert('名称含非法字符（不能含 \\ / : * ? \" < > |）。'); return; }
-  if(nm.length>60){ alert('名称过长（≤60字）。'); return; }
-  window.protoAPI.sandbox.create({name:nm,kind:kind,project:currentProject}).then(function(r){
-   if(r&&r.ok){
-    libStatus('已创建'+label+'原型沙箱：'+nm+'（生成的文件将写入该文件夹）。');
-    loadSandboxSources(nm); /* 刷新列表并选中新建原型 */
-    if(HAS_AI){ setTimeout(openAi, 260); } /* 自动弹出大模型对话窗口 */
-   }else{
-    reportError('proto-create', new Error(r&&r.error||'未知错误'), '创建失败：'+(r&&r.error||'未知错误'));
-    }
-   });
-  });
- }
+ /* Wave-D/G SoC修复：校验经 AiDomain.Validation（无alert，toast+EventBus），延迟经 PROTOTYPE_OPEN_DELAY_MS（无260魔法数）。 */
+ try {
+   if (typeof AiDomain !== 'undefined' && AiDomain && typeof AiDomain.newPrototype === 'function') {
+     var _hasAi = false;
+     try { _hasAi = (typeof HAS_AI !== 'undefined') ? !!HAS_AI : false; } catch (e) {}
+     AiDomain.newPrototype(kind, { hasAi: _hasAi, openAi: (typeof openAi === 'function') ? openAi : null });
+     return;
+   }
+ } catch (e) {}
+ try { if (typeof showToast === 'function') showToast('AI 域未加载。'); } catch (e2) {}
+}
 if(btnNewProtoEl)btnNewProtoEl.onclick=openKindModal;
 if(kindPcEl)kindPcEl.onclick=function(){ setKindPick('pc'); };
 if(kindMobileEl)kindMobileEl.onclick=function(){ setKindPick('mobile'); };
@@ -4045,8 +4289,10 @@ if(HAS_AI){
 /* ═══════ 手动刷新：重新读取沙箱本地最新的原型 html 与文档 md（当前项目） ═══════ */
 var btnRefreshEl=$('btnRefresh');
 if(btnRefreshEl)btnRefreshEl.onclick=function(){
- if(!(window.protoAPI&&window.protoAPI.sandbox)){ showToast('浏览器模式无沙箱数据，无需刷新。'); return; }
- // fix refresh preserve: snapshot subpage+hash before async reload
+  if(!(window.protoAPI&&window.protoAPI.sandbox)){ showToast('浏览器模式无沙箱数据，无需刷新。'); return; }
+  if(!currentProject){ showToast('尚未进入任何项目，请先选择项目。'); return; }
+  try{ if(typeof libStatus==='function')libStatus('正在刷新沙箱…'); }catch(e){}
+  // fix refresh preserve: snapshot subpage+hash before async reload
  var _savedSub = currentSource && currentSource.activeSubFile;
  var _savedHash = '';
  try{ _savedHash = frame && frame.contentWindow && frame.contentWindow.location.hash || ''; }catch(e){}
@@ -4181,10 +4427,26 @@ function downloadText(name,text){
 /* ═══════ html 导出：将所选原型+文档合并导出为独立单文件 HTML（支持多选） ═══════
    单文件内联：app.css + app.js + 全部样式 + 所选原型内容(iframe srcdoc)
   + 各原型的全部功能说明；任何环境打开均可离线使用全部交互，左下菜单可切换导出包含的全部原型。 */
-function escAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+/* Wave-C/F: escAttr 显式 import (_paeEscAttr) 为准, window.Utils 仅作 stripped-classic 降级只读 */
+var escAttr=(function(){ try { if (typeof _paeEscAttr === 'function') return _paeEscAttr; } catch (e) {} try { if (typeof window!=='undefined'&&window.Utils&&window.Utils.escAttr) return window.Utils.escAttr; } catch (e2) {} return function(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }; })();
 function safeScript(t){ return String(t||'').split('</script').join('<\\/script'); }
-/* 主程序脚本清单（与 原型+文档.html 引入顺序一致）：导出时按序全部内嵌 */
-var EXPORT_SCRIPT_FILES=['js/icons.js','js/mask-manager.js','js/core-docs.js','js/nav-zoom.js','js/sandbox-core.js','js/project-ai-export.js','js/edit-entry.js','js/link-bind.js','js/annotation-core.js'];
+/* Wave-C/F: ESM 剥离内联 (file:// module CORS 降级): 导出单文件时 import/export 转经典后内联, 零模块零 CORS */
+function stripEsmForExport(code){
+  try {
+    var s = String(code || '');
+    // 去掉静态 import 行 (含副作用 import 与 from 导入; dynamic import() 保留, 经典下按需失败回退)
+    s = s.replace(/^[ \t]*import\s+[^;]*?;[ \t]*(?:\r?\n|$)/gm, '');
+    s = s.replace(/^[ \t]*import\s*\(/gm, '/*esm-stripped:*/void(');
+    // export 修饰转经典声明 (export function/const/class/var/default/名单)
+    s = s.replace(/^[ \t]*export\s+default\s+/gm, '');
+    s = s.replace(/^[ \t]*export\s+\{\s*[^}]*\}\s*;?[ \t]*(?:\r?\n|$)/gm, '');
+    s = s.replace(/^[ \t]*export\s+(?=function|const|let|var|class|async)/gm, '');
+    return s;
+  } catch (e) { try { return String(code || ''); } catch (e2) { return ''; } }
+}
+/* Wave-D/G 导出轻量化：开发脚本(HTML 11)与导出脚本解耦。导出仅内联轻量只读渲染器，
+ * 不再内联 core-docs/project-ai-export 等开发巨石。__EXPORT_BOOT__ 兼容保留。 */
+var EXPORT_SCRIPT_FILES=['js/icons.js','js/export-template.js'];
 /* P1 MD重构：离线导出图片内联流水线（相对assets路径转Base64 Data URL，缺失保留原路径不中断） */
 function guessImageMime(p){
   var s=String(p||'').toLowerCase();
@@ -4373,32 +4635,19 @@ function buildExportHtml(chosenList){
           docWrites+='try{localStorage.setItem('+JSON.stringify(DOCS_KEY_PREFIX+em.name+'_'+em.kind)+','+JSON.stringify(mdText)+');}catch(e){}\n';
         });
         if(!embeds.length){ throw new Error('所选原型内容读取失败。'); }
-        /* 导出内容：只保留查看功能（切换原型 + 查看文档 + 最新需求），移除全部工具性 UI */
-        var bodySrc=document.body.cloneNode(true);
-        ['#editBar','#modeSeg','#btnSubmitEdit','#btnNewProto','#aiDesignFab','#btnSettings','#btnExportHtml','#btnRefresh',
-          '#gitDropdownWrap','#gitPushMask','#gitPullMask','#gitConfigMask',
-          '#gitRemoteConfirmMask','#gitCrossProjConfirmMask','#gitPullCoverConfirmMask','#gitHealConfirmMask','#gitForceConfirmMask','#gitErrorMask',
-          '#kindMask','#nameMask','#settingsMask','#exportMask','#aiMask',
-         '#snapMask','#projMask','#reqPanel','#reqMask',
-          '#btnEditDoc','#btnSaveDoc','#btnCancelDoc','#kindSeg',
-         '#btnAddSource','#btnAddGroup',
-         '#btnLinkMgr','#linkBadge','#btnAnnoMgr','#annoBadgeCount','#linkInspector','#linkInspMask','#linkMgrDrawer','#linkMgrMask',
-         '#annoMgrMask','#annoMgrDrawer','#btnAnnoList'].forEach(function(sel){
-          var ebNode=bodySrc.querySelector(sel); if(ebNode&&ebNode.parentNode)ebNode.parentNode.removeChild(ebNode);
-        });
-        /* 确保纯单文件源码导出在独立导出页面中显示 */
-        var expPBtn=bodySrc.querySelector('#btnExportPureHtml'); if(expPBtn)expPBtn.style.display='';
-        /* 清除 iframe 的 srcdoc 残留（避免大段原型 HTML 破坏导出模板） */
-        var fNode=bodySrc.querySelector('#frame'); if(fNode){ fNode.removeAttribute('srcdoc'); fNode.setAttribute('src','about:blank'); }
-        var body=bodySrc.innerHTML
-          .replace(/<script[\s\S]*?<\/script>/gi,'')
-          .replace(/<iframe[^>]*?id=["']frame["'][^>]*>\s*<\/iframe>/i,'<iframe id="frame" src="about:blank" title="原型预览"></iframe>');
+        /* Wave-D/G 轻量导出：独立只读模板 + JSON 数据，不再克隆开发期 body/内联开发巨石 */
         var first=embeds[0];
+        var liteCss='\n.export-lite{max-width:1200px;margin:0 auto;padding:16px;font-family:system-ui,sans-serif;}\n.export-lite-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}\n.export-lite-item{border:1px solid #ddd;border-radius:8px;padding:6px 12px;background:#fff;cursor:pointer;}\n.export-lite-item.on{border-color:#0052ff;color:#0052ff;}\n.export-lite-stage{display:flex;gap:16px;}\n.export-lite-frame{flex:1 1 auto;min-height:480px;border:1px solid #e5e7eb;border-radius:8px;}\n.export-lite-doc{flex:1 1 360px;max-width:480px;border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fff;}\n';
+        var liteBody='<div class="export-lite"><h2>原型预览 · '+escAttr(first.displayName)+'（只读导出）</h2>'
+          +'<div class="export-lite-bar" id="exportLiteList"></div>'
+          +'<div class="export-lite-stage"><iframe id="frame" class="export-lite-frame" src="about:blank" title="原型预览"></iframe>'
+          +'<div class="export-lite-doc"><h3 id="exportLiteTitle"></h3><div id="exportLiteDoc"></div>'
+          +'<div id="docContent" style="display:none"></div><div id="docTitle" style="display:none"></div><div id="sbList" style="display:none"></div></div></div></div>';
         var h='<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n'
           +'<meta charset="UTF-8">\n'
           +'<meta name="viewport" content="width=device-width, initial-scale=1">\n'
           +'<title>原型预览 · '+escAttr(first.displayName)+'</title>\n'
-          +'<style>\n'+(styles.join('\n')||'')+'\n</style>\n'
+          +'<style>\n'+(styles.join('\n')||'')+'\n'+liteCss+'\n</style>\n'
           +'<script>\n'
           +safeScript('window.__EXPORT_BOOT__=true;\n'
           +'window.__REQ_MAP__='+JSON.stringify(reqMap)+';\n'
@@ -4409,13 +4658,9 @@ function buildExportHtml(chosenList){
           +'localStorage.setItem('+JSON.stringify(LIB_SOURCES_KEY)+',JSON.stringify(arr));}catch(e){}}());\n'
           + docWrites)
           +'\n<\/script>\n'
-          +'<\/head>\n<body>\n'+body+'\n'
-          +scripts.map(function(s){ return '<script>\n'+safeScript(s)+'\n<\/script>\n'; }).join('')
-          +'<script>\n'
-          +safeScript('(function(){try{var L=window.sources||[];var T='+JSON.stringify(first.name)+';'
-          +'for(var i=0;i<L.length;i++){var s=L[i];if(s&&s.method==="srcdoc"&&s.name===T){window.loadSource(s);break;}}}'
-          +'catch(e){}})();\n')
-          +'\n<\/script>\n</body>\n</html>';
+          +'<\/head>\n<body>\n'+liteBody+'\n'
+          +scripts.map(function(s){ try { s = stripEsmForExport(s); } catch (e) {} return '<script>\n'+safeScript(s)+'\n<\/script>\n'; }).join('')
+          +'\n</body>\n</html>';
         return h;
         }); /* Promise.all(inlineJobs) 图片内联回填 */
       }); /* Promise.all([reqMapPromise, linksPromise, annotationsPromise]).then */
@@ -4717,8 +4962,8 @@ function loadSandboxSources(selName){
  var _pendingRefreshHash = (typeof window._refreshSavedHash !== 'undefined' && window._refreshSavedHash) ? window._refreshSavedHash : '';
  var _selNameForProto = _paramIsSub ? null : selName;
  try{ if(_pendingRefreshSub || _pendingRefreshHash) { window._refreshSavedSub = null; window._refreshSavedHash = ''; } }catch(e){}
- if(!(window.protoAPI&&window.protoAPI.sandbox))return;
- if(!currentProject)return;
+  if(!(window.protoAPI&&window.protoAPI.sandbox))return;
+  if(!currentProject){ try{ showToast('尚未进入任何项目，请先选择项目。'); }catch(e){} return; }
  window.protoAPI.sandbox.list(currentProject).then(function(r){
   var folders=(r&&r.folders)||[];
   /* 默认打开顺序：项目内按名称排序，打开第一个原型 */
@@ -4836,13 +5081,15 @@ function isElOpen(el) {
      window.MaskStack.register('projMask','projMask', closeProjectPicker);
       window.MaskStack.register('snapMask','snapMask', closeSnapPanel);
       window.MaskStack.register('modelFetchMask','modelFetchMask', closeModelFetch);
+     window.MaskStack.register('apiProfileMask','apiProfileMask', closeApiProfileModal);
+     window.MaskStack.register('uispecAddMask','uispecAddMask', closeUispecAdd);
      window.MaskStack.register('gitPushMask','gitPushMask', closeGitPushModal);
       window.MaskStack.register('gitPullMask','gitPullMask', closeGitPullModal);
       window.MaskStack.register('gitConfigMask','gitConfigMask', closeGitConfigModal);
       try { window.MaskStack.register('gitRemoteConfirmMask','gitRemoteConfirmMask', function() { gitCloseMask('gitRemoteConfirmMask'); }); } catch (e) {}
       try { window.MaskStack.register('gitCrossProjConfirmMask','gitCrossProjConfirmMask', function() { gitCloseMask('gitCrossProjConfirmMask'); gitPendingCrossProj = null; }); } catch (e) {}
       try { window.MaskStack.register('gitPullCoverConfirmMask','gitPullCoverConfirmMask', function() { gitCloseMask('gitPullCoverConfirmMask'); gitPendingPullCover = null; }); } catch (e) {}
-      try { window.MaskStack.register('gitHealConfirmMask','gitHealConfirmMask', function() {}); } catch (e) {}
+      try { window.MaskStack.register('gitHealConfirmMask','gitHealConfirmMask', function() { gitCloseMask('gitHealConfirmMask'); }); } catch (e) {}
       try { window.MaskStack.register('gitForceConfirmMask','gitForceConfirmMask', function() { gitCloseMask('gitForceConfirmMask'); }); } catch (e) {}
       try { window.MaskStack.register('gitErrorMask','gitErrorMask', function() { gitCloseMask('gitErrorMask'); }); } catch (e) {}
       window.MaskStack.register('aiMask','aiMask', closeAi);
@@ -5022,3 +5269,4 @@ document.addEventListener('keydown', function(e){
     return;
   }
 });
+/* FIX: 经典<script>加载，移除ESM export(EXPORT_*经window/全局直用) */

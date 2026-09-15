@@ -1,4 +1,10 @@
 /* [js/nav-zoom.js] 导航联动 + 标题推断 + 舞台缩放（由 app.js 拆分，顺序勿乱调） */
+/* Wave-C/F: ESM 显式依赖收敛 (utils.showToast 显式 import, 消灭隐式全局);
+ * 其余跨文件符号 ($/docContentEl/AnnotationEngine/fitPhone 被调) 过渡期经 window 只读,
+ * 待 core-docs 等巨石 ESM 化后 (Wave-D) 转为 import。 */
+/* FIX: 经典<script>加载，禁用ESM import(整文件罢工)。utils为type=module延迟执行，
+ * 经典脚本先行，用内联回退+window.Utils双保险。 */
+function showToast(msg) { try { if (typeof window !== 'undefined' && window.Utils && window.Utils.showToast) return window.Utils.showToast(msg); } catch (e) {} try { if (typeof libStatus === 'function') { libStatus(msg); return; } } catch (e2) {} try { alert(msg); } catch (e3) {} return null; }
 /* 由路由推断可读标题（通用）：取路由末段；页面章节标题一律优先 md 的 pageTitles，
     缺失时回退路由 key 本身（不再维护内置原型的硬编码映射表） */
 /* ═══════ 静态解析源文件页面：提取原型页面路由清单（仅供导航联动与按页占位，不在左栏展示） ═══════
@@ -112,3 +118,14 @@ if(zoomSelectEl){
  });
 }
 syncZoomUI();
+
+/* FIX: 经典<script>加载，移除ESM export(以window挂载为准) */
+/* ---- 经典兼容垫片 (Wave-D 移除) ---- */
+try {
+ if (typeof window !== 'undefined') {
+  if (!window.extractPages) window.extractPages = extractPages;
+  if (!window.fitPhone) window.fitPhone = fitPhone;
+  if (!window.setContentZoom) window.setContentZoom = setContentZoom;
+  if (!window.syncZoomUI) window.syncZoomUI = syncZoomUI;
+ }
+} catch (e) {}

@@ -2,10 +2,18 @@
 /* ═══════ 预览/编辑模式：编辑模式点击元素 → 检查器抽屉（跳转交互 + 修改需求） → 待提交列表 → 统一提交大模型 ═══════
    编辑定位基于 iframe 内 DOM（webSecurity:false 可跨源读写），不改动原型文件本身；
    每条记录含 内容 + 元素 + 元素唯一路径(CSS Selector) + 所在页面路由，提交时随清单交给大模型定位修改。 */
+/* Wave-C/F: ESM 显式依赖 (escHtml/escAttr/showToast 经 utils 显式 import, 消灭隐式全局);
+ * Store/EventBus 显式 import (EDIT_QUEUE 真相源收编, 切换/保存经 Store 版本守卫协同)。
+ * stripped-classic 降级: import 行剥离后裸调用回退 window 全局。 */
+/* FIX: 经典<script>加载，禁用ESM import(整文件罢工)。内联回退+window.Utils双保险；
+ * Store/EventBus经window只读。_EditStore/_editBus保留typeof守卫兼容。 */
+var escHtml = (typeof window !== 'undefined' && window.escHtml) || (typeof window !== 'undefined' && window.Utils && window.Utils.escHtml) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+var escAttr = (typeof window !== 'undefined' && window.escAttr) || (typeof window !== 'undefined' && window.Utils && window.Utils.escAttr) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+var showToast = (typeof window !== 'undefined' && window.showToast) || (typeof window !== 'undefined' && window.Utils && window.Utils.showToast) || function (msg) { try { if (typeof libStatus === 'function') { libStatus(msg); return; } } catch (e) {} try { alert(msg); } catch (e2) {} return null; };
 var EDIT_QUEUE=[],EDIT_HOVER_EL=null,EDIT_LOCKED_EL=null,EDIT_PENDING_SUBMIT=false,EDIT_EDITING_ID=null; /* T3.2:僵尸编辑模式已下线，拾取统一由CTRL_PICK接管 */
 var EDIT_LAST_QUEUE=null; /* G01: 清空前的快照，用于撤销/审计 */
 var _editQueuePersistTimer=null;
-function persistEditQueue(){ try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(e){} }
+function persistEditQueue(){ try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(e){} try { if (typeof window !== 'undefined' && window.Store && window.Store.replaceQueue) { /* Store 镜像 (过渡期双写, Wave-D 以 Store 为准): 避免递归, 仅当长度/首末 id 不一致时同步 */ try { var _sq = window.Store.getQueue(); var _same = _sq && _sq.length === EDIT_QUEUE.length; if (!_same) window.Store.replaceQueue(EDIT_QUEUE.slice()); } catch (e2) {} } } catch (e3) {} }
 function schedulePersistEditQueue(){ if(_editQueuePersistTimer) clearTimeout(_editQueuePersistTimer); _editQueuePersistTimer=setTimeout(persistEditQueue,300); }
 // P1-3 fix: 同步刷盘，避免关闭前丢失 G-01-残
 function flushEditQueueSync(){ try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(e){} } // P1-3 fix
@@ -17,9 +25,12 @@ try{ var _savedQueue=JSON.parse(localStorage.getItem('edit_queue_v1')||'null'); 
 var CTRL_PICK = {
   holding: false,      /* 是否按住 Ctrl/Cmd（纯键无其他修饰；主窗口或 iframe 内输入框焦点不置位） */
   hovering: null,      /* 当前探测悬停元素（不污染 EDIT_HOVER_EL） */
-  selected: [],        /* 选中集合：[{id, selector, tagName, text, rect, el}] */
+  selected: [],        /* 选中集合：[{id, selector, tagName, text, rect, el}]，沙箱跨域时 el 为空、remote 为 true */
   overlay: null,       /* 覆盖层容器（选择框 + 序号角标） */
   panel: null,         /* 批量面板引用 */
+  remoteLoop: false,   /* 远端拾取循环是否运行中（沙箱跨域经 ProtoSandboxBridge 逐次武装） */
+  remoteSeq: 0,        /* 远端循环令牌（停止/切换模式时递增作废旧等待） */
+  remoteMode: 'pick',  /* 'pick' 多选拾取 | 'inline' 就地改单发 */
 
   /* —— 进入/退出拾取态 —— */
   enter: function () {
@@ -41,7 +52,8 @@ var CTRL_PICK = {
     document.body.classList.remove('ctrl-inspecting');
     var eh = document.getElementById('editHover');
     if (eh) eh.classList.remove('ctrl-hover');
-    if (CTRL_PICK.hovering) { CTRL_PICK.hovering = null; editHideHover(); }
+    if (CTRL_PICK.hovering) { CTRL_PICK.hovering = null; }
+    try{ editHideHover(); }catch(e){} /* 远端悬停框同收（hovering 为空时旧逻辑跳过隐藏） */
     try {
       var d = frame.contentDocument;
       if (d) {
@@ -52,8 +64,7 @@ var CTRL_PICK = {
   },
 
   /* —— 拾取 —— */
-  toggle: function (targetEl, ev) {
-    if (!targetEl) return;
+  toggle: function (targetEl, ev) {    if (!targetEl) return;
     var tag = String(targetEl.tagName || '').toLowerCase();
     if (tag === 'html' || tag === 'body') return;
     if (ev) { ev.preventDefault(); ev.stopPropagation(); }
@@ -76,6 +87,35 @@ var CTRL_PICK = {
     }
     CTRL_PICK.renderOverlay();
   },
+  /* 沙箱跨域远端拾取：帧侧经 postMessage 回传 {selector,tagName,text,rect,page}（无 live el，
+   * 以 selector+page 去重；rect 为帧视口 CSS 像素，覆盖层经 editRectToPage 换算）。 */
+  toggleRemote: function (res, ev) {
+    if (!res) return;
+    var sel = String((res && res.selector) || '');
+    if (!sel) return;
+    var tag = String((res && res.tagName) || '').toLowerCase();
+    if (tag === 'html' || tag === 'body') return;
+    if (ev) { try { ev.preventDefault(); } catch (e) {} }
+    var pg = String((res && res.page) || '');
+    try { if (!pg && typeof editFrameHash === 'function') pg = editFrameHash() || ''; } catch (e2) {}
+    var idx = -1;
+    CTRL_PICK.selected.forEach(function (it, i) { if (it.selector === sel && String(it.page || '') === pg) idx = i; });
+    if (idx >= 0) {
+      CTRL_PICK.selected.splice(idx, 1);                      /* 反选移除 */
+    } else {
+      CTRL_PICK.selected.push({
+        id: 'sel_' + Date.now() + '_' + (CTRL_PICK.selected.length + 1),
+        selector: sel,
+        tagName: (res && res.tagName) || '',
+        text: String((res && res.text) || '').slice(0, 30),
+        rect: (res && res.rect && typeof res.rect === 'object') ? { left: res.rect.left || 0, top: res.rect.top || 0, width: res.rect.width || 0, height: res.rect.height || 0 } : null,
+        page: pg,
+        remote: true,
+        el: null
+      });
+    }
+    CTRL_PICK.renderOverlay();
+  },
   clear: function () {
     CTRL_PICK.selected = [];
     if (CTRL_PICK.overlay) CTRL_PICK.overlay.innerHTML = '';
@@ -90,9 +130,13 @@ var CTRL_PICK = {
     CTRL_PICK.overlay.innerHTML = '';
     if (!CTRL_PICK.selected.length) return;
     CTRL_PICK.selected.forEach(function (it, i) {
-      if (!it.el || !it.el.ownerDocument) return;
-      var freshRect = it.el.getBoundingClientRect();          /* 实时读取，防滚动/缩放漂移 */
-      var p = editRectToPage(freshRect);
+      var r = null;
+      if (it.el && it.el.ownerDocument) {
+        try { r = it.el.getBoundingClientRect(); } catch (e) { r = null; }   /* 实时读取，防滚动/缩放漂移 */
+      }
+      if (!r) r = it.rect;                                                    /* 远端拾取用帧回传 rect */
+      if (!r || (!r.width && !r.height)) return;
+      var p = editRectToPage(r);
       var box = document.createElement('div');
       box.className = 'selection-box-overlay';
       box.style.left = p.left + 'px'; box.style.top = p.top + 'px';
@@ -108,6 +152,17 @@ var CTRL_PICK = {
   /* —— 出口 —— */
   openPanel: function () {
     if (CTRL_PICK.selected.length === 1) {
+      /* 单选：远端拾取（沙箱跨域无 live el）直接移交检查器远端入口；nonce 匹配即帧来源可信 */
+      var only = CTRL_PICK.selected[0];
+      if (only && only.remote) {
+        var rpg = String(only.page || '');
+        try { if (!rpg && typeof editFrameHash === 'function') rpg = editFrameHash() || ''; } catch (e) {}
+        CTRL_PICK.clear();
+        if (window.LinkBind && typeof LinkBind.openInspectorRemote === 'function') {
+          LinkBind.openInspectorRemote({ selector: only.selector, page: rpg, label: only.text || only.tagName || only.selector, text: only.text || '', tagName: only.tagName || '' });
+        } else if (window.LinkBind) { LinkBind.openInspector(null); }
+        return;
+      }
       /* 单选：先校验预览 iframe 作用域，再清空移交检查器 */
       var targetEl = CTRL_PICK.selected[0].el;
       var _fd = null;
@@ -157,13 +212,13 @@ var CTRL_PICK = {
       reqInput = document.getElementById('batchReqInput');
       var userReq = reqInput ? reqInput.value.trim() : '';
       if (!userReq) { alert('请输入统一修改诉求。'); return; }
-      CTRL_PICK.selected.forEach(function (it) { editQueueAdd(it.el, userReq); added++; });
+      CTRL_PICK.selected.forEach(function (it) { if (it.remote) editQueueAddRemote(it, userReq); else editQueueAdd(it.el, userReq); added++; });
     } else {
       /* 分别独立：读取每张卡片输入，非空才入队；全空提交拦截 */
       CTRL_PICK.selected.forEach(function (it) {
         var input = document.getElementById('indiv_input_' + it.id);
         var req = input ? input.value.trim() : '';
-        if (req) { editQueueAdd(it.el, req); added++; }
+        if (req) { if (it.remote) editQueueAddRemote(it, req); else editQueueAdd(it.el, req); added++; }
       });
       if (added === 0) { alert('请至少为一个元素填写修改诉求。'); return; }
     }
@@ -722,6 +777,108 @@ function editQueueAdd(el, text){
   renderEditDrawer();
   schedulePersistEditQueue();
 }
+/* 沙箱跨域远端入队：选择器/文本均来自帧回传，不依赖 live el，其余与 editQueueAdd 一致 */
+function editQueueAddRemote(info, text){
+  if(!info)return;
+  var t = (typeof text === 'string') ? text.trim() : '';
+  if(!t){ alert('请先输入要调整的内容。'); return; }
+  var sel=String(info.selector||'');
+  if(!sel){ alert('选择器生成失败，请重试。'); return; }
+  var pg=String(info.page||'');
+  try{ if(!pg&&typeof editFrameHash==='function')pg=editFrameHash()||''; }catch(e){}
+  var curHtml=editQueueCurHtmlFile(), dup=null;
+  EDIT_QUEUE.forEach(function(it){ if(it.selector===sel&&it.page===pg&&(!it.htmlFile||!curHtml||it.htmlFile===curHtml))dup=it; });
+  var label=String(info.text||info.tagName||sel).slice(0,30);
+  if(dup){
+    dup.text=t; dup.ts=Date.now();
+    if(!dup.htmlFile)dup.htmlFile=curHtml;
+    libStatus('已更新该元素原有的修改需求。');
+  }else{
+    EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(),
+      page:pg, selector:sel, label:label, text:t, htmlFile:curHtml });
+    libStatus('已加入待提交列表：'+EDIT_QUEUE.length+' 条（可点顶部「待提交列表」查看或提交）。');
+  }
+  updateEditBadge();
+  renderEditDrawer();
+  schedulePersistEditQueue();
+}
+/* ═══════ 沙箱跨域远端拾取（postMessage 桥） ═══════
+ * 同源穿透被 sandbox 阻断后，帧内点击宿主不可见；改为宿主按住 Ctrl 即经
+ * ProtoSandboxBridge.requestPick 逐次武装帧侧，帧回传 PICK_RESULT 后入远端选中并立即重武装
+ * （松开 Ctrl 即停；Ctrl+Shift 切单发就地改）。旧同源直连路径原样保留。 */
+function ctrlRemotePickSupported(){
+  try{
+    if(window.__EXPORT_BOOT__===true)return false;
+    if(typeof sandboxRequestPick!=='function')return false;
+    if(typeof frame==='undefined'||!frame||!frame.contentWindow)return false;
+    return true;
+  }catch(e){ return false; }
+}
+function ctrlStopRemotePickLoop(){
+  try{ CTRL_PICK.remoteLoop=false; CTRL_PICK.remoteSeq++; }catch(e){}
+  try{ if(typeof sandboxSendDisarm==='function')sandboxSendDisarm(); }catch(e2){}
+}
+function ctrlStartRemotePickLoop(){
+  try{
+    if(CTRL_PICK.remoteLoop)return;
+    if(!ctrlRemotePickSupported())return;
+    CTRL_PICK.remoteLoop=true;
+    var tok=++CTRL_PICK.remoteSeq;
+    (function next(){
+      if(!CTRL_PICK.remoteLoop||tok!==CTRL_PICK.remoteSeq)return;
+      if(!(CTRL_PICK&&CTRL_PICK.holding)){ CTRL_PICK.remoteLoop=false; return; }
+      if(!ctrlRemotePickSupported()){ CTRL_PICK.remoteLoop=false; return; }
+      var p=null;
+      try{ p=sandboxRequestPick(15000); }catch(e){ CTRL_PICK.remoteLoop=false; return; }
+      if(!p||typeof p.then!=='function'){ CTRL_PICK.remoteLoop=false; return; }
+      p.then(function(res){
+        if(!CTRL_PICK.remoteLoop||tok!==CTRL_PICK.remoteSeq)return;
+        if(!(CTRL_PICK&&CTRL_PICK.holding)){ CTRL_PICK.remoteLoop=false; return; }
+        if(!res||!res.selector){ next(); return; }
+        if(CTRL_PICK.remoteMode==='inline'){ CTRL_PICK.remoteLoop=false; try{ inlineEditOpenRemote(res); }catch(e){} return; }
+        try{ CTRL_PICK.toggleRemote(res); }catch(e2){}
+        next();
+      }).catch(function(){
+        if(CTRL_PICK.remoteLoop&&tok===CTRL_PICK.remoteSeq&&(CTRL_PICK&&CTRL_PICK.holding))next();
+        else CTRL_PICK.remoteLoop=false;
+      });
+    })();
+  }catch(e){ try{ CTRL_PICK.remoteLoop=false; }catch(e2){} }
+}
+function ctrlArmInlineOnce(){
+  try{
+    if(!ctrlRemotePickSupported())return;
+    try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(e){}
+    var tok=++CTRL_PICK.remoteSeq;
+    sandboxRequestPick(20000).then(function(res){
+      if(tok!==CTRL_PICK.remoteSeq)return;
+      if(!res||!res.selector)return;
+      try{ inlineEditOpenRemote(res); }catch(e2){}
+    }).catch(function(){});
+  }catch(e){}
+}
+/* 沙箱跨域就地改：定位/初值/弹窗位置来自帧回传，保存走既有文件读写链
+ * （readFile→DOMParser→选择器恰1命中→回填直接文本→write），与 live 路径同一落盘语义。 */
+function inlineEditOpenRemote(res){
+  if(!res||!res.selector){ inlineEditToast('未能定位目标元素，请重试或用Ctrl+拾取走AI队列。'); return; }
+  try{ if(inlineEditIsAiBusy()){ inlineEditToast('AI 正在生成，请先停止再就地改。'); return; } }catch(e){}
+  var p=null;
+  try{ p=(res.rect&&typeof editRectToPage==='function')?editRectToPage(res.rect):{left:100,top:100,width:200,height:24}; }catch(e){ p={left:100,top:100,width:200,height:24}; }
+  INLINE_EDIT.selector=String(res.selector||'');
+  try{ INLINE_EDIT.file=(typeof editQueueCurHtmlFile==='function')?editQueueCurHtmlFile():''; }catch(e){ INLINE_EDIT.file=''; }
+  try{ INLINE_EDIT.dir=(typeof currentSource!=='undefined'&&currentSource&&currentSource.sandboxDir)?currentSource.sandboxDir:''; }catch(e){ INLINE_EDIT.dir=''; }
+  INLINE_EDIT.initText=String(res.text||'');
+  try{ INLINE_EDIT.initHtml=INLINE_EDIT.initText; }catch(e){}
+  /* 远端代理 target：保存链仅校验存在性，真实读写发生在解析后的源文件副本上 */
+  INLINE_EDIT.target={ __remotePick:true, nodeType:1, tagName:String(res.tagName||'div').toUpperCase() };
+  try{ if(CTRL_PICK){ CTRL_PICK.holding=false; try{ CTRL_PICK.exit(); }catch(e){} } }catch(e2){}
+  try{ editHideHover(); }catch(e){}
+  try{ if(window.LinkBind&&typeof LinkBind.closeAllDrawers==='function')LinkBind.closeAllDrawers(); }catch(e){}
+  INLINE_EDIT.open=true; INLINE_EDIT.savedRect=p;
+  try{ INLINE_EDIT.openAt=Date.now(); }catch(e){ INLINE_EDIT.openAt=0; }
+  try{ inlineEditBuildPop(p); }catch(e){ try{ inlineEditToast('就地改浮层打开失败，请用Ctrl+拾取走AI队列。'); }catch(e2){} try{ inlineEditCloseNow(); }catch(e3){} return; }
+  try{ if(window.MaskStack&&window.MaskStack.push)window.MaskStack.push('inlineEditPop',function(){ inlineEditTryClose(); }); }catch(e){}
+}
 function updateEditBadge(){
   var n=EDIT_QUEUE.length;
   if(btnSubmitEditEl)btnSubmitEditEl.style.display=n?'':'none';
@@ -860,13 +1017,7 @@ function editQueueSubmit(){
     alert('提交失败，已恢复待提交列表：'+(e&&e.message||e));
   }
 }
-function setEditMode(on){
-  /* T3.2兼容存根：旧模式开关已下线，统一Ctrl拾取；保留broadcast以防iframe残留 */
-  try{ if(typeof console!=='undefined'&&console.warn)console.warn('[deprecated] setEditMode已下线，请按住Ctrl拾取元素。'); }catch(e){}
-  try{ editHideHover(); }catch(e){}
-  try{ libStatus('按住 Ctrl 点击原型元素即可拾取，松开 Ctrl 批量提交修改需求。'); }catch(e){}
-  try{ if(window.LinkBind)LinkBind.broadcastMode(false); }catch(e){}
-}
+/* Wave-B: setEditMode 已删除（旧编辑模式存根零调用，统一走 CTRL_PICK；删除前全仓grep仅定义+导出零调用） */
 if(btnSubmitEditEl)btnSubmitEditEl.onclick=function(){ openEditDrawer(); };
 if(editDrawerCloseEl)editDrawerCloseEl.onclick=closeEditDrawer;
 if(editQueueClearEl)editQueueClearEl.onclick=editQueueClear;
@@ -956,8 +1107,137 @@ function bindCtrlInspectListeners(targetWindow) {
   }, true);
 }
 
+/* 沙箱跨域远端悬停：帧侧武装期间元素变化上报包围盒，宿主用既有 #editHover 绘制；
+ * 非拾取态/就地改打开中不显示；退出拾取态即隐藏（exit 统一回收）。 */
+function editShowHoverRect(r){
+  if(!r||!editHoverEl)return;
+  try{
+    var p=editRectToPage(r);
+    editHoverEl.style.display='block';
+    editHoverEl.style.left=p.left+'px'; editHoverEl.style.top=p.top+'px';
+    editHoverEl.style.width=p.width+'px'; editHoverEl.style.height=p.height+'px';
+  }catch(e){}
+}
+function remoteHoverRect(r){
+  try{
+    if(!r){ editHideHover(); return; }
+    if(!(CTRL_PICK&&CTRL_PICK.holding)){ return; }
+    try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open){ editHideHover(); return; } }catch(e){}
+    editShowHoverRect(r);
+  }catch(e){}
+}
+try{ window.__onRemoteHover=function(r){ remoteHoverRect(r); }; }catch(e){}
+/* 未武装命中补偿：仅拾取态收编（原型自身交互不受影响）；Ctrl+Shift 进就地改，否则多选；
+ * 收编后补启动循环，保障后续点击。 */
+function remotePickMiss(res){
+  try{
+    if(!res||!res.selector) return;
+    if(window.__EXPORT_BOOT__===true) return;
+    if(!(CTRL_PICK&&CTRL_PICK.holding)) return;
+    try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open) return; }catch(e){}
+    var wantInline = !!res.shift || CTRL_PICK.remoteMode==='inline';
+    if(wantInline){
+      try{ inlineEditOpenRemote(res); }catch(e2){}
+      return;
+    }
+    try{ CTRL_PICK.toggleRemote(res); }catch(e3){}
+    try{ ctrlStartRemotePickLoop(); }catch(e4){}
+  }catch(e){}
+}
+try{ window.__onRemotePickMiss=function(r){ remotePickMiss(r); }; }catch(e){}
+/* 拾取态统一取消（宿主 Esc / 帧 Esc 共用）：退出+清选+解武装 */
+function cancelCtrlPickState(){
+  try{
+    if(CTRL_PICK){ CTRL_PICK.holding=false; try{ CTRL_PICK.exit(); }catch(e){} try{ CTRL_PICK.clear(); }catch(e2){} }
+    try{ ctrlStopRemotePickLoop(); }catch(e3){}
+    try{ CTRL_PICK.remoteMode='pick'; }catch(e4){}
+  }catch(e){}
+}
+try{ window.__cancelCtrlPick=function(){ cancelCtrlPickState(); }; }catch(e){}
+/* 帧内 Esc：焦点在帧内时宿主收不到 Esc，按优先级处理（取消拾取 > 关闭就地改 > 关栈顶弹窗） */
+function remoteEscape(){
+  try{
+    if(CTRL_PICK&&CTRL_PICK.holding){ cancelCtrlPickState(); return; }
+    try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open){ inlineEditTryClose(); return; } }catch(e){}
+    if(window.MaskStack) window.MaskStack.esc();
+  }catch(e){}
+}
+try{ window.__onRemoteEscape=function(){ remoteEscape(); }; }catch(e){}
 /* 初始化：主窗口绑定 + iframe load 常驻绑定 + 滚动重绘 + 焦点丢失兜底 */
 bindCtrlInspectListeners(window);
+/* 沙箱跨域远端拾取调度（独立监听，bindCtrlInspectListeners 原样保留供门禁与同源兼容）：
+ * Ctrl 按下（无 Shift）→ 多选循环武装；Ctrl+Shift → 停循环、单发就地改武装；
+ * Ctrl 抬起 → 停循环并解除帧武装。循环内部以 holding 自检，表单焦点等情况自动空转退出。 */
+/* 沙箱跨域修饰键同步：焦点在帧内时宿主收不到键盘事件，帧侧 Agent 只上报
+ * Control/Meta/Shift 布尔态（绝不含内容按键，输入框聚焦时不上报），宿主据此驱动同一套状态机。
+ * 与宿主本地监听互斥无关：状态赋值幂等，循环/单发均有 remoteLoop/remoteMode 守卫防重入。 */
+function remoteCtrlStateChanged(st){
+  try{
+    if(window.__EXPORT_BOOT__===true)return;
+    if(!st||st.alt)return;
+    try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(e){}
+    var wantHold=!!(st.ctrlKey||st.metaKey), wantShift=!!st.shiftKey;
+    if(wantHold&&!CTRL_PICK.holding&&!wantShift){
+      CTRL_PICK.holding=true; CTRL_PICK.remoteMode='pick';
+      try{ CTRL_PICK.enter(); }catch(e2){}
+      try{ ctrlStartRemotePickLoop(); }catch(e3){}
+    }else if(wantHold&&wantShift&&CTRL_PICK.holding&&CTRL_PICK.remoteMode!=='inline'){
+      CTRL_PICK.remoteMode='inline';
+      try{ ctrlStopRemotePickLoop(); }catch(e4){}
+      try{ ctrlArmInlineOnce(); }catch(e5){}
+    }else if(!wantHold&&CTRL_PICK.holding){
+      CTRL_PICK.holding=false;
+      try{ CTRL_PICK.exit(); }catch(e6){}
+      try{ ctrlStopRemotePickLoop(); }catch(e7){}
+      try{ if(CTRL_PICK.selected.length>0)CTRL_PICK.openPanel(); }catch(e8){}
+    }else if(wantHold&&!wantShift&&CTRL_PICK.holding&&CTRL_PICK.remoteMode!=='pick'){
+      CTRL_PICK.remoteMode='pick';
+      try{ ctrlStartRemotePickLoop(); }catch(e9){}
+    }
+  }catch(e){}
+}
+try{ window.__onRemoteCtrlState=function(st){ remoteCtrlStateChanged(st); }; }catch(e){}
+try{
+if(!window.__ctrlRemoteDispatchBound){
+  window.__ctrlRemoteDispatchBound=true;
+  window.addEventListener('keydown', function(e){
+    try{
+      if(window.__EXPORT_BOOT__===true)return;
+      if(e.altKey)return;
+      var isCtrl=(e.key==='Control'||e.key==='Meta');
+      var withCtrl=(e.ctrlKey||e.metaKey);
+      if(isCtrl&&!e.shiftKey&&withCtrl){
+        try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e){}
+        CTRL_PICK.remoteMode='pick';
+        try{ ctrlStartRemotePickLoop(); }catch(_e2){}
+      }else if(e.key==='Shift'&&withCtrl){
+        try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e3){}
+        if(CTRL_PICK&&CTRL_PICK.holding){
+          CTRL_PICK.remoteMode='inline';
+          try{ ctrlStopRemotePickLoop(); }catch(_e4){}
+          try{ ctrlArmInlineOnce(); }catch(_e5){}
+        }
+      }
+    }catch(_e){}
+  }, true);
+  window.addEventListener('keyup', function(e){
+    try{
+      if(e.key==='Control'||e.key==='Meta'){
+        try{ CTRL_PICK.remoteMode='pick'; }catch(_e){}
+        try{ ctrlStopRemotePickLoop(); }catch(_e2){}
+      }else if(e.key==='Shift'&&(e.ctrlKey||e.metaKey)){
+        /* Shift 抬起但 Ctrl 仍按住：回到多选循环 */
+        try{
+          if(CTRL_PICK&&CTRL_PICK.holding&&!(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)){
+            CTRL_PICK.remoteMode='pick';
+            ctrlStartRemotePickLoop();
+          }
+        }catch(_e3){}
+      }
+    }catch(_e){}
+  }, true);
+}
+}catch(e){}
 if (frame) {
   frame.addEventListener('load', function() {
     if (window.LinkBind && typeof LinkBind.onFrameLoad === 'function') LinkBind.onFrameLoad();
@@ -974,7 +1254,13 @@ if (frame) {
     }
   });
 }
-window.addEventListener('blur', function(){ if(CTRL_PICK.holding){ CTRL_PICK.holding = false; CTRL_PICK.exit(); } });
+window.addEventListener('blur', function(){
+  var intoFrame=false;
+  try{ intoFrame=(typeof frame!=='undefined'&&frame&&document.activeElement===frame); }catch(e){}
+  if(intoFrame) return; /* 焦点进了原型帧：拾取会话保持（帧侧按键/点击接管），否则首次点入即被掐断 */
+  if(CTRL_PICK.holding){ CTRL_PICK.holding = false; CTRL_PICK.exit(); }
+  try{ ctrlStopRemotePickLoop(); }catch(e){}
+});
 setInterval(function(){ if(CTRL_PICK.holding && !(document.hasFocus())) { CTRL_PICK.holding = false; CTRL_PICK.exit(); } }, 300);
 
 /* 批量面板按钮与遮罩事件绑定 */
@@ -1000,7 +1286,9 @@ if(window.MaskStack && window.MaskStack.register){
 /* 导出全局队列访问接口 */
 window.editQueueGet = function(){ return EDIT_QUEUE; };
 window.editQueueAdd = editQueueAdd;
-window.setEditMode = setEditMode;
+/* Wave-B: window.setEditMode 导出已删除（零调用存根） */
+/* FIX: 经典<script>加载，移除ESM export(以window.CTRL_PICK/editQueue*为准) */
+function editQueueGetFn(){ return EDIT_QUEUE; }
 
 /* —— 打开页面自动加载默认预设目录 —— */
 loadGroups(); /* 虚拟分组数据（本地分类整理，不落盘沙箱） */

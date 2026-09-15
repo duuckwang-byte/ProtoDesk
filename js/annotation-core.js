@@ -1,4 +1,6 @@
 /* [js/annotation-core.js] 零污染 HTML 元素标注系统核心引擎（Sidecar 存储 + Robust Locator + 页面隔离 + 画布显示开关 + 双向联动） */
+/* FIX: 经典<script>加载，禁用ESM import(整文件罢工)。内联回退+window.Utils双保险。 */
+var escHtml = (typeof window !== 'undefined' && window.escHtml) || (typeof window !== 'undefined' && window.Utils && window.Utils.escHtml) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
 var AnnotationEngine = (function () {
   'use strict';
 
@@ -10,6 +12,10 @@ var AnnotationEngine = (function () {
   var mutationObserver = null;
   var annoBadgesVisible = true;
   var loadSeq=0; // P2-1 fix: 标注串台 NF-05 序号防旧回包覆盖
+  var currentAnnoRemoteInfo=null; /* 沙箱跨域远端元素信息 {label,text,tagName}，loadInspectorAnno(el=null) 时由检查器远端入口设置 */
+  function setInspectorRemoteInfo(info){
+    try{ currentAnnoRemoteInfo=(info&&typeof info==='object')?{ label:String(info.label||''), text:String(info.text||''), tagName:String(info.tagName||'') }:null; }catch(e){ currentAnnoRemoteInfo=null; }
+  }
 
   try {
     var storedVis = localStorage.getItem('proto_anno_visible');
@@ -99,7 +105,8 @@ var AnnotationEngine = (function () {
 
   function formatTime(d) {
     var date = d || new Date();
-    var pad = function (n) { return String(n).padStart(2, '0'); };
+    /* Wave-C/F: pad2 显式 import (_utilsPad2) 为准, window.Utils 仅作 stripped-classic 降级只读 */
+    var pad = (function(){ try { if (typeof _utilsPad2 === 'function') return _utilsPad2; } catch (e) {} try { if (typeof window!=='undefined'&&window.Utils&&window.Utils.pad2) return window.Utils.pad2; } catch (e2) {} return function (n) { return String(n).padStart(2, '0'); }; })();
     return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
   }
 
@@ -449,6 +456,14 @@ var AnnotationEngine = (function () {
         }
       } catch (e) {}
     }
+    /* 远端补位：跨域无 live el 时用帧回传信息 */
+    try{
+      if(currentAnnoRemoteInfo){
+        if(!snippet)snippet=String(currentAnnoRemoteInfo.text||'').slice(0,40);
+        if(!tagName)tagName=String(currentAnnoRemoteInfo.tagName||'').toUpperCase();
+        if(!elName)elName=String(currentAnnoRemoteInfo.label||currentAnnoRemoteInfo.text||'');
+      }
+    }catch(e){}
 
     var curHtml = (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || 'index.html';
     var pageParent = currentAnnoEl ? (currentAnnoEl.closest ? currentAnnoEl.closest('.page, [data-page], section[id^="page-"]') : null) : null;
@@ -845,7 +860,9 @@ var AnnotationEngine = (function () {
     if (btnClose) btnClose.onclick = closeAnnoMgr;
 
     var mask = $('annoMgrMask');
-    if (mask) mask.onclick = closeAnnoMgr;
+    /* 走 MaskStack 注册（点遮罩+Esc 双关闭；pop 会恢复注册态，多次开关不失效） */
+    if (mask && window.MaskStack && window.MaskStack.register) window.MaskStack.register('annoMgrMask','annoMgrDrawer', closeAnnoMgr);
+    else if (mask) mask.onclick = closeAnnoMgr;
   });
 
   return {
@@ -856,6 +873,7 @@ var AnnotationEngine = (function () {
     showAnnotationPopover: showAnnotationPopover,
     closeAnnoPopover: closeAnnoPopover,
     loadInspectorAnno: loadInspectorAnno,
+    setInspectorRemoteInfo: setInspectorRemoteInfo,
     saveCurrentAnno: saveCurrentAnno,
     deleteCurrentAnno: deleteCurrentAnno,
     deleteAnnoById: deleteAnnoById,
@@ -873,3 +891,6 @@ var AnnotationEngine = (function () {
     isAnnoVisible: function(){ return !!annoBadgesVisible; }
   };
 })();
+/* FIX: 经典<script>加载，移除ESM export(以window.AnnotationEngine为准，见下) */
+try { if (typeof window !== 'undefined') window.AnnotationEngine = window.AnnotationEngine || AnnotationEngine; } catch (e) {}
+/* 注: _AnnoStore 为显式依赖声明 (状态真相源迁移 Wave-D 全量切换; 本波保持经典 window 互操作, 避免门禁破裂)。 */

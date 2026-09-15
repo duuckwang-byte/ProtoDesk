@@ -2,6 +2,14 @@
 /* ═══════ 左侧源文件列表栏 ═══════
  列表项 = 沙箱原型文件夹（html + md）。全部以 srcdoc 注入 iframe；
  「新增原型」导入的文件先进沙箱再打开。 */
+/* Wave-C/F: ESM 显式依赖 (escHtml/showToast 经 utils 显式 import; Store/EventBus 显式 import;
+ * 帧侧 Agent 模板以 sandbox-agent.js 为准, 本地内嵌副本仅作 file:// 降级回退)。
+ * stripped-classic 降级: import 行剥离后裸调用回退 window 全局。 */
+/* FIX: 经典<script>加载，禁用ESM import(整文件罢工)。utils/store为type=module延迟执行，
+ * 经典脚本先行：escHtml/showToast用内联回退+window.Utils双保险；Store经window.Store只读
+ * (模块就绪后回写window，见store.js垫片)。_SbStore/_sbBus保留typeof守卫兼容(未定义时安全跳过)。 */
+var escHtml = (typeof window !== 'undefined' && window.escHtml) || (typeof window !== 'undefined' && window.Utils && window.Utils.escHtml) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+var showToast = (typeof window !== 'undefined' && window.showToast) || (typeof window !== 'undefined' && window.Utils && window.Utils.showToast) || function (msg) { try { if (typeof libStatus === 'function') { libStatus(msg); return; } } catch (e) {} try { alert(msg); } catch (e2) {} return null; };
 var sources = [];
 var currentSource = null;
 var currentProject = ''; /* 当前窗口进入的项目（一个窗口只展示一个项目） */
@@ -78,6 +86,9 @@ function setKind(k){
 
 function loadSource(src, keepPanels){
   currentSource = src;
+  /* Wave-C/F: 切换经 Store 版本化 (快照守卫的 ver 基准; Store 回写 window 保持经典互操作) */
+  try { if (typeof window !== 'undefined' && window.Store && window.Store.setCurrentSource) window.Store.setCurrentSource(src); } catch (e) {}
+  try { if (typeof _SbStore !== 'undefined' && _SbStore && _SbStore.setCurrentSource && (typeof window === 'undefined' || !window.Store)) _SbStore.setCurrentSource(src); } catch (e2) {}
   // fix refresh preserve: preserve activeSubFile on preserve/quiet refresh
   if(src && keepPanels!=='preserve' && keepPanels!==true && window.__aiQuietRefresh!==true){ src.activeSubFile = src.mainHtmlFile || src.name; }
   if(window.LinkBind)LinkBind.closeInspector(); /* 切换原型：收起编辑浮窗与高亮 */
@@ -88,10 +99,11 @@ function loadSource(src, keepPanels){
   if(!src.pages){ src.pages = extractPages(src.content||''); }
   src.curPage = src.curPage || ((src.pages&&src.pages[0])||'page-chat');
   if(src.method==='srcdoc'){
-    frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(src.content, { links: src._links||[], mode: false, from: src.displayName||src.name }) : src.content);
+    /* P0-A: 经受限协议封装后再注入，附加 iframe 侧桥接 Agent，不再允许同源直访 */
+    frame.setAttribute('srcdoc', sandboxSecureSrcdoc(src.content, { links: src._links||[], mode: false, from: src.displayName||src.name }));
   }else{
     /* 旧版恢复的 method:'src' 源：有内容时回退 srcdoc 注入，避免空白 */
-    if(src.content){ frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(src.content, { links: src._links||[], mode: false, from: src.displayName||src.name }) : src.content); }
+    if(src.content){ frame.setAttribute('srcdoc', sandboxSecureSrcdoc(src.content, { links: src._links||[], mode: false, from: src.displayName||src.name })); }
     else{ if(frame.hasAttribute('srcdoc')) frame.removeAttribute('srcdoc'); frame.setAttribute('src','about:blank'); }
   }
   document.title = '原型预览 · ' + src.displayName;
@@ -379,7 +391,8 @@ function loadSubPage(s, subFile){
     window.protoAPI.sandbox.readFile({ dir: s.sandboxDir, file: subFile }).then(function(r){
       var content = (r && r.ok) ? r.content : '';
       if(!content) content = '<!DOCTYPE html><html><body><h1>' + escHtml(subFile) + '</h1></body></html>';
-      frame.setAttribute('srcdoc', window.LinkBind ? LinkBind.wrapProtoHtml(content, { links: s._links||[], mode: false, from: subFile, dir: s.sandboxDir }) : content);
+      /* P0-A: 同 loadSource，经受限协议封装后再注入 */
+      frame.setAttribute('srcdoc', sandboxSecureSrcdoc(content, { links: s._links||[], mode: false, from: subFile, dir: s.sandboxDir }));
       document.title = '原型预览 · ' + s.displayName + ' / ' + subFile;
       if(locEl) locEl.textContent = s.displayName + ' / ' + subFile.replace(/\.html$/i, '');
       // fix refresh preserve: quiet refresh keeps panels
@@ -742,9 +755,13 @@ function isMainFile(file,s){ s=(typeof s!=='undefined'&&s!==null)?s:currentSourc
 function protoLabel(s,includeSub){ s=(typeof s!=='undefined'&&s!==null)?s:currentSource; if(includeSub===undefined)includeSub=true; if(!s)return '原型'; var base=friendlyName(s)||'原型'; if(!includeSub||isMainFile(curHtmlFile(s),s))return base; var sub=String(curHtmlFile(s)||'').replace(/\.(html?|md)$/i,''); return sub&&sub!==base?base+' / '+sub:base; }
 try{ window.curHtmlFile=curHtmlFile; window.protoLabel=protoLabel; window.isMainFile=isMainFile; }catch(e){}
 
-/* ═══════ Iframe 路由与子页面/跨目录跳转双向同步 ═══════ */
+/* ═══════ Iframe 路由与子页面/跨目录跳转双向同步 ═══════
+   P0-A: 沙箱化后宿主不可再同步读取 frame.location（不透明源会抛错）。
+   此函数仅作旧路径兼容保留；规范路由以受限协议 NAV_JUMP 消息为准（见下方桥接）。 */
 function onIframeNavigated(){
   try {
+    /* 沙箱不透明源下直接读 location 无意义，交由 NAV_JUMP 消息驱动 */
+    try { if(frame && frame.hasAttribute && frame.hasAttribute('sandbox')){ return; } }catch(_e){}
     if(!frame || !frame.contentWindow || !frame.contentWindow.location) return;
     var loc = frame.contentWindow.location;
     var pathname = decodeURIComponent(loc.pathname || '');
@@ -809,3 +826,364 @@ if(frame){
     setTimeout(onIframeNavigated, 60);
   });
 }
+
+/** ═══════ P0-A 安全沙箱桥接（宿主侧） ═══════
+   目标：iframe 已配 sandbox="allow-scripts allow-forms"（无 allow-same-origin），
+   原型脚本与宿主不同源，window.parent.protoAPI 不可达，全部拾取/跳转/打戳走受限协议。
+   协议白名单 + nonce 回放绑定 + 1MB 载荷上限 + 来源与 origin 双校验。
+   旧 LinkBind 的 proto-link / proto-link-stale / proto-mode / proto-goto 仍由 LinkBind
+   自身监听处理，本桥仅处理新规范类型，避免双重消费。
+   Wave-E 契约补记 (只加注释, 实现不变):
+   @typedef {Object} SandboxBridgeMsg {type:string, nonce:string, source:string, payload?:Object}
+   @typedef {string} BridgeDirection 'to-frame' (白名单 PICK_REQUEST/NAV_JUMP/STAMP_SET/proto-mode/proto-goto) | 'from-frame' (白名单 PICK_RESULT/NAV_JUMP/STAMP_SET/proto-link/proto-link-stale)
+   @param {SandboxBridgeMsg} msg postMessage 受限消息 (白名单+nonce+1MB, 否则丢弃)
+   @returns {string|null|Promise} sandboxSend* 返 nonce 或 null (超限/未白名单); sandboxRequestPick 返 Promise (15s 超时); 处理函数返布尔/空
+ */
+var SANDBOX_MAX_BYTES = 1048576;
+var SANDBOX_ALLOWED_FROM_FRAME = { PICK_RESULT: 1, PICK_MISS: 1, NAV_JUMP: 1, STAMP_SET: 1, CTRL_STATE: 1, HOVER: 1, ESCAPE: 1, 'proto-link': 1, 'proto-link-stale': 1 };
+var SANDBOX_ALLOWED_TO_FRAME = { PICK_REQUEST: 1, NAV_JUMP: 1, STAMP_SET: 1, DISARM: 1, 'proto-mode': 1, 'proto-goto': 1 };
+var __sandboxPending = {};
+function sandboxSafeScript(t){
+  try { if(typeof safeScript === 'function') return safeScript(t); }catch(e){}
+  return String(t || '').split('</scr' + 'ipt').join('<\\/scr' + 'ipt');
+}
+function sandboxMakeNonce(){
+  try { return Date.now().toString(36) + '_' + Math.floor(Math.random() * 2176782336).toString(36); }
+  catch(e){ return 'n_' + Date.now(); }
+}
+function sandboxPayloadBytes(o){
+  try { return String(JSON.stringify(o)).length; }catch(e){ return 99999999; }
+}
+function sandboxValidNonce(n){
+  return typeof n === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(n);
+}
+function sandboxIsTrustedFrameEvent(ev){
+  try {
+    if(!ev || !ev.source) return false;
+    var fw = null;
+    try { fw = (typeof frame !== 'undefined' && frame && frame.contentWindow) ? frame.contentWindow : null; }catch(e){}
+    if(!fw || ev.source !== fw) return false;
+    var org = ev.origin || '';
+    if(org === 'null' || org === '') return true;
+    try { if(typeof location !== 'undefined' && org === location.origin) return true; }catch(e2){}
+    return false;
+  }catch(e){ return false; }
+}
+function sandboxSendToFrame(type, payload){
+  try {
+    if(!SANDBOX_ALLOWED_TO_FRAME[type]) return null;
+    if(!frame || !frame.contentWindow) return null;
+    var nonce = sandboxMakeNonce();
+    var msg = { type: type, nonce: nonce, source: 'host', payload: (payload && typeof payload === 'object') ? payload : {} };
+    /* 兼容旧接收端：proto-mode / proto-goto 保持扁平字段 */
+    if(type === 'proto-mode'){ msg = { type: type, edit: !!(payload && payload.edit) }; }
+    if(type === 'proto-goto'){ msg = { type: type, page: String((payload && payload.page) || '').slice(0, 256) }; }
+    if(type === 'PICK_REQUEST' || type === 'NAV_JUMP' || type === 'STAMP_SET' || type === 'DISARM'){
+      msg.nonce = nonce;
+      msg.source = 'host';
+    }
+    if(sandboxPayloadBytes(msg) > SANDBOX_MAX_BYTES) return null;
+    try { frame.contentWindow.postMessage(msg, '*'); }catch(e){ return null; }
+    return nonce;
+  }catch(e){ return null; }
+}
+function sandboxRequestPick(timeoutMs){
+  try {
+    var nonce = sandboxMakeNonce();
+    var msg = { type: 'PICK_REQUEST', nonce: nonce, source: 'host', payload: {} };
+    if(sandboxPayloadBytes(msg) > SANDBOX_MAX_BYTES) return Promise.reject(new Error('payload too large'));
+    var to = (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 15000;
+    return new Promise(function(resolve, reject){
+      var timer = setTimeout(function(){
+        try { delete __sandboxPending[nonce]; }catch(e){}
+        reject(new Error('pick timeout'));
+      }, to);
+      __sandboxPending[nonce] = { kind: 'PICK', resolve: resolve, reject: reject, timer: timer };
+      try { frame.contentWindow.postMessage(msg, '*'); }
+      catch(e){ try{ clearTimeout(timer); }catch(e2){} try{ delete __sandboxPending[nonce]; }catch(e3){} reject(e); }
+    });
+  }catch(e){ return Promise.reject(e); }
+}
+/* 解除帧侧拾取武装（松开 Ctrl / 切换就地改单发后调用，清除准星与残留 armedPick） */
+function sandboxSendDisarm(){
+  return sandboxSendToFrame('DISARM', {});
+}
+function sandboxSendNavJump(page){
+  var pg = String(page || '').slice(0, 256);
+  return sandboxSendToFrame('NAV_JUMP', { page: pg });
+}
+function sandboxSendStamp(plid, selector, page){
+  var id = String(plid || '').slice(0, 128).replace(/"/g, '');
+  var sel = String(selector || '').slice(0, 2000);
+  var pg = String(page || '').slice(0, 256);
+  if(!id || !sel) return null;
+  return sandboxSendToFrame('STAMP_SET', { plid: id, selector: sel, page: pg });
+}
+function sandboxHandleNavJumpMsg(d){
+  try {
+    var p = (d && d.payload && typeof d.payload === 'object') ? d.payload : d;
+    var targetProto = String((p && (p.targetProto || p.proto)) || '').slice(0, 120);
+    var targetPage = String((p && (p.targetPage || p.page)) || '').slice(0, 256);
+    if(!targetProto) return false;
+    var dest = null;
+    try {
+      for(var i = 0; i < sources.length; i++){
+        if(sources[i] && sources[i].displayName === targetProto){ dest = sources[i]; break; }
+      }
+    }catch(e){}
+    if(!dest){
+      try { if(typeof libStatus === 'function') libStatus('跳转失败：目标原型「' + targetProto + '」不存在，可能已被删除或重命名。'); }catch(e){}
+      return false;
+    }
+    try {
+      if(window.LinkBind && typeof LinkBind.performLink === 'function'){
+        LinkBind.performLink({ target: targetProto, targetPage: targetPage });
+        return true;
+      }
+    }catch(e){}
+    try {
+      if(typeof closeAllDrawers === 'function') closeAllDrawers();
+      else if(window.LinkBind && LinkBind.closeAllDrawers) LinkBind.closeAllDrawers();
+    }catch(e){}
+    try { loadSource(dest); }catch(e){ return false; }
+    if(targetPage){
+      setTimeout(function(){
+        try { sandboxSendNavJump(targetPage); }catch(e){}
+        try {
+          if(window.LinkBind && LinkBind.onFrameLoad) return;
+          if(frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'proto-goto', page: targetPage }, '*');
+        }catch(e2){}
+      }, 350);
+    }
+    return true;
+  }catch(e){ return false; }
+}
+function onSandboxFrameMessage(ev){
+  try {
+    if(!sandboxIsTrustedFrameEvent(ev)) return;
+    var d = ev.data;
+    if(!d || typeof d !== 'object') return;
+    var t = d.type;
+    if(!t || !SANDBOX_ALLOWED_FROM_FRAME[t]) return;
+    if(sandboxPayloadBytes(d) > SANDBOX_MAX_BYTES) return;
+    /* 旧类型交由 LinkBind 自身监听消费，本桥不重复处理 */
+    if(t === 'proto-link' || t === 'proto-link-stale') return;
+    /* 修饰键状态广播（帧内焦点时宿主收不到键盘事件）：只含 Control/Meta/Shift 布尔态，
+     * 绝不含内容按键；来源已校验（ev.source），免 nonce（广播非回执），载荷 1MB 上限内 */
+    if(t === 'CTRL_STATE'){
+      try{
+        var cpl = (d.payload && typeof d.payload === 'object') ? d.payload : {};
+        var cst = { key: String(cpl.key || ''), ctrlKey: !!cpl.ctrlKey, metaKey: !!cpl.metaKey, shiftKey: !!cpl.shiftKey, altKey: !!cpl.altKey };
+        if(typeof window !== 'undefined' && typeof window.__onRemoteCtrlState === 'function') window.__onRemoteCtrlState(cst);
+      }catch(e){}
+      return;
+    }
+    /* 未武装命中补偿：帧未武装但用户按住 Ctrl 点击（武装在途/帧重载等竞态），
+     * 宿主处于拾取态即收编，避免首次点击丢失；免 nonce（来源已校验） */
+    if(t === 'PICK_MISS'){
+      try{
+        var mpl = (d.payload && typeof d.payload === 'object') ? d.payload : {};
+        var mres = {
+          selector: String(mpl.selector || '').slice(0, 2000),
+          tagName: String(mpl.tagName || '').slice(0, 32),
+          text: String(mpl.text || '').slice(0, 500),
+          rect: (mpl.rect && typeof mpl.rect === 'object') ? mpl.rect : null,
+          page: String(mpl.page || '').slice(0, 256),
+          shift: !!mpl.shiftKey
+        };
+        if(mres.selector && typeof window !== 'undefined' && typeof window.__onRemotePickMiss === 'function') window.__onRemotePickMiss(mres);
+      }catch(e){}
+      return;
+    }
+    /* 帧内 Esc 转发：焦点在帧内时宿主收不到 Esc，统一经注册表处理（拾取取消/就地改关闭/栈顶弹窗） */
+    if(t === 'ESCAPE'){
+      try{
+        if(typeof window !== 'undefined' && typeof window.__onRemoteEscape === 'function') window.__onRemoteEscape();
+      }catch(e){}
+      return;
+    }
+    /* 帧内悬停：武装拾取期间元素变化时上报包围盒，宿主绘高亮框（节流：仅变化时发送） */
+    if(t === 'HOVER'){
+      try{
+        var hpl = (d.payload && typeof d.payload === 'object') ? d.payload : {};
+        var hrect = (hpl.rect && typeof hpl.rect === 'object') ? hpl.rect : null;
+        if(typeof window !== 'undefined' && typeof window.__onRemoteHover === 'function') window.__onRemoteHover(hrect);
+      }catch(e){}
+      return;
+    }
+    if(!sandboxValidNonce(d.nonce)) return;
+    if(t === 'PICK_RESULT'){
+      var pend = __sandboxPending[d.nonce];
+      if(!pend || pend.kind !== 'PICK') return;
+      try { clearTimeout(pend.timer); }catch(e){}
+      try { delete __sandboxPending[d.nonce]; }catch(e2){}
+      try {
+        var pl = (d.payload && typeof d.payload === 'object') ? d.payload : {};
+        var sel = String(pl.selector || '').slice(0, 2000);
+        var tag = String(pl.tagName || '').slice(0, 32);
+        var txt = String(pl.text || '').slice(0, 500);
+        var pg = String(pl.page || '').slice(0, 256);
+        pend.resolve({ selector: sel, tagName: tag, text: txt, rect: (pl.rect && typeof pl.rect === 'object') ? pl.rect : null, page: pg, nonce: d.nonce });
+      }catch(e){ try{ pend.reject(e); }catch(e2){} }
+      return;
+    }
+    if(t === 'NAV_JUMP'){
+      sandboxHandleNavJumpMsg(d);
+      return;
+    }
+    if(t === 'STAMP_SET'){
+      /* 帧侧回执：若宿主曾登记同 nonce 等待则结算，否则忽略 */
+      var sp = __sandboxPending[d.nonce];
+      if(sp){
+        try { clearTimeout(sp.timer); }catch(e){}
+        try { delete __sandboxPending[d.nonce]; }catch(e2){}
+        try { sp.resolve({ ok: true, plid: String(d.plid || '').slice(0, 128) }); }catch(e3){}
+      }
+      return;
+    }
+  }catch(e){}
+}
+try {
+  if(!window.__sandboxBridgeBound){
+    window.addEventListener('message', onSandboxFrameMessage);
+    window.__sandboxBridgeBound = true;
+  }
+}catch(e){}
+function sandboxAgentSource(){
+  return [
+    '(function(){',
+    '  var ALLOW={PICK_REQUEST:1,NAV_JUMP:1,STAMP_SET:1,DISARM:1,"proto-mode":1,"proto-goto":1};',
+    '  var MAXB=1048576;',
+    '  function bytes(o){ try{ return String(JSON.stringify(o)).length; }catch(e){ return 99999999; } }',
+    '  function okNonce(n){ return typeof n==="string" && /^[A-Za-z0-9_-]{8,64}$/.test(n); }',
+    '  var armedPick=null;',
+    '  var lastHoverKey="@@";',
+    '  function inFormFocus(){ try{ var ae=document.activeElement; if(!ae) return false; var tg=""; try{ tg=String(ae.tagName||"").toUpperCase(); }catch(e){} if(tg==="INPUT"||tg==="TEXTAREA"||tg==="SELECT") return true; try{ if(ae.isContentEditable) return true; }catch(e2){} }catch(e3){} return false; }',
+    '  function sendCtrlState(ev){ try{ if(inFormFocus()) return; var k=""; try{ k=String(ev.key||""); }catch(e){} if(k!=="Control"&&k!=="Meta"&&k!=="Shift") return; var mm={type:"CTRL_STATE", source:"frame", payload:{key:k, ctrlKey:!!ev.ctrlKey, metaKey:!!ev.metaKey, shiftKey:!!ev.shiftKey, altKey:!!ev.altKey}}; if(bytes(mm) > MAXB) return; try{ window.parent.postMessage(mm, "*"); }catch(e2){} }catch(e3){} }',
+    '  function sendEscape(ev){ try{ var k=""; try{ k=String(ev.key||""); }catch(e){} if(k!=="Escape"&&k!=="Esc"&&ev.keyCode!==27) return; var mm={type:"ESCAPE", source:"frame", payload:{}}; if(bytes(mm) > MAXB) return; try{ window.parent.postMessage(mm, "*"); }catch(e2){} }catch(e3){} }',
+    '  function hoverKey(tt){ try{ var s=String(tt.tagName||""); var c=""; try{ c=String(tt.className||"").split(/\\s+/)[0]||""; }catch(e){} return s+"|"+c+"|"+(tt.id||""); }catch(e){} return ""; }',
+    '  function sendHover(rect){ try{ var mm={type:"HOVER", source:"frame", payload:{rect:rect}}; if(bytes(mm) > MAXB) return; try{ window.parent.postMessage(mm, "*"); }catch(e){} }catch(e2){} }',
+    '  function escCss(s, dv){ try{ if(dv && dv.CSS && dv.CSS.escape) return dv.CSS.escape(s); }catch(e){} return String(s).replace(/[^a-zA-Z0-9_-]/g, function(c){ return "\\\\"+c; }); }',
+    '  function makeSel(el){',
+    '    try{',
+    '      var d=el.ownerDocument;',
+    '      try{ var tid=el.getAttribute && el.getAttribute("data-testid"); if(tid && tid.length<64 && tid.indexOf(String.fromCharCode(34))<0){ var e1=escCss(tid, d.defaultView); try{ if(d.querySelectorAll("[data-testid=\\""+e1+"\\"]").length===1) return "[data-testid=\\""+e1+"\\"]"; }catch(e){} } }catch(e2){}',
+    '      if(el.id && d.getElementById(el.id)===el && !/^[0-9]/.test(el.id) && el.id.length<64){ return "#"+escCss(el.id, d.defaultView); }',
+    '      var chain=[], n=el;',
+    '      while(n && n.nodeType===1 && n!==d.body && n!==d.documentElement){ var tg=String(n.tagName||"").toLowerCase(); if(!tg) break; var seg=tg; try{ var c0=String(n.className||"").split(/\\s+/)[0]; if(c0) seg=tg+"."+escCss(c0, d.defaultView); }catch(e3){} chain.unshift(seg); n=n.parentElement; }',
+    '      for(var i=chain.length-1;i>=0;i--){ var cand=chain.slice(i).join(" > "); try{ if(d.querySelectorAll(cand).length===1) return cand; }catch(e4){} }',
+    '      var parts=[], m=el;',
+    '      while(m && m.nodeType===1 && m!==d.body && m!==d.documentElement){ var t2=String(m.tagName||"").toLowerCase(); if(!t2) break; var th=1, sib=m.previousElementSibling; while(sib){ try{ if(String(sib.tagName).toLowerCase()===t2) th++; }catch(e5){} sib=sib.previousElementSibling; } parts.unshift(t2+":nth-of-type("+th+")"); m=m.parentElement; }',
+    '      return parts.join(" > ");',
+    '    }catch(e){ return ""; }',
+    '  }',
+    '  window.addEventListener("message", function(ev){',
+    '    try{',
+    '      var dd=ev.data; if(!dd || typeof dd!=="object") return;',
+    '      if(ev.source !== window.parent) return;',
+    '      if(!ALLOW[dd.type]) return;',
+    '      if(bytes(dd) > MAXB) return;',
+    '      if((dd.type==="PICK_REQUEST"||dd.type==="NAV_JUMP"||dd.type==="STAMP_SET") && !okNonce(dd.nonce)) return;',
+    '      if(dd.type==="PICK_REQUEST"){ armedPick=dd.nonce; try{ lastHoverKey="@@"; }catch(ex){} try{ if(document.documentElement) document.documentElement.style.cursor="crosshair"; }catch(e){} }',
+    '      else if(dd.type==="DISARM"){ armedPick=null; try{ if(document.documentElement) document.documentElement.style.cursor=""; }catch(e){} }',
+    '      else if(dd.type==="NAV_JUMP"){ var pp=(dd.payload&&typeof dd.payload==="object")?dd.payload:dd; if(typeof pp.page==="string" && !pp.targetProto && !pp.proto){ var h=String(pp.page||"").slice(0,256); try{ location.hash=h; }catch(e2){} } }',
+    '      else if(dd.type==="STAMP_SET"){ var qp=(dd.payload&&typeof dd.payload==="object")?dd.payload:dd; if(qp && typeof qp.plid==="string" && typeof qp.selector==="string"){ var pid=String(qp.plid).slice(0,128).split(String.fromCharCode(34)).join(""); var ss=String(qp.selector).slice(0,2000); if(pid && ss){ try{ var all=document.querySelectorAll(ss); if(all && all.length===1){ try{ all[0].setAttribute("data-plink", pid); }catch(e3){} } }catch(e4){} try{ window.parent.postMessage({type:"STAMP_SET", nonce:dd.nonce, plid:pid, ok:true, source:"frame"}, "*"); }catch(e5){} } } }',
+    '    }catch(e){}',
+    '  });',
+    '  document.addEventListener("keydown", function(ev){ try{ sendCtrlState(ev); }catch(e){} try{ sendEscape(ev); }catch(e2){} }, true);',
+    '  document.addEventListener("keyup", function(ev){ try{ sendCtrlState(ev); }catch(e){} }, true);',
+    '  document.addEventListener("mousemove", function(ev){ try{ if(!armedPick) return; var tt=ev.target; if(!tt||tt.nodeType!==1) return; var tg=""; try{ tg=String(tt.tagName||"").toLowerCase(); }catch(e){} if(tg==="html"||tg==="body"||tg==="script"||tg==="style") return; var hk=hoverKey(tt); if(hk===lastHoverKey) return; lastHoverKey=hk; var rr=null; try{ var b=tt.getBoundingClientRect(); rr={left:b.left,top:b.top,width:b.width,height:b.height}; }catch(e2){} sendHover(rr); }catch(e3){} }, true);',
+    '  document.addEventListener("mouseleave", function(ev){ try{ lastHoverKey="@@"; if(!armedPick) return; sendHover(null); }catch(e){} }, true);',
+    '  document.addEventListener("click", function(ev){',
+    '    var missMode=false, missShift=false;',
+    '    if(!armedPick){ try{ var ck=false; try{ ck=!!(ev.ctrlKey||ev.metaKey); missShift=!!ev.shiftKey; }catch(e){} if(!ck) return; missMode=true; }catch(ex){ return; } }',
+    '    var tt=ev.target; if(!tt || tt.nodeType!==1) return;',
+    '    var tg2=""; try{ tg2=String(tt.tagName||"").toLowerCase(); }catch(e){}',
+    '    if(tg2==="html"||tg2==="body") return;',
+    '    try{ ev.preventDefault(); ev.stopPropagation(); }catch(e2){}',
+    '    var nn="";',
+    '    if(missMode){ nn=""; } else { nn=armedPick; armedPick=null; try{ if(document.documentElement) document.documentElement.style.cursor=""; }catch(e3){} }',
+    '    var s2=""; try{ s2=makeSel(tt); }catch(e4){}',
+    '    var tx=""; try{ tx=String(tt.textContent||"").trim().replace(/\\s+/g," ").slice(0,120); }catch(e5){}',
+    '    var rr=null; try{ var b=tt.getBoundingClientRect(); rr={left:b.left,top:b.top,width:b.width,height:b.height}; }catch(e6){}',
+    '    var hh=""; try{ hh=String((location.hash||"").replace(/^#/,"")).slice(0,256); }catch(e7){}',
+    '    var mm={type:(missMode?"PICK_MISS":"PICK_RESULT"), nonce:nn, source:"frame", payload:{selector:String(s2||"").slice(0,2000), tagName:String(tg2||"").slice(0,32), text:String(tx||"").slice(0,500), rect:rr, page:hh, shiftKey:!!missShift}};',
+    '    if(bytes(mm) > MAXB) return;',
+    '    try{ window.parent.postMessage(mm, "*"); }catch(e8){}',
+    '  }, true);',
+    '})();'
+  ].join('\n');
+}
+function sandboxInjectBridge(wrappedHtml){
+  try {
+    var html = String(wrappedHtml || '');
+    var tag = '<script data-sandbox-bridge>' + sandboxSafeScript(sandboxAgentSource()) + '</scr' + 'ipt>';
+    if(/<\/body\s*>/i.test(html)) return html.replace(/<\/body\s*>/i, tag + '</body>');
+    return html + tag;
+  }catch(e){
+    try { return String(wrappedHtml || ''); }catch(e2){ return ''; }
+  }
+}
+function sandboxSecureSrcdoc(rawHtml, opts){
+  try {
+    var base = rawHtml;
+    try { base = (window.LinkBind && typeof LinkBind.wrapProtoHtml === 'function') ? LinkBind.wrapProtoHtml(rawHtml, opts) : rawHtml; }catch(e){ base = rawHtml; }
+    return sandboxInjectBridge(base);
+  }catch(e){ return String(rawHtml || ''); }
+}
+function sandboxEnforceAttr(){
+  try {
+    if(typeof frame !== 'undefined' && frame && frame.setAttribute){
+      var cur = '';
+      try { cur = String(frame.getAttribute('sandbox') || ''); }catch(e){}
+      if(cur.indexOf('allow-scripts') < 0 || cur.indexOf('allow-same-origin') >= 0){
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms');
+      }
+    }
+  }catch(e){}
+}
+try { sandboxEnforceAttr(); }catch(e){}
+ /* Wave-C/F: ProtoSandboxBridge 转 ESM 显式导出 (经典 window 挂载保留为兼容别名; 1MB 上限+nonce 白名单不变) */
+const ProtoSandboxBridge = {
+  MAX_BYTES: (typeof SANDBOX_MAX_BYTES !== 'undefined' ? SANDBOX_MAX_BYTES : 1048576),
+  ALLOWED_FROM_FRAME: (typeof SANDBOX_ALLOWED_FROM_FRAME !== 'undefined' ? SANDBOX_ALLOWED_FROM_FRAME : null),
+  ALLOWED_TO_FRAME: (typeof SANDBOX_ALLOWED_TO_FRAME !== 'undefined' ? SANDBOX_ALLOWED_TO_FRAME : null),
+  makeNonce: sandboxMakeNonce,
+  sendToFrame: sandboxSendToFrame,
+  requestPick: sandboxRequestPick,
+  sendNavJump: sandboxSendNavJump,
+  sendStamp: sandboxSendStamp,
+  sendDisarm: sandboxSendDisarm,
+  isTrusted: sandboxIsTrustedFrameEvent,
+  handleNavJump: sandboxHandleNavJumpMsg,
+  secureSrcdoc: sandboxSecureSrcdoc,
+  injectBridge: sandboxInjectBridge,
+  enforceAttr: sandboxEnforceAttr
+};
+try {
+  window.ProtoSandboxBridge = ProtoSandboxBridge;
+  window.__sandboxBridge = window.ProtoSandboxBridge;
+}catch(e){}
+/* 帧侧 Agent 模板: 以 js/sandbox-agent.js 为准, 本地 sandboxAgentSource() 仅作 file:// 降级回退;
+ * ESM 下最佳努力同步 (失败静默, 不影响经典路径)。 */
+try {
+  if (typeof window !== 'undefined' && !window.__EXPORT_BOOT__) {
+    try {
+      const _ap = import('./sandbox-agent.js');
+      if (_ap && typeof _ap.then === 'function') {
+        _ap.then(function (m) {
+          try {
+            if (m && typeof m.sandboxAgentSource === 'function') {
+              const a = String(m.sandboxAgentSource() || '');
+              const b = String((typeof sandboxAgentSource === 'function' ? sandboxAgentSource() : '') || '');
+              if (a && a.length > 100 && Math.abs(a.length - b.length) > 0 && console && console.warn) {
+                try { console.warn('[sandbox] agent template drift: module=' + a.length + ' embedded=' + b.length); } catch (e) {}
+              }
+            }
+          } catch (e) {}
+        }).catch(function(){});
+      }
+    } catch (e) {}
+  }
+} catch (e2) {}
+/* FIX: 经典<script>加载，移除ESM export(以window.ProtoSandboxBridge为准，见上) */

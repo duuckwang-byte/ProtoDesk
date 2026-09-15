@@ -1,4 +1,13 @@
-// 一次性静态验证：对照 tests/ 用例断言逐项检查改后代码仍满足（环境无法跑 GUI 回归时的替代佐证）
+// Wave-E 加固版静态验证：对照 tests/ 用例断言逐项检查改后代码仍满足（环境无法跑 GUI 回归时的替代佐证）
+// 相对上一版改进（审计报告第四章第1节 static-verify 脆弱 → 消除误报，只做加法，原有门禁全部保留）：
+//   I1 stripJs/stripCss/stripHtmlComment: 残留类门禁（theme/gradient/shortcut/ghost）先剥离注释再扫，
+//      注释里提及“已移除 theme/渐变/快捷键”不再误报；真实代码残留仍能命中（注释外全文保留）。
+//   I2 ghost 门禁剥离字符串字面量：文档/提示文案里出现保留字不再误报，真实裸引用仍命中。
+//   I3 emoji 白名单擴充：保留“彩色 emoji 清零”红线，仅放行单色 UI 排版符（✔✓★☆○●◆◇■□▲△▶▷◁→←↑↓↔··…—– + 原有 ✕✎▾«＋▸）。
+//   I4 覆盖 Wave-C/F/G 新模块：emoji/ghost 同步扫描 js/store.js·event-bus.js·sandbox-agent.js·utils.js·main.js（ESM），
+//      经典 9 文件断言一行未动。
+//   I5 新增 Wave-E 契约门（E-前缀）：eslint.config.js / .prettierrc.json / JSDoc(@param/@returns/@typedef) / 72通道冻结。
+//      任一缺失即 STATIC_FAIL，但全部为“存在性”检查，不改业务逻辑。
 const fs = require('fs');
 const path = require('path');
 const fails = [];
@@ -8,6 +17,26 @@ const css = fs.readFileSync(path.join(__dirname, '..', 'app.css'), 'utf8');
 const js = {};
 for (const f of ['core-docs', 'nav-zoom', 'sandbox-core', 'project-ai-export', 'edit-entry', 'link-bind', 'icons', 'annotation-core', 'mask-manager']) {
   js[f] = fs.readFileSync(path.join(__dirname, '..', 'js', f + '.js'), 'utf8');
+}
+// I4: 新模块同步扫描（只用于 emoji/ghost/JS 契约门，不参与旧断言，避免行为漂移）
+const jsNew = {};
+for (const f of ['store', 'event-bus', 'sandbox-agent', 'utils', 'main']) {
+  try { jsNew[f] = fs.readFileSync(path.join(__dirname, '..', 'js', f + '.js'), 'utf8'); } catch (e) { jsNew[f] = ''; }
+}
+
+// ── Wave-E I1/I2 剥离 helpers（仅残留类门禁使用；存在性断言仍用原文，避免假阴性） ──
+function stripJs(s) {
+  let r = String(s || '');
+  r = r.replace(/\/\*[\s\S]*?\*\//g, '\n'); // 块注释（含 JSDoc）
+  r = r.replace(/(^|[^\:'"\\])\/\/[^\n]*/g, '$1'); // 行注释（字符串内 // 误伤可接受：红线扫描用）
+  return r;
+}
+function stripCss(s) {
+  return String(s || '').replace(/\/\*[\s\S]*?\*\//g, '\n');
+}
+function stripJsStrings(s) {
+  // 剥离单/双引号与模板字符串（保留代码标识符，文案误报消除）
+  return String(s || '').replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
 }
 
 // ── full-simulation.js 断言 ──
@@ -53,25 +82,34 @@ for (const tab of ['tabNavAi', 'tabNavModels', 'tabNavSandbox', 'tabNavAbout']) 
 for (const pane of ['paneSetAi', 'paneSetModels', 'paneSetSandbox', 'paneSetAbout']) {
   if (!new RegExp('id="' + pane + '"').test(html)) fails.push('settings: 设置 Pane 缺失 #' + pane);
 }
-// T4.3 用户决策：主题系统彻底剥离，此处翻转为零残留断言
-if (/themeAuto/.test(html) || /themeDark/.test(html)) fails.push('theme残留: 设置 radio 未清除');
-if (/function applyTheme/.test(js['project-ai-export'])) fails.push('theme残留: applyTheme 未剥离');
-if (/planb-theme/.test(js['project-ai-export'])) fails.push('theme残留: planb-theme 未剥离');
-if (/data-theme/.test(css)) fails.push('theme残留: css data-theme 未剥离');
-if (/prefers-color-scheme/.test(html) || /prefers-color-scheme/.test(js['project-ai-export']) || /prefers-color-scheme/.test(css)) fails.push('theme残留: prefers-color-scheme 未剥离');
+// T4.3 用户决策：主题系统彻底剥离，此处翻转为零残留断言（I1: 剥离注释后扫，注释提及不再误报）
+{
+  const htmlCode = String(html).replace(/<!--[\s\S]*?-->/g, '');
+  const paeCode = stripJs(js['project-ai-export']);
+  const cssCode = stripCss(css);
+  if (/themeAuto/.test(htmlCode) || /themeDark/.test(htmlCode)) fails.push('theme残留: 设置 radio 未清除');
+  if (/function applyTheme/.test(paeCode)) fails.push('theme残留: applyTheme 未剥离');
+  if (/planb-theme/.test(paeCode)) fails.push('theme残留: planb-theme 未剥离');
+  if (/data-theme/.test(cssCode)) fails.push('theme残留: css data-theme 未剥离');
+  if (/prefers-color-scheme/.test(htmlCode) || /prefers-color-scheme/.test(paeCode) || /prefers-color-scheme/.test(cssCode)) fails.push('theme残留: prefers-color-scheme 未剥离');
+}
 if (!/\.workbench-narrow-tip/.test(css)) fails.push('narrow: 窄屏提示样式缺失');
 if (!/id="workbenchNarrowTip"/.test(html)) fails.push('narrow: 窄屏提示元素缺失');
 if (!/height:40px/.test(css)) fails.push('header: 顶栏应为 40px');
-// 用户需求变更：全局 Ctrl+B / Ctrl+\ 快捷键已移除（不应存在全局 keydown 绑定）
-if (/keydown\b[\s\S]{0,200}ctrlKey/.test(js['sandbox-core'])) fails.push('shortcut: 不应存在 Ctrl 快捷键监听');
-// emoji 清零（HTML 与 JS，保留 ✕ 排版字符）
-const emojiRe = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{1F1E6}-\u{1F1FF}]/gu;
-for (const [name, content] of [['html', html], ...Object.entries(js)]) {
-  const m = (content.match(emojiRe) || []).filter(ch => !'✕✎▾«＋'.includes(ch));
-  if (m.length) fails.push('emoji 残留[' + name + ']: ' + m.join(''));
+// 用户需求变更：全局 Ctrl+B / Ctrl+\ 快捷键已移除（不应存在全局 keydown 绑定）（I1: 剥离注释后扫）
+if (/keydown\b[\s\S]{0,200}ctrlKey/.test(stripJs(js['sandbox-core']))) fails.push('shortcut: 不应存在 Ctrl 快捷键监听');
+// emoji 清零（HTML 与 JS，保留单色排版符；I3 白名单擴充，I4 新模块同步扫）
+{
+  const emojiRe = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{1F1E6}-\u{1F1FF}]/gu;
+  const allow = new Set(Array.from('✕✎▾«＋▸✔✓★☆○●◆◇■□▲△▶▷◁→←↑↓↔·…—–'));
+  const pools = [['html', html], ...Object.entries(js), ...Object.entries(jsNew).map(([k, v]) => ['js/' + k, v])];
+  for (const [name, content] of pools) {
+    const m = (String(content).match(emojiRe) || []).filter((ch) => !allow.has(ch));
+    if (m.length) fails.push('emoji 残留[' + name + ']: ' + m.join(''));
+  }
 }
-// 渐变清零
-if (/linear-gradient/.test(css)) fails.push('css 仍有 linear-gradient');
+// 渐变清零（I1: 剥离 CSS 注释后扫，注释说明不再误报）
+if (/linear-gradient/.test(stripCss(css))) fails.push('css 仍有 linear-gradient');
 
 // ── 模块一 Ctrl 即时拾取（01 开发规格）断言 ──
 const ee = js['edit-entry'];
@@ -109,10 +147,14 @@ if (/id="modeSeg"/.test(html) || /id="btnModePrev"/.test(html) || /id="btnModeEd
 if (!/btnSubmitEditEl\s*\)\s*btnSubmitEditEl\.style\.display=n\?'':'none'/.test(ee) && !/btnSubmitEditEl\.style\.display=n\?'':'none'/.test(ee)) fails.push('editbtn: 待提交按钮应按队列内容显隐缺失');
 if (!/id="btnSubmitEdit"/.test(html)) fails.push('editbtn: 待提交列表按钮缺失');
 
-// ── 幽灵变量零引用（未声明变量在 if 中直接抛 ReferenceError，会中断整文件加载致全部按钮失效） ──
-for (const [fname, content] of Object.entries(js)) {
-  const m = (content.match(/\b(sbFabEl|kindTagEl|btnPickCli|btnAutoCli|cliPathInfoEl|btnSelectRecModels|aiTargetPageTop|aiModelTop|btnResetDoc|editDrawerTipEl)\b/g) || []).filter((v, i, a) => a.indexOf(v) === i);
-  if (m.length) fails.push('ghostref[' + fname + ']: 幽灵变量残留 ' + m.join(','));
+// ── 幽灵变量零引用（I2: 剥离注释+字符串后扫，文案/注释提及不再误报，真实裸引用仍命中；I4 新模块同步扫） ──
+{
+  const allJs = Object.assign({}, js, jsNew);
+  for (const [fname, content] of Object.entries(allJs)) {
+    const code = stripJsStrings(stripJs(content));
+    const m = (code.match(/\b(sbFabEl|kindTagEl|btnPickCli|btnAutoCli|cliPathInfoEl|btnSelectRecModels|aiTargetPageTop|aiModelTop|btnResetDoc|editDrawerTipEl)\b/g) || []).filter((v, i, a) => a.indexOf(v) === i);
+    if (m.length) fails.push('ghostref[' + fname + ']: 幽灵变量残留 ' + m.join(','));
+  }
 }
 
 // ── 模型获取弹窗 + 全选移除 ──
@@ -140,5 +182,50 @@ if (/setTimeout\(fitPhone,120\)/.test(pae)) fails.push('sb: 仍在动画中途�
 if (!/transitionend/.test(pae)) fails.push('sb: 未监听 transitionend 收敛');
 if (!/\.sb-head,\.sb-list,\.sb-foot\{width:220px/.test(css)) fails.push('sb: 侧栏子容器宽度未固定 220px（将导致收起时文字换行挤压变形）');
 
-console.log(fails.length ? 'STATIC_FAIL:\n  ' + fails.join('\n  ') : 'STATIC_PASS: 全部静态约束校验通过（' + Object.keys(js).length + ' 个 JS + HTML + CSS）');
+// ── Wave-E 契约门（I5: 只做存在性加法，不改旧断言语义） ──
+{
+  // E1: ESLint flat config + Prettier 规则存在
+  let ecfg = '';
+  try { ecfg = fs.readFileSync(path.join(__dirname, '..', 'eslint.config.js'), 'utf8'); } catch (e) { ecfg = ''; }
+  if (!ecfg || !/no-eval/.test(ecfg) || !/no-new-func/.test(ecfg)) fails.push('E-eslint: eslint.config.js 缺失或缺少 no-eval/no-new-func 红线');
+  let prc = null;
+  try { prc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '.prettierrc.json'), 'utf8')); } catch (e) { prc = null; }
+  if (!prc || prc.singleQuote !== true) fails.push('E-prettier: .prettierrc.json 缺失或 singleQuote 非 true');
+  // E2: JSDoc 契约覆盖（重点文件必须含 /** + @param + @returns；契约源另需 @typedef）
+  const needJsdoc = ['preload.js', 'main/ipc-contract.js', 'main/controllers/git-controller.js', 'main/controllers/sandbox-controller.js', 'main/controllers/ai-controller.js', 'main/controllers/doc-controller.js', 'main/controllers/window-controller.js', 'main/services/ai-config-store.js', 'platform/env.js', 'runtimes/defs/factory.js', 'js/store.js', 'js/event-bus.js', 'js/sandbox-agent.js', 'js/utils.js'];
+  for (const rel of needJsdoc) {
+    let src = '';
+    try { src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); } catch (e) { src = ''; }
+    if (!src || !/\/\*\*/.test(src) || !/@param\b/.test(src) || !/@returns?\b/.test(src)) fails.push('E-jsdoc: 契约注释缺失 ' + rel);
+  }
+  for (const rel of ['main/ipc-contract.js', 'preload.js']) {
+    let src = '';
+    try { src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); } catch (e) { src = ''; }
+    if (!/@typedef/.test(src)) fails.push('E-jsdoc: 缺 @typedef ' + rel);
+  }
+  // E3: 72 通道冻结（controllers handle 去重 72 且与 contract 一致）
+  try {
+    const contract = require(path.join(__dirname, '..', 'main', 'ipc-contract.js'));
+    const want = (contract && contract.IPC_CHANNELS) || [];
+    if (!Array.isArray(want) || want.length !== 72) fails.push('E-ipc: contract 非 72（实际 ' + (want && want.length) + '）');
+    else {
+      const got = new Set();
+      const cdir = path.join(__dirname, '..', 'main', 'controllers');
+      for (const cf of fs.readdirSync(cdir)) {
+        if (!cf.endsWith('.js')) continue;
+        const src = fs.readFileSync(path.join(cdir, cf), 'utf8');
+        let m;
+        const re = /handle\('([^']+)'/g;
+        while ((m = re.exec(src))) got.add(m[1]);
+      }
+      if (got.size !== 72) fails.push('E-ipc: controllers 非 72（实际 ' + got.size + '）');
+      else {
+        const diff = contract.diffChannels(Array.from(got));
+        if (!diff.ok) fails.push('E-ipc: 冻结不一致 缺失:' + diff.missing.join(',') + ' 多余:' + diff.extra.join(','));
+      }
+    }
+  } catch (e) { fails.push('E-ipc: 冻结校验异常 ' + String((e && e.message) || e)); }
+}
+
+console.log(fails.length ? 'STATIC_FAIL:\n  ' + fails.join('\n  ') : 'STATIC_PASS: 全部静态约束校验通过（9 经典 JS + 5 新模块 + HTML + CSS + Wave-E 契约门）');
 process.exitCode = fails.length ? 1 : 0;

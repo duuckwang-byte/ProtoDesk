@@ -12,7 +12,7 @@ const rel = p => path.relative(ROOT, p).split(path.sep).join('/');
 // 1.读白名单
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const filesList = (((pkg || {}).build || {}).files || []);
-ok(Array.isArray(filesList) && filesList.length === 10, `白名单10条，实际${filesList.length}`);
+ok(Array.isArray(filesList) && filesList.length === 18, `白名单18条(12白+6bak排除，Wave-B新增main/**，UI规范新增design-specs/**)，实际${filesList.length}`);
 
 // 2.展开白名单 -> Set<rel>
 function walk(dir, out) {
@@ -25,6 +25,10 @@ function walk(dir, out) {
 const covered = new Set();
 for (const pat of filesList) {
   const n = String(pat).replace(/\\/g, '/');
+  if (n.startsWith('!')) {
+    ok(n.includes('.bak'), `排除项 ${n}`);
+    continue;
+  }
   if (n.endsWith('/**')) {
     const d = path.join(ROOT, n.slice(0, -3));
     if (fs.existsSync(d)) walk(d, covered);
@@ -77,18 +81,26 @@ const htmlCss = [...html.matchAll(/<link[^>]+href=["']([^"']+)["']/gi)].map(x =>
 const expSrc = fs.readFileSync(path.join(ROOT, 'js', 'project-ai-export.js'), 'utf8');
 const expM = expSrc.match(/var EXPORT_SCRIPT_FILES\s*=\s*(\[[^\]]*\])/);
 const expList = expM ? eval(expM[1]) : [];
-ok(htmlScripts.length === 9, `HTML script 9个，实际${htmlScripts.length}: ${htmlScripts.join(',')}`);
-ok(JSON.stringify(htmlScripts) === JSON.stringify(expList), 'EXPORT与HTML同序9/9');
+ok(htmlScripts.length === 18, `HTML script 18个(16经典+utils/store ESM, Wave-D/G域先于门面), 实际${htmlScripts.length}: ${htmlScripts.join(',')}`);
+ok(expList.length === 2 && expList[0] === 'js/icons.js' && expList[1] === 'js/export-template.js', `EXPORT轻量2项(icons+export-template, Wave-D/G解耦), 实际${JSON.stringify(expList)}`);
+ok(!expList.includes('js/core-docs.js') && !expList.includes('js/project-ai-export.js'), 'EXPORT不再内联开发巨石(core-docs/project-ai-export解耦)');
+ok(expSrc.includes('window.__EXPORT_BOOT__=true'), 'EXPORT保留__EXPORT_BOOT__兼容');
+ok(expSrc.includes('window.__EXPORT_SOURCES__'), 'EXPORT保留__EXPORT_SOURCES__数据注入');
 ok(htmlCss.includes('app.css'), 'HTML引用app.css');
 ok(/fetchText\(\s*['"]app\.css['"]\s*\)/.test(expSrc), 'fetchText加载app.css');
 for (const s of [...htmlScripts, ...htmlCss, ...expList]) ok(covered.has(s), `前端覆盖 ${s}`);
 ok(fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8').includes("win.loadFile('原型+文档.html')"), 'main.loadFile原型+文档.html');
 ok(covered.has('preload.js') && covered.has('原型+文档.html') && covered.has('toolPrompt.md'), 'preload/HTML/toolPrompt在包内');
+ok(covered.has('design-specs/ui-mobile.md') && covered.has('design-specs/ui-desktop.md'), 'UI规范种子在包内(随包分发到design-specs/)');
 
 // 5.违禁项不在白名单
 for (const bad of ['tests/**', '.devdata', '*.log', '桌面端/', '桌面端']) {
   const exact = filesList.some(p => String(p) === bad);
   ok(!exact, `违禁未进包: ${bad}`);
+}
+// 5b.bak 排除项必须在白名单(6条)
+for (const exc of ['!js/**/*.bak', '!runtimes/**/*.bak', '!providers/**/*.bak', '!platform/**/*.bak', '!git/**/*.bak', '!**/*.bak']) {
+  ok(filesList.includes(exc), `bak排除在包外: ${exc}`);
 }
 
 console.log(fails.length ? `\nPACK_FAIL: ${fails.length}项\n  ` + fails.join('\n  ') : '\nPACK_PASS: 0缺失，白名单覆盖全部运行时边');
