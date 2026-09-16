@@ -227,5 +227,29 @@ if (!/\.sb-head,\.sb-list,\.sb-foot\{width:220px/.test(css)) fails.push('sb: 侧
   } catch (e) { fails.push('E-ipc: 冻结校验异常 ' + String((e && e.message) || e)); }
 }
 
+// ── P0: Store 空值洗全局回归门（只做加法，不动原有断言） ──
+{
+  const paeSrc = js['project-ai-export'] || '';
+  const storeSrc = (jsNew && jsNew.store) || '';
+  // E-p0a: enterProject 必须写穿 Store（置全局后 guarded 调用 setCurrentProject）
+  const epIdx = paeSrc.indexOf('function enterProject');
+  const scIdx = paeSrc.indexOf('setCurrentProject', epIdx >= 0 ? epIdx : 0);
+  if (epIdx < 0 || scIdx < 0 || scIdx < epIdx) fails.push('E-p0a: enterProject 未写穿 Store.setCurrentProject');
+  else {
+    const seg = paeSrc.slice(epIdx, scIdx + 64);
+    if (!/window\.Store\.setCurrentProject/.test(seg)) fails.push('E-p0a: enterProject 未经 window.Store.setCurrentProject 写穿');
+  }
+  // E-p0b: syncWindow 绝不用 Store 空值覆盖 window 真值（_project 守卫 + _queue 空数组语义）
+  const swIdx = storeSrc.indexOf('function syncWindow');
+  const swSeg = swIdx >= 0 ? storeSrc.slice(swIdx, swIdx + 1600) : '';
+  if (!swSeg || !/if\s*\(\s*_project\s*\|\|/.test(swSeg) || !/!window\.currentProject/.test(swSeg)) fails.push('E-p0b: syncWindow 缺 _project 空值不覆盖守卫');
+  if (!swSeg || !/_queue\s*!==\s*undefined/.test(swSeg) || !/_queue\s*!==\s*null/.test(swSeg)) fails.push('E-p0b: syncWindow 缺 _queue 空数组语义守卫（仅 undefined/null 不覆盖）');
+  // E-p0c: 拾取看门狗不得在焦点位于原型帧内时退出（沙箱跨进程帧下 document.hasFocus 不可靠，误杀悬停框）
+  const eeSrc = js['edit-entry'] || '';
+  const wdIdx = eeSrc.indexOf('document.hasFocus');
+  const wdSeg = wdIdx >= 0 ? eeSrc.slice(Math.max(0, wdIdx - 600), wdIdx + 200) : '';
+  if (!wdSeg || !/activeElement\s*===\s*frame/.test(wdSeg)) fails.push('E-p0c: 拾取看门狗缺 intoFrame 守卫（焦点在帧内时不得 exit）');
+}
+
 console.log(fails.length ? 'STATIC_FAIL:\n  ' + fails.join('\n  ') : 'STATIC_PASS: 全部静态约束校验通过（9 经典 JS + 5 新模块 + HTML + CSS + Wave-E 契约门）');
 process.exitCode = fails.length ? 1 : 0;

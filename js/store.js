@@ -59,10 +59,12 @@ function syncWindow() {
   try {
     if (typeof window === 'undefined') return;
     // 回写兼容别名 (只读语义: 新代码以 Store 为准, 经典文件过渡期仍读 window)
-    try { window.currentProject = _project; } catch (e) {}
-    try { window.currentSource = _source; } catch (e) {}
-    try { window.sources = _sources; } catch (e) {}
-    try { window.EDIT_QUEUE = _queue; } catch (e) {}
+    // P0 加固: 绝不用 Store 里的空值覆盖 window 里的真值 (仅 Store 有值或 window 无值时回写;
+    // _queue 特例: [] 系合法清空必须同步, 仅 undefined/null 不覆盖)。
+    try { if (_project || !window.currentProject) window.currentProject = _project; } catch (e) {}
+    try { if (_source || !window.currentSource) window.currentSource = _source; } catch (e) {}
+    try { if ((_sources && _sources.length) || !window.sources || !window.sources.length) window.sources = _sources; } catch (e) {}
+    try { if (_queue !== undefined && _queue !== null) window.EDIT_QUEUE = _queue; else if (typeof window.EDIT_QUEUE === 'undefined') window.EDIT_QUEUE = _queue; } catch (e) {}
     try { window.Store = Store; } catch (e) {}
   } catch (e) {}
 }

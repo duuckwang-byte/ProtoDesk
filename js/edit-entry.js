@@ -82,6 +82,8 @@ var CTRL_PICK = {
         tagName: targetEl.tagName,
         text: extractElementText(targetEl) || (targetEl.innerText || targetEl.value || '').trim().slice(0, 30),
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        ancestors: (typeof editAncestorChain==='function'?editAncestorChain(targetEl):[]),
+        parentHtml: (typeof editParentSnippet==='function'?editParentSnippet(targetEl):''),
         el: targetEl
       });
     }
@@ -111,6 +113,8 @@ var CTRL_PICK = {
         rect: (res && res.rect && typeof res.rect === 'object') ? { left: res.rect.left || 0, top: res.rect.top || 0, width: res.rect.width || 0, height: res.rect.height || 0 } : null,
         page: pg,
         remote: true,
+        ancestors: (res && Array.isArray(res.ancestors)) ? res.ancestors.slice(0, 8) : [],
+        parentHtml: String((res && res.parentHtml) || '').slice(0, 2000),
         el: null
       });
     }
@@ -545,7 +549,7 @@ function inlineEditSilentRefresh(saved,file){
     try{ window.__aiQuietRefresh=true; }catch(e){}
     try{ if(saved){ window._refreshSavedSub=saved.sub||file||''; window._refreshSavedHash=saved.hash||''; } }catch(e2){}
     var needSub=saved&&saved.sub&&/\.html$/i.test(String(saved.sub));
-    if(typeof loadSandboxSources==='function'){ loadSandboxSources(needSub?saved.sub:undefined); }
+    if(typeof loadSandboxSources==='function'){ loadSandboxSources(needSub?saved.sub:undefined, true); }
     else if(typeof loadSubPage==='function'&&needSub&&typeof currentSource!=='undefined'&&currentSource){ try{ loadSubPage(currentSource,saved.sub); }catch(e){} try{ window.__aiQuietRefresh=false; }catch(e2){} }
     else if(typeof loadSource==='function'&&typeof currentSource!=='undefined'&&currentSource){ try{ loadSource(currentSource,'preserve'); }catch(e){} try{ window.__aiQuietRefresh=false; }catch(e2){} }
     else{ try{ window.__aiQuietRefresh=false; }catch(e){} }
@@ -756,6 +760,26 @@ function editDblClick(ev){
     try{ inlineEditOpen(t); }catch(e){ try{ inlineEditToast('就地改打开失败，请用Ctrl+拾取走AI队列。'); }catch(e2){} }
   }catch(e){ try{ inlineEditToast('就地改打开异常，请用Ctrl+拾取走AI队列。'); }catch(e2){} }
 }
+/* 层级链 + 父级代码片段（供提交大模型定位参考；SVG className 用 getAttribute 取，避免 [object]） */
+function editAncestorChain(el){
+  var out=[];
+  try{
+    var n=el?el.parentElement:null, d=0;
+    while(n&&n.nodeType===1&&d<8){
+      var tg=''; try{ tg=String(n.tagName||'').toLowerCase(); }catch(e){}
+      if(!tg||tg==='html') break;
+      var s=tg;
+      try{ var c0=String((n.getAttribute&&n.getAttribute('class'))||'').split(/\s+/)[0]||''; if(c0) s+='.'+c0; }catch(e2){}
+      try{ if(n.id) s+='#'+String(n.id).slice(0,64); }catch(e3){}
+      out.unshift(s); n=n.parentElement; d++;
+    }
+  }catch(e){}
+  return out;
+}
+function editParentSnippet(el){
+  try{ var p=el?el.parentElement:null; if(p&&p.outerHTML) return String(p.outerHTML).slice(0,2000); }catch(e){}
+  return '';
+}
 function editQueueCurHtmlFile(){ try{ if(typeof curHtmlFile==='function')return curHtmlFile(); }catch(e){} return (typeof currentSource!=='undefined'&&currentSource&&(currentSource.activeSubFile||currentSource.mainHtmlFile||currentSource.name))||''; }
 function editQueueAdd(el, text){
   el = el || EDIT_LOCKED_EL || EDIT_HOVER_EL;
@@ -770,7 +794,8 @@ function editQueueAdd(el, text){
     libStatus('已更新该元素原有的修改需求。');
   }else{
     EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(),
-      page:pg, selector:sel, label:editElementLabel(el), text:t, htmlFile:curHtml });
+      page:pg, selector:sel, label:editElementLabel(el), text:t, htmlFile:curHtml,
+      ancestors:(typeof editAncestorChain==='function'?editAncestorChain(el):[]), parentHtml:(typeof editParentSnippet==='function'?editParentSnippet(el):'') });
     libStatus('已加入待提交列表：'+EDIT_QUEUE.length+' 条（可点顶部「待提交列表」查看或提交）。');
   }
   updateEditBadge();
@@ -795,7 +820,8 @@ function editQueueAddRemote(info, text){
     libStatus('已更新该元素原有的修改需求。');
   }else{
     EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(),
-      page:pg, selector:sel, label:label, text:t, htmlFile:curHtml });
+      page:pg, selector:sel, label:label, text:t, htmlFile:curHtml,
+      ancestors:(info&&Array.isArray(info.ancestors))?info.ancestors.slice(0,8):[], parentHtml:String((info&&info.parentHtml)||'').slice(0,2000) });
     libStatus('已加入待提交列表：'+EDIT_QUEUE.length+' 条（可点顶部「待提交列表」查看或提交）。');
   }
   updateEditBadge();
@@ -979,17 +1005,49 @@ function editQueueSubmit(){
   var seen={}, htmlFiles=[];
   EDIT_QUEUE.forEach(function(it){ var f=effOf(it); if(!seen[f]){ seen[f]=1; htmlFiles.push(f); } });
   if(!htmlFiles.length&&mainFile)htmlFiles=[mainFile];
-  var parts=['以下是对原型「'+srcFull+'」的需求清单，共'+EDIT_QUEUE.length+'条，涉及文件'+htmlFiles.length+'个（'+htmlFiles.join('、')+'），请按清单逐项修改对应的 HTML 文件：',''];
-  EDIT_QUEUE.forEach(function(it,i){
-    parts.push('['+(i+1)+'] 所属文件：'+effOf(it)+' ｜ 页面：'+(it.page||'（首页）'));
-    parts.push('    元素选择器（CSS Selector，基于该文件该页面当前 DOM 结构生成）：'+it.selector);
-    parts.push('    元素：'+it.label);
-    parts.push('    修改需求：'+it.text);
+  /* 精简拼装：按文件+需求文本合并同类项（同一种改法只写一遍，选择器并列）；单文件单页省略页面行；
+   * 每条附层级链 + 父级代码片段（定位参考，截断，以磁盘文件为准） */
+  var groups=[];
+  EDIT_QUEUE.forEach(function(it){
+    var t=String(it.text||'').trim(), f=effOf(it);
+    var g=null;
+    for(var i=0;i<groups.length;i++){ if(groups[i].file===f&&groups[i].text===t){ g=groups[i]; break; } }
+    if(!g){ g={file:f, text:t, sels:[]}; groups.push(g); }
+    var sel=String(it.selector||''), dup=false;
+    for(var j=0;j<g.sels.length;j++){ if(g.sels[j].sel===sel){ dup=true; break; } }
+    if(!dup) g.sels.push({sel:sel, page:String(it.page||''), anc:it.ancestors, ph:it.parentHtml});
+  });
+  var showPage=isMulti;
+  if(!showPage){ for(var k=0;k<EDIT_QUEUE.length;k++){ if(String(EDIT_QUEUE[k].page||'')){ showPage=true; break; } } }
+  function ancLine(a){
+    if(!a||!a.length) return '';
+    var arr=[]; for(var i=0;i<a.length&&i<8;i++){ var s=String(a[i]||'').slice(0,128); if(s) arr.push(s); }
+    return arr.length?('层级：'+arr.join(' > ')):'';
+  }
+  function snippetOf(ph){
+    var s=String(ph||''); if(!s) return '';
+    if(s.length>1200) s=s.slice(0,1200)+'\n…（已截断，仅供定位参考）';
+    return s;
+  }
+  var parts=['改「'+srcFull+'」（共'+EDIT_QUEUE.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
+  var dparts=['改「'+srcFull+'」（共'+EDIT_QUEUE.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
+  groups.forEach(function(g,i){
+    var chips=g.sels.map(function(s){ return '`'+s.sel+'`'+((showPage&&s.page)?'（页面：'+s.page+'）':''); });
+    var head='['+(i+1)+'] 所属文件：'+g.file+' ｜ '+chips.join('、')+'：'+g.text;
+    parts.push(head);
+    dparts.push(head); /* 对话框只展示条目头，不展示层级与代码 */
+    g.sels.forEach(function(s){
+      var al=ancLine(s.anc);
+      if(al) parts.push('    - `'+s.sel+'` '+al);
+      var sn=snippetOf(s.ph);
+      if(sn) parts.push('      上级代码（定位参考，以磁盘文件为准）：\n      ```html\n      '+sn.split('\n').join('\n      ')+'\n      ```');
+    });
   });
   parts.push('','涉及文件清单（共'+htmlFiles.length+'个）：');
   htmlFiles.forEach(function(f){ parts.push(' - '+f); });
-  parts.push('','要求：在上述每个所属文件内的对应页面片段中定位这些元素（页面为单文件内路由切换时，选择器适用于对应 hash 页面的 DOM；跨文件时只在所属文件中找）；按「修改需求」直接修改元素的样式/结构/文案/交互；只改清单中的元素，其余保持原样；某元素在所属文件定位不到则在回复中说明并跳过，不要臆造修改、不要改其他文件。');
+  parts.push('','要求：只在所属文件中找，只改清单中的元素；定位不到就直说并跳过，别编、别碰别的文件。');
   var t=parts.join('\n');
+  var td=dparts.join('\n'); /* 对话框展示用简版（无层级/代码），发模型仍用完整 t */
   var count=EDIT_QUEUE.length;
   closeEditDrawer();
   /* G01: 提交前备份队列并持久化；失败不清空 - 仅成功提交后才清空 */
@@ -1004,6 +1062,7 @@ function editQueueSubmit(){
   try{
     openAiDesign();
     if(aiInputEl){ aiInputEl.value=t; }
+    try{ window.__aiUserMsgDisplay=td; }catch(e2){}
     aiDoSend();
     libStatus('已将 '+count+' 条修改需求提交给大模型，生成完成后自动刷新原型。');
   }catch(e){
@@ -1261,7 +1320,13 @@ window.addEventListener('blur', function(){
   if(CTRL_PICK.holding){ CTRL_PICK.holding = false; CTRL_PICK.exit(); }
   try{ ctrlStopRemotePickLoop(); }catch(e){}
 });
-setInterval(function(){ if(CTRL_PICK.holding && !(document.hasFocus())) { CTRL_PICK.holding = false; CTRL_PICK.exit(); } }, 300);
+setInterval(function(){
+  if(!CTRL_PICK.holding) return;
+  var intoFrame=false;
+  try{ intoFrame=(typeof frame!=='undefined'&&frame&&document.activeElement===frame); }catch(e){}
+  if(intoFrame) return; /* 焦点在原型帧内：保持拾取（沙箱跨进程帧下 document.hasFocus 不可靠，误杀悬停框） */
+  if(!(document.hasFocus())) { CTRL_PICK.holding = false; CTRL_PICK.exit(); }
+}, 300);
 
 /* 批量面板按钮与遮罩事件绑定 */
 var multiEditCloseEl = document.getElementById('multiEditClose');

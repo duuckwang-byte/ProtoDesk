@@ -84,6 +84,7 @@ function aiWorkDir(sandboxDir) {
 /* ═══════ AI 任务快照与恢复：每次 ai:ask 前整目录复制到
    %APPDATA%/原型工具/snapshots/<项目>/<原型>/<yyyyMMdd-HHmmss>/，
    每原型保留最近 10 份；恢复前先把当前状态存为 undo- 前缀快照防误恢复丢失 ═══════ */
+/* 历史遗留：早期曾统一清洗 -free 后缀，现 free 为独立模型不再调用，仅保留符号兼容（门禁锁名） */
 function stripFreeSuffix(s) {
   let v = String(s || '').trim();
   if (/[-_]free$/i.test(v)) v = v.replace(/[-_]free$/i, '').trim();
@@ -95,7 +96,7 @@ function normalizeCliModelIds(rawList) {
     let id = '';
     if (typeof m === 'string') id = m;
     else if (m && typeof m === 'object') id = m.id || m.name || m.model || '';
-    id = stripFreeSuffix(id);
+    id = String(id || '').trim();
     if (!id || id === 'default') return;
     if (/embed|tts\b|text-to-speech|stt\b|whisper|dall-?e|text-embedding|image-?gen/i.test(id)) return;
     if (id.length > 128 || /\s/.test(id)) return;
@@ -287,7 +288,7 @@ async function aiModelsImpl(ev, hint) {
   const pushM = (m) => {
     const id0 = String((m && m.id) || '').trim();
     if (!id0) return;
-    const id = stripFreeSuffix(id0);
+    const id = id0; /* free 独立模型：按全 id 去重，不再合并 */
     if (!id || seenIds.has(id)) return;
     seenIds.add(id);
     merged.push({ id, label: String((m && m.label) || id) });
@@ -295,7 +296,7 @@ async function aiModelsImpl(ev, hint) {
   fms.forEach(pushM);
   (Array.isArray(dynItems) ? dynItems : []).forEach(pushM);
   (Array.isArray(cliCustoms) ? cliCustoms : []).forEach((id) => pushM({ id, label: id }));
-  const useList = merged.length ? merged : fms.map((m) => ({ id: stripFreeSuffix(m.id), label: m.label || m.id })).filter((m) => m.id);
+  const useList = merged.length ? merged : fms.map((m) => ({ id: String(m.id || '').trim(), label: m.label || m.id })).filter((m) => m.id);
   const byProv = {};
   useList.forEach((m) => {
     const id = String((m && m.id) || '').trim();
@@ -353,9 +354,8 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
   let resolvedBin = null;
   const rawModel = String(model || '').trim();
   let normModel = (!rawModel || rawModel === '__none__') ? '' : rawModel;
-  if (normModel.endsWith('-free')) normModel = normModel.slice(0, -5);
+  /* free 独立模型：原样透传，由服务商做免费路由 */
   let targetModel = normModel || String(aiCfg.model || '').trim() || 'default';
-  if (targetModel.endsWith('-free')) targetModel = targetModel.slice(0, -5);
   if (targetModel === '__none__') targetModel = 'default';
   // 严格区分：positional 参数 sessionId 代表 Agent 远端/CLI 会话标识（如 OpenCode 的 ses_...）
   // extraOpts.uiSessionId 代表前端 Tab 标识（s_...），严禁侵入底层执行选项 options.sessionId
@@ -436,6 +436,11 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
   } catch (e) {}
 
   const beforeSignature = sandboxStorage.getProtoFileSignature(cwd);
+  /* 功能说明 5.1/6.2：任务开始前除签名外再快照可diff文本内容（白名单+200KB上限+二进制跳过，失败回落无行数） */
+  let beforeContents = null;
+  try {
+    if (sandboxStorage.snapshotProtoFileContents) beforeContents = sandboxStorage.snapshotProtoFileContents(cwd);
+  } catch (e) { beforeContents = null; }
 
   function runAgentProcess(opts, isRetry = false) {
     return startAgentExecution({
@@ -447,7 +452,28 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
       handlers: {
         onThinking: (text) => emitAiEvent({ type: 'thinking', text: String((text && text.text) || text || '') }),
         onChunk: (text) => emitAiEvent({ type: 'chunk', text: String((text && text.text) || text || '') }),
-        onToolCall: (data) => emitAiEvent({ type: 'tool_call', ...data }),
+        onToolCall: (data) => {
+          try {
+            const d = (data && typeof data === 'object') ? data : {};
+            const part = (d.part && typeof d.part === 'object') ? d.part : null;
+            const state = (part && part.state && typeof part.state === 'object') ? part.state : null;
+            const input = (state && state.input != null) ? state.input : (d.input != null ? d.input : d.args);
+            const tool = d.tool || d.name || d.toolName || d.call || (part && part.tool) || '';
+            const flat = { ...d, type: 'tool_call', tool: String(tool || '') };
+            try {
+              const cand = (input && typeof input === 'object') ? input : null;
+              const f = (cand && (cand.path || cand.file || cand.filename || cand.filePath || cand.pattern))
+                || d.path || d.file || d.filename || d.filePath || '';
+              if (f && !flat.path && !flat.file) flat.path = String(f);
+              const cmd = (cand && (cand.command || cand.cmd)) || d.command || d.cmd || '';
+              if (cmd && !flat.command && !flat.cmd) flat.command = String(cmd);
+              if (cand && flat.args == null && flat.input == null) { try { flat.args = cand; } catch (e) {} }
+              else if (input != null && flat.args == null && flat.input == null) { try { flat.input = input; } catch (e) {} }
+            } catch (e) {}
+            try { const sid = d.sessionID || d.sessionId || d.session_id || (part && part.sessionID); if (sid && !flat.sessionID) flat.sessionID = String(sid); } catch (e) {}
+            emitAiEvent(flat);
+          } catch (e) { try { emitAiEvent({ ...(data || {}), type: 'tool_call' }); } catch (_) {} }
+        },
         onSession: (id) => {
           const sid = String((id && (id.sessionId || id.id || id.sessionID || id.session_id || id.session)) || (typeof id === 'string' ? id : '') || '');
           emitAiEvent({ type: 'session', id: sid, sessionId: sid });
@@ -475,10 +501,47 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
           let fileChanges = [];
           try {
             const afterSignature = sandboxStorage.getProtoFileSignature(cwd);
-            fileChanges = sandboxStorage.diffFileSignatures(beforeSignature, afterSignature);
+            try {
+              let afterContents = null;
+              try {
+                if (sandboxStorage.snapshotProtoFileContents) afterContents = sandboxStorage.snapshotProtoFileContents(cwd);
+              } catch (e) { afterContents = null; }
+              if (beforeContents instanceof Map && afterContents instanceof Map) {
+                fileChanges = sandboxStorage.diffFileSignatures(beforeSignature, afterSignature, beforeContents, afterContents);
+              } else {
+                fileChanges = sandboxStorage.diffFileSignatures(beforeSignature, afterSignature);
+              }
+            } catch (err2) {
+              try { fileChanges = sandboxStorage.diffFileSignatures(beforeSignature, afterSignature); }
+              catch (e) { fileChanges = []; }
+            }
           } catch (err) {
             fileChanges = [];
           }
+          /* AI执行流展示2.4：清洗+按path排序后发出，保证多编辑行回放确定性；
+             added/deleted缺失或非数字时只保留path+action（前端回落纯文件名），全程永不抛错 */
+          try {
+            if (Array.isArray(fileChanges)) {
+              const clean = [];
+              for (let i = 0; i < fileChanges.length; i++) {
+                try {
+                  const fc = fileChanges[i] || {};
+                  const p = String(fc.path || fc.file || fc.name || '');
+                  if (!p) continue;
+                  const item = { path: p, action: String(fc.action || 'modified') };
+                  const a = Number(fc.added);
+                  const d = Number(fc.deleted);
+                  if (fc.added != null && isFinite(a)) item.added = Math.max(0, Math.floor(a));
+                  if (fc.deleted != null && isFinite(d)) item.deleted = Math.max(0, Math.floor(d));
+                  clean.push(item);
+                } catch (e) {}
+              }
+              clean.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+              fileChanges = clean;
+            } else {
+              fileChanges = [];
+            }
+          } catch (e) { try { if (!Array.isArray(fileChanges)) fileChanges = []; } catch (ee) { fileChanges = []; } }
           try {
             emitAiEvent({
               type: 'done',

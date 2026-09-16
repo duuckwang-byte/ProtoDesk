@@ -654,7 +654,7 @@ var LinkBind = (function () {
           try{ window._refreshSavedHash = ''; }catch(e6){}
           try{ window.__aiQuietRefresh = true; }catch(e7){}
           if(typeof loadSandboxSources === 'function'){
-            loadSandboxSources(_rbf && /\.html$/i.test(String(_rbf)) ? _rbf : undefined);
+            loadSandboxSources(_rbf && /\.html$/i.test(String(_rbf)) ? _rbf : undefined, true);
           }
         }catch(e8){}
         try{ lbToast('已保存跳转，正在刷新原型…'); }catch(e9){}
@@ -747,12 +747,18 @@ var LinkBind = (function () {
     if (addBtn) {
       addBtn.onclick = function () {
         var textarea = $('liReqText');
-        if (!textarea || !inspectorEl) return;
+        if (!textarea) return;
         var text = (textarea.value || '').trim();
         if (!text) { alert('请先输入要调整的内容。'); return; }
-        /* 调用重构后的 editQueueAdd */
-        if (typeof editQueueAdd === 'function') {
+        /* 同源 live 元素优先；沙箱跨域远端拾取（inspectorEl恒为null）走 editQueueAddRemote，不依赖 live el */
+        if (inspectorEl && typeof editQueueAdd === 'function') {
           editQueueAdd(inspectorEl, text);
+        } else if (inspectorRemote && typeof editQueueAddRemote === 'function') {
+          editQueueAddRemote(inspectorRemote, text);
+        } else {
+          if (typeof lbToast === 'function') lbToast('未能定位目标元素，请重新拾取后再试。');
+          else alert('未能定位目标元素，请重新拾取后再试。');
+          return;
         }
         textarea.value = '';
       };

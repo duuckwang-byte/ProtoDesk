@@ -65,10 +65,27 @@ function createJsonEventStreamParser(eventParser) {
       return;
     }
 
-    // tool_use / tool_call / function_call
-    if (rawType.includes('tool') || rawType.includes('function_call') || obj.tool_use || obj.tool_call) {
+    // tool_use / tool_call / function_call（opencode 实测：{type:"tool_use", part:{type:"tool", tool, state:{input}}}）
+    const _part = (obj.part && typeof obj.part === 'object') ? obj.part : null;
+    const _isPartTool = _part && String(_part.type || '').toLowerCase() === 'tool';
+    if (rawType.includes('tool') || rawType.includes('function_call') || obj.tool_use || obj.tool_call || _isPartTool) {
       emitted = true;
-      try { handlers.onToolCall && handlers.onToolCall(obj); } catch (_) {}
+      try {
+        const norm = { ...obj };
+        try {
+          const st = (_part && _part.state && typeof _part.state === 'object') ? _part.state : null;
+          const inp = st && st.input != null ? st.input : (obj.input != null ? obj.input : obj.args);
+          if (norm.tool == null && norm.name == null && _part && _part.tool) norm.tool = String(_part.tool);
+          if ((norm.path == null && norm.file == null) && inp && typeof inp === 'object' && (inp.path || inp.file || inp.filename || inp.filePath || inp.pattern)) {
+            norm.path = String(inp.path || inp.file || inp.filename || inp.filePath || inp.pattern);
+          }
+          if (norm.command == null && norm.cmd == null && inp && typeof inp === 'object' && (inp.command || inp.cmd)) {
+            norm.command = String(inp.command || inp.cmd);
+          }
+          if (norm.args == null && norm.input == null && inp != null) norm.args = inp;
+        } catch (_) {}
+        handlers.onToolCall && handlers.onToolCall(norm);
+      } catch (_) {}
       return;
     }
 

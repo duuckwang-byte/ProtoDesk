@@ -89,7 +89,7 @@ var AiDomain = (function () {
       PrototypeService.create(api, { name: v.name, kind: kind, project: project }).then(function (r) {
         if (r && r.ok) {
           try { if (typeof libStatus === 'function') libStatus('已创建' + label + '原型沙箱：' + v.name + '（生成的文件将写入该文件夹）。'); } catch (e) {}
-          try { if (typeof loadSandboxSources === 'function') loadSandboxSources(v.name); } catch (e2) {}
+          try { if (typeof loadSandboxSources === 'function') loadSandboxSources(v.name, true); } catch (e2) {}
           try { emit('ai:prototype-created', { name: v.name, kind: kind, project: project }); } catch (e3) {}
           var hasAi = false;
           try { hasAi = !!ctx.hasAi; } catch (e) {}

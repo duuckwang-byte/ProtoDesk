@@ -1,10 +1,10 @@
 'use strict';
-// Iteration 5: 前端 UI 现代化升级与全链路割接 自动化集成与契约断言测试套件
+// Iteration 5: 前端 UI 现代化升级与全链路割接 自动化集成与契约断言测试套件（AI执行流展示-2.8/8章同步版）
 // 验证范围：
-// 1. 原型+文档.html DOM 容器契约与挂载点
-// 2. app.css 现代视觉体系与动效关键帧规则
-// 3. js/project-ai-export.js 核心函数与常量体系契约
-// 4. 前端交互仿真、连通性/模型拉取数据处理、Windows 路径安全、异常诊断与取消状态机
+// 1. 原型+文档.html DOM 容器契约与挂载点（含时间线动态生成函数表，审计卡已删）
+// 2. app.css 现代视觉体系与动效关键帧规则（含.i5-timeline系，审计死样式必须不存在）
+// 3. js/project-ai-export.js 核心函数与常量体系契约（含思考切分/动词映射/回放）
+// 4. 前端交互仿真、连通性/模型拉取数据处理、Windows 路径安全、异常诊断与取消状态机（含快照卡保留、审计不存在）
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -13,7 +13,7 @@ const path = require('node:path');
 console.log(`Platform: ${process.platform} arch=${process.arch}`);
 console.log(`Node: ${process.version} execPath=${process.execPath}`);
 
-const rootDir = path.resolve(__dirname, '..');
+const rootDir = 'D:\\文件\\工具\\原型工具-PlanD';
 const htmlPath = path.join(rootDir, '原型+文档.html');
 const cssPath = path.join(rootDir, 'app.css');
 const jsPath = path.join(rootDir, 'js', 'project-ai-export.js');
@@ -89,12 +89,19 @@ function test1_HtmlDomContract() {
   // T2.5: #aiI5Mounts 寄生节点已删，静态模板断言改为 JS 动态生成契约
   // 动态挂载点仅允许 #aiChatView，模板类名由 JS createElement 产生，不在 HTML 静态断言
   assert.ok(!/id=["']aiI5Mounts["']/.test(htmlContent), `[HTML契约失败] #aiI5Mounts 寄生节点应已删除`);
-  for (const fn of ['i5EnsureThinkBox', 'i5EnsureToolStream', 'i5AppendToolCall', 'i5AppendDiffAudit', 'i5AppendSnapshotCard', 'i5RenderErrorCard']) {
+  // 2.8 审计卡删除：i5AppendDiffAudit 必须不存在；保留 i5EnsureThinkBox（存在性锁）+ 时间线新函数
+  for (const fn of ['i5EnsureThinkBox', 'i5EnsureToolStream', 'i5AppendToolCall', 'i5AppendSnapshotCard', 'i5RenderErrorCard', 'i5SplitThink', 'i5VerbKind', 'i5VerbLabel', 'i5ReplayTimeline', 'i5ReplayV1', 'i5ThinkFlushPending', 'i5ExploreAdd', 'i5EditFinalize']) {
     assert.ok(
       new RegExp(`function\\s+${fn}\\b`).test(jsContent),
       `[JS契约失败] 缺失动态生成函数: ${fn}`
     );
   }
+  assert.ok(!/function\s+i5AppendDiffAudit\b/.test(jsContent), `[JS契约失败] i5AppendDiffAudit 定义应已彻底删除`);
+  assert.ok(!/i5AppendDiffAudit\s*\(/.test(jsContent), `[JS契约失败] i5AppendDiffAudit 调用应已彻底删除`);
+  // 完成总结卡下线：ai-op-card相关已从函数表删除；保留i5EnsureThinkBox存在性锁（存在+不调用，历史兼容）
+  assert.ok(!/ai-op-card/.test(jsContent), `[JS契约失败] ai-op-card 应已彻底删除（完成总结卡下线）`);
+  assert.ok(!/className\s*=\s*['"][^'"]*followup-chips/.test(jsContent), `[JS契约失败] 不得以className生成followup-chips（追问胶囊已删）`);
+  assert.ok(!/innerHTML[^;]*followup-chips/.test(jsContent), `[JS契约失败] 不得以innerHTML生成followup-chips`);
   assert.ok(/document\.createElement\(['"]div['"]\)[\s\S]*?thinking-box/.test(jsContent), `[JS契约失败] i5EnsureThinkBox 须 createElement thinking-box`);
   assert.ok(/document\.createElement\(['"]div['"]\)[\s\S]*?tool-execution-stream/.test(jsContent), `[JS契约失败] i5EnsureToolStream 须 createElement tool-execution-stream`);
 }
@@ -108,8 +115,6 @@ function test2_CssRulesContract() {
     '.thinking-pulse',
     '.tool-call-card',
     '.tool-status-tag.done',
-    '.file-changes-card',
-    '.btn-diff-view',
     '.snapshot-card',
     '.btn-rollback',
     '.btn-refresh-preview',
@@ -119,7 +124,32 @@ function test2_CssRulesContract() {
     '.stopping',
     '.stream-cursor',
     '.followup-chips',
-    '.test-status-badge'
+    '.test-status-badge',
+    '.i5-timeline',
+    '.i5-think-p',
+    '.i5-verb',
+    '.i5-count',
+    '.i5-cursor',
+    '.i5-edit-row',
+    '.i5-shell-row',
+    '.i5-chips',
+    '.i5-chip',
+    '.i5-add',
+    '.i5-tag-done',
+    '.i5-tag-fail',
+    // 原型原名类（视觉稿159行断言为准，旧.i5-*仅兼容保留）
+    '.exp',
+    '.exp-files',
+    '.think-p',
+    '.edit-row',
+    '.shell-row',
+    '.tag',
+    '.answer',
+    '.msg-foot',
+    '.icon-btn',
+    '.cursor',
+    '.silence',
+    '.hist-meta'
   ];
 
   for (const cls of requiredCssClasses) {
@@ -128,6 +158,16 @@ function test2_CssRulesContract() {
       `[CSS契约失败] app.css 缺失 Iteration 5 样式规则: ${cls}`
     );
   }
+
+  // 2.8 审计死样式必须不存在
+  assert.ok(
+    !cssContent.includes('.file-changes-card'),
+    `[CSS契约失败] app.css 不应再含审计死样式 .file-changes-card`
+  );
+  assert.ok(
+    !cssContent.includes('.btn-diff-view'),
+    `[CSS契约失败] app.css 不应再含审计死样式 .btn-diff-view`
+  );
 
   // 验证关键动画关键帧
   assert.ok(
@@ -141,6 +181,59 @@ function test2_CssRulesContract() {
   assert.ok(
     /@keyframes\s+i5blink\b/.test(cssContent),
     `[CSS契约失败] app.css 缺失流式打字光标闪烁动效 @keyframes i5blink`
+  );
+  // 原型exact：0%,55%{opacity:1}56%,100%{opacity:0}（视觉稿57行断言为准）
+  assert.ok(
+    cssContent.replace(/\s+/g, '').includes('0%,55%{opacity:1}56%,100%{opacity:0}'),
+    `[CSS契约失败] @keyframes i5blink 必须exact 0%,55%{opacity:1}56%,100%{opacity:0}`
+  );
+  // 时间线光标复用 i5blink
+  assert.ok(
+    /\.i5-cursor\s*\{[^}]*i5blink/.test(cssContent),
+    `[CSS契约失败] .i5-cursor 必须复用 i5blink 闪烁动效`
+  );
+  // 原型光标steps(1)：.cursor + .i5-cursor均须steps(1)+i5blink
+  assert.ok(
+    /\.cursor\s*\{[^}]*i5blink/.test(cssContent),
+    `[CSS契约失败] 原型.cursor 必须复用 i5blink 闪烁动效`
+  );
+  assert.ok(
+    /\.cursor\s*\{[^}]*steps\(1\)/.test(cssContent),
+    `[CSS契约失败] 原型.cursor 必须steps(1)闪烁`
+  );
+  assert.ok(
+    /\.i5-cursor\s*\{[^}]*steps\(1\)/.test(cssContent),
+    `[CSS契约失败] .i5-cursor 必须steps(1)闪烁`
+  );
+  // 最终回复身份线：墨字+主色竖线，与灰字思考区分
+  assert.ok(
+    /\.answer\s*\{[^}]*border-left\s*:\s*3px\s+solid\s+var\(--pri\)/.test(cssContent),
+    `[CSS契约失败] .answer 必须有主色左侧竖线`
+  );
+  assert.ok(
+    /\.think-p\s*\{[^}]*color\s*:\s*var\(--faint\)/.test(cssContent),
+    `[CSS契约失败] .think-p 思考必须压灰`
+  );
+  // 对话区偏白 + 输入态白底/禁用灰底 + 底部整块浅灰 + 探索单行
+  assert.ok(
+    /\.ai-body\s*\{[^}]*background\s*:\s*var\(--panel\)/.test(cssContent),
+    `[CSS契约失败] .ai-body 对话区须偏白`
+  );
+  assert.ok(
+    /\.ai-input\[disabled\]\s*\{[^}]*background\s*:\s*#E2E8F0/.test(cssContent),
+    `[CSS契约失败] .ai-input 禁用须灰底`
+  );
+  assert.ok(
+    /\.ai-model\[disabled\]\s*\{[^}]*background\s*:\s*#E2E8F0/.test(cssContent),
+    `[CSS契约失败] .ai-model 禁用须灰底`
+  );
+  assert.ok(
+    /\.ai-foot\s*\{[^}]*background\s*:\s*#F1F5F9/.test(cssContent),
+    `[CSS契约失败] .ai-foot 底部整块须浅灰`
+  );
+  assert.ok(
+    /\.exp\s*\{[^}]*display\s*:\s*flex/.test(cssContent),
+    `[CSS契约失败] .exp 探索须单行flex`
   );
 
   // 验证停止生成态样式规则绑定
@@ -170,7 +263,6 @@ function test3_JsFunctionsAndConstantsContract() {
     'i5PickAgentPath',
     'i5AppendToolCall',
     'i5RenderErrorCard',
-    'i5AppendDiffAudit',
     'i5AppendSnapshotCard',
     'i5EnsureThinkBox',
     'i5EnsureToolStream',
@@ -179,7 +271,15 @@ function test3_JsFunctionsAndConstantsContract() {
     'i5ClassifyError',
     'i5RenderByokTest',
     'i5CancelAi',
-    'fetchProviderModels'
+    'fetchProviderModels',
+    'i5SplitThink',
+    'i5VerbKind',
+    'i5VerbLabel',
+    'i5ReplayTimeline',
+    'i5ReplayV1',
+    'i5ThinkFlushPending',
+    'i5ExploreAdd',
+    'i5EditFinalize'
   ];
 
   for (const fn of requiredFunctions) {
@@ -189,6 +289,12 @@ function test3_JsFunctionsAndConstantsContract() {
       `[JS契约失败] js/project-ai-export.js 缺失核心函数定义: function ${fn}`
     );
   }
+  // 2.8 审计函数必须不存在；完成总结卡ai-op-card相关已从函数表删除（保留i5EnsureThinkBox存在性锁）
+  assert.ok(!/function\s+i5AppendDiffAudit\b/.test(jsContent), `[JS契约失败] function i5AppendDiffAudit 应已彻底删除`);
+  assert.ok(!/i5AppendDiffAudit\s*\(/.test(jsContent), `[JS契约失败] i5AppendDiffAudit 调用应已彻底删除`);
+  assert.ok(!/ai-op-card/.test(jsContent), `[JS契约失败] ai-op-card 应已彻底删除（完成总结卡下线，函数表已删除该项）`);
+  assert.ok(!/className\s*=\s*['"][^'"]*followup-chips/.test(jsContent), `[JS契约失败] 不得以className生成followup-chips`);
+  assert.ok(!/innerHTML[^;]*followup-chips/.test(jsContent), `[JS契约失败] 不得以innerHTML生成followup-chips`);
 
   // 验证 Iteration 5 核心常量
   assert.ok(
@@ -211,11 +317,16 @@ function test3_JsFunctionsAndConstantsContract() {
 // 断言 4：前端交互运行时仿真与数据处理无未捕获异常
 // =========================================================================
 function test4_RuntimeSimulationAndBoundaryHandling() {
-  // 轻量 Mock DOM 元素实现
+  // 轻量 Mock DOM 元素实现（className 双向同步，支持时间线 i5-* 类查询）
   class MockElement {
     constructor(tagName = 'div') {
       this.tagName = String(tagName).toUpperCase();
-      this.className = '';
+      this._className = '';
+      const self0 = this;
+      Object.defineProperty(this, 'className', {
+        get() { return self0._className; },
+        set(v) { self0._className = String(v == null ? '' : v); self0.classList._set = new Set(self0._className.split(/\s+/).filter(Boolean)); }
+      });
       this.id = '';
       this.textContent = '';
       this.innerHTML = '';
@@ -229,6 +340,7 @@ function test4_RuntimeSimulationAndBoundaryHandling() {
       this.options = [];
       this.onclick = null;
       this.onchange = null;
+      this.nodeType = 1;
       const self = this;
       this.classList = {
         _set: new Set(),
@@ -236,7 +348,7 @@ function test4_RuntimeSimulationAndBoundaryHandling() {
           classes.forEach(c => {
             if (c) {
               self.classList._set.add(c);
-              self.className = Array.from(self.classList._set).join(' ');
+              self._className = Array.from(self.classList._set).join(' ');
             }
           });
         },
@@ -244,7 +356,7 @@ function test4_RuntimeSimulationAndBoundaryHandling() {
           classes.forEach(c => {
             if (c) {
               self.classList._set.delete(c);
-              self.className = Array.from(self.classList._set).join(' ');
+              self._className = Array.from(self.classList._set).join(' ');
             }
           });
         },
@@ -314,6 +426,16 @@ function test4_RuntimeSimulationAndBoundaryHandling() {
       }
       return results;
     }
+  }
+  function collectText(el) {
+    let s = String((el && el.textContent) || '') + ' ' + String((el && el.innerHTML) || '');
+    for (const ch of ((el && el.children) || [])) s += ' ' + collectText(ch);
+    return s;
+  }
+  function collectClass(el) {
+    let s = ' ' + String((el && el.className) || '');
+    for (const ch of ((el && el.children) || [])) s += collectClass(ch);
+    return s;
   }
 
   // 构造沙箱 DOM 环境与 UI 容器
@@ -452,21 +574,15 @@ function test4_RuntimeSimulationAndBoundaryHandling() {
   assert.strictEqual(foldBody.style.display, '', '点击横条后展开');
   assert.ok(foldBar.children[foldBar.children.length - 1].textContent.includes('收起'), '展开后横条变为收起');
 
-  // 4. 验证 Diff 审计卡片与快照卡片生成
+  // 4. 验证审计卡已删除 + 快照卡片生成（2.8，原型span结构兼容：只断言文本/类名，不锁div/span标签）
+  assert.ok(!/function\s+i5AppendDiffAudit\b/.test(jsContent), 'i5AppendDiffAudit 定义应已彻底删除');
+  assert.ok(!/i5AppendDiffAudit\s*\(/.test(jsContent), 'i5AppendDiffAudit 调用应已彻底删除');
+  assert.ok(!/ai-op-card/.test(jsContent), 'ai-op-card 定义应已彻底删除（完成总结卡下线）');
   const chatView = getEl('aiChatView');
   const subHelperSrc = (jsContent.match(/function\s+i5CurSubFile\s*\([\s\S]*?\n\}/) || [])[0] + '\n' + (jsContent.match(/function\s+i5SubFileRow\s*\([\s\S]*?\n\}/) || [])[0] + '\n';
-  const appendDiffMatch = jsContent.match(/function\s+i5AppendDiffAudit\s*\([\s\S]*?\n\}/);
   const appendSnapMatch = jsContent.match(/function\s+i5AppendSnapshotCard\s*\([\s\S]*?\n\}/);
-  assert.ok(appendDiffMatch, '提取 i5AppendDiffAudit 函数定义成功');
   assert.ok(appendSnapMatch, '提取 i5AppendSnapshotCard 函数定义成功');
   const escStub = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-  const runAppendDiff = (container, info) => {
-    const fn = new Function('container', 'filesInfo', 'document', 'aiChatView', 'escHtml',
-      subHelperSrc + appendDiffMatch[0] + '\nreturn i5AppendDiffAudit(container, filesInfo);'
-    );
-    return fn(container, info, mockDoc, chatView, escStub);
-  };
   const runAppendSnap = (container, info) => {
     const fn = new Function('container', 'snapInfo', 'document', 'aiChatView', 'escHtml',
       subHelperSrc + appendSnapMatch[0] + '\nreturn i5AppendSnapshotCard(container, snapInfo);'
@@ -474,17 +590,17 @@ function test4_RuntimeSimulationAndBoundaryHandling() {
     return fn(container, info, mockDoc, chatView, escStub);
   };
 
-  const diffCard = runAppendDiff(chatView, 'index.html (+28/-6)');
-  assert.ok(diffCard, '生成 Diff 审计卡片');
-  assert.strictEqual(diffCard.className, 'file-changes-card', 'Diff 卡片类名正确');
-  assert.ok(!diffCard.innerHTML.includes('查看 Diff') && !diffCard.innerHTML.includes('btn-diff-view'), 'Diff 卡片无查看 Diff 按钮');
-  assert.ok(diffCard.innerHTML.includes('变更') && diffCard.innerHTML.includes('index.html'), 'Diff 卡片含变更tag与文件名');
-
   const snapCard = runAppendSnap(chatView, '快照版本 #14 已生成');
   assert.ok(snapCard, '生成快照卡片');
   assert.strictEqual(snapCard.className, 'snapshot-card', '快照卡片类名正确');
-  assert.ok(snapCard.innerHTML.includes('一键回滚') && snapCard.innerHTML.includes('btn-rollback'), '快照卡片包含回滚操作');
-  assert.ok(!snapCard.innerHTML.includes('刷新预览') && !snapCard.innerHTML.includes('btn-refresh-preview'), '快照卡片无刷新预览、有回滚');
+  const snapTxt = collectText(snapCard);
+  const snapCls = collectClass(snapCard);
+  assert.ok(snapTxt.includes('一键回滚') && snapCls.includes('btn-rollback'), '快照卡片包含回滚操作');
+  // span结构兼容：snapshot-info/actions现为span，只断言类名/文本存在，不断言tagName
+  assert.ok(snapCard.querySelector('.snapshot-info'), '快照卡片含.snapshot-info（不锁标签）');
+  assert.ok(snapCard.querySelector('.snapshot-actions'), '快照卡片含.snapshot-actions（不锁标签）');
+  assert.ok(snapCard.querySelector('.btn-rollback'), '快照卡片含.btn-rollback（不锁标签）');
+  assert.ok(!snapTxt.includes('刷新预览') && !snapCls.includes('btn-refresh-preview'), '快照卡片无刷新预览、有回滚');
 
   // 5. 验证模型拉取数据处理的健壮性（去重、截断、空数据保护）
   const testGroupModels = [

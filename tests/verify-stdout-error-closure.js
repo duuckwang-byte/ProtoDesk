@@ -30,12 +30,12 @@ assert.strictEqual(diag.action, 'switch_model', '建议动作指定为 switch_mo
 assert.ok(!diag.message.includes('进程异常退出，请检查本地环境。'), '成功告别黑盒掩码文案');
 console.log('[PASS] 断言 2: 诊断器精准识别分类与友好动作建议通过');
 
-// 断言 3: 适配器防御性清洗过期 -free 后缀
+// 断言 3: free 独立模型原样透传（不再剥离后缀，由服务商做免费路由）
 const argsWithFree = opencodeDef.buildArgs('hi', [], [], { model: 'opencode/deepseek-v4-flash-free' }, {});
 const modelIdx = argsWithFree.indexOf('-m');
 assert.ok(modelIdx !== -1, '包含 -m 参数');
-assert.strictEqual(argsWithFree[modelIdx + 1], 'opencode/deepseek-v4-flash', '成功将 -free 后缀剥除');
-console.log('[PASS] 断言 3: 模型参数自动兼容降级通过');
+assert.strictEqual(argsWithFree[modelIdx + 1], 'opencode/deepseek-v4-flash-free', 'free后缀须原样透传');
+console.log('[PASS] 断言 3: free模型参数原样透传通过');
 
 // 断言 4: default 模型缺省不追加 -m 参数
 const argsDefault = opencodeDef.buildArgs('hi', [], [], { model: 'default' }, {});

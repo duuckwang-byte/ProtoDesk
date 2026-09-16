@@ -1,6 +1,6 @@
 'use strict';
 // 模型显示管理与动态获取链路重构 自动化测试套件
-// 覆盖：自定义模型合并、动态探测与降级、空过滤防呆、-free清洗
+// 覆盖：自定义模型合并、动态探测与降级、空过滤防呆、free独立模型
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -28,7 +28,7 @@ const jsContent = fs.readFileSync(path.join(rootDir, 'js', 'project-ai-export.js
 const preloadContent = fs.readFileSync(path.join(rootDir, 'preload.js'), 'utf8');
 const opencodeDef = require(path.join(rootDir, 'runtimes', 'defs', 'opencode.js'));
 
-// 断言1：opencode def动态探测契约 + 解析器去-free/去噪/兼容多格式
+// 断言1：opencode def动态探测契约 + 解析器去噪/兼容多格式（free 为独立模型，不再合并）
 function test1_DefListModelsContract() {
   assert.ok(opencodeDef.listModels, 'opencode def应含listModels');
   assert.ok(Array.isArray(opencodeDef.listModels.args) && opencodeDef.listModels.args.length, 'listModels.args应为非空数组');
@@ -38,12 +38,12 @@ function test1_DefListModelsContract() {
   const fbIds = (opencodeDef.fallbackModels || []).map((m) => String(m.id || ''));
   assert.ok(!fbIds.some((id) => /-free$/i.test(id)), `fallbackModels不得含-free，实际${JSON.stringify(fbIds)}`);
   assert.ok((opencodeDef.fallbackModels || []).some((m) => m && m.default), 'fallbackModels应有default项');
-  // parse：纯文本行
-  const r1 = opencodeDef.listModels.parse('opencode/mimo-v2.5\nopencode/deepseek-v4-flash-free\n', '');
+  // parse：纯文本行（free 独立保留，与base并存）
+  const r1 = opencodeDef.listModels.parse('opencode/mimo-v2.5\nopencode/deepseek-v4-flash-free\nopencode/deepseek-v4-flash\n', '');
   const ids1 = r1.map((m) => m.id);
   assert.ok(ids1.includes('opencode/mimo-v2.5'), `应保留mimo-v2.5，实际${JSON.stringify(ids1)}`);
-  assert.ok(ids1.includes('opencode/deepseek-v4-flash'), `应清洗-free为规范名，实际${JSON.stringify(ids1)}`);
-  assert.ok(!ids1.some((id) => /-free$/i.test(id)), `解析结果不得残留-free，实际${JSON.stringify(ids1)}`);
+  assert.ok(ids1.includes('opencode/deepseek-v4-flash-free'), `应保留free独立模型，实际${JSON.stringify(ids1)}`);
+  assert.ok(ids1.includes('opencode/deepseek-v4-flash'), `base与free应并存，实际${JSON.stringify(ids1)}`);
   // parse：{data:[]} 去重过滤
   const r2 = opencodeDef.listModels.parse(JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o' }, { id: 'whisper-1' }, { id: 'my-model' }] }), '');
   const ids2 = r2.map((m) => m.id);
@@ -106,15 +106,19 @@ function test3_FrontendAddModel() {
   assert.ok(/saveConfig/.test(code), '添加后应立即saveConfig物理落盘');
   assert.ok(/showToast/.test(code), '添加后应弹出成功Toast');
   assert.ok(/aiInvalidateModels/.test(code) && /aiLoadModels/.test(code), '添加后应刷新顶部下拉');
-  assert.ok(/replace\(\/\[-_\]free/.test(code), '添加时应清洗-free后缀');
+  assert.ok(!/\.replace\(\/\[-_\]free/.test(code), '添加时不得清洗-free后缀（free独立模型原样保留）');
 }
 
-// 断言4：空过滤防呆+废弃清洗+Agent联动
+// 断言4：空过滤防呆+free独立展示+Agent联动
 function test4_FilterFailsafe() {
   assert.ok(/function aiRenderModelOptions/.test(jsContent), '应存在aiRenderModelOptions');
-  assert.ok(/默认推荐模型 \(CLI 预设\)/.test(jsContent), '空兜底应为default推荐项，杜绝-free废弃项');
+  assert.ok(/默认推荐模型 \(CLI 预设\)/.test(jsContent), '空兜底应为default推荐项');
   assert.ok(!/deepseek-v4-flash-free/.test(jsContent), '前端不得残留deepseek-v4-flash-free废弃字符串');
-  assert.ok(/cleanId|stripFree|replace\(\/\[-_\]free/.test(jsContent), '渲染链路应有-free清洗');
+  const cleanSeg = jsContent.match(/var cleanId=function\(s\)\{[^}]*\}/);
+  assert.ok(cleanSeg && !/free/i.test(cleanSeg[0]), 'cleanId仅去空白，不得清洗-free后缀');
+  const intoSeg = jsContent.match(/function aiRenderModelOptionsInto[\s\S]*?\n\}/);
+  const stripDef = jsContent.match(/var stripFree=function\(id\)\{[^}]*\}/);
+  assert.ok(stripDef && !/\.replace\(/.test(stripDef[0]), 'stripFree不得再清洗后缀（仅原样返回）');
   assert.ok(/function i5SetMainAgent/.test(jsContent), '应存在i5SetMainAgent');
   const setMain = jsContent.match(/function i5SetMainAgent[\s\S]*?\n\}/);
   assert.ok(setMain && /aiInvalidateModels/.test(setMain[0]), '切换Agent应清空模型缓存');
@@ -124,7 +128,7 @@ function test4_FilterFailsafe() {
 function runAllAssertions() {
   let passed = 0; let failed = 0;
   const tests = [
-    ['断言1 def动态探测契约与解析器清洗', test1_DefListModelsContract],
+    ['断言1 def动态探测契约与解析器独立模型', test1_DefListModelsContract],
     ['断言2 主进程动态引擎与缓存融合', test2_MainDynamicEngine],
     ['断言3 前端添加全模式与即时落盘', test3_FrontendAddModel],
     ['断言4 空过滤防呆与Agent联动', test4_FilterFailsafe],

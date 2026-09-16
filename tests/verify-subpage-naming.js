@@ -47,6 +47,32 @@ function test3_SubmitHeaderConsistent() {
   assert.ok(/function effOf/.test(code), '缺effOf存量兼容');
 }
 
+// 断言5：精简拼装 + 层级/父级上下文（同文件同需求合并、单页省略页面行、防臆造保留）
+function test5_CondenseSubmit() {
+  const seg = ee.match(/function editQueueSubmit[\s\S]*?var t=parts\.join/);
+  assert.ok(seg, '缺editQueueSubmit拼装');
+  const code = seg[0];
+  assert.ok(/改「/.test(code) && /共'\+EDIT_QUEUE\.length\+'条/.test(code), '缺精简头改「/共N条');
+  assert.ok(/chips\.join\('、'\)/.test(code), '缺同需求合并选择器并列');
+  assert.ok(/showPage/.test(code), '缺单页省略页面行');
+  assert.ok(/层级：/.test(code), '缺层级链');
+  assert.ok(/上级代码/.test(code), '缺父级代码片段');
+  assert.ok(/定位不到就直说/.test(code), '缺防臆造约束');
+  // 入列携带：live 计算 + remote 透传
+  assert.ok(/ancestors:\(typeof editAncestorChain/.test(ee), 'toggle入列缺层级');
+  assert.ok(/ancestors:\(info&&Array\.isArray\(info\.ancestors\)\)/.test(ee), 'remote入列缺层级透传');
+  assert.ok(/parentHtml:String\(\(info&&info\.parentHtml\)/.test(ee), 'remote入列缺父级透传');
+  // 帧模板双副本：点击 payload 带 ancestors/parentHtml
+  const agent = fs.readFileSync(path.join(__dirname, '..', 'js', 'sandbox-agent.js'), 'utf8');
+  for (const [nm, src] of [['sandbox-core', ee2core()], ['sandbox-agent', agent]]) {
+    assert.ok(src.includes('ancestors:anc, parentHtml:ph'), nm + '帧模板点击payload缺层级/父级');
+  }
+  // 宿主白名单透传
+  const core = ee2core();
+  assert.ok(/pl\.ancestors/.test(core) && /pl\.parentHtml/.test(core), '宿主PICK_RESULT白名单缺透传');
+  assert.ok(/mpl\.ancestors/.test(core) && /mpl\.parentHtml/.test(core), '宿主PICK_MISS白名单缺透传');
+}
+function ee2core() { return fs.readFileSync(path.join(__dirname, '..', 'js', 'sandbox-core.js'), 'utf8'); }
 // 断言4：单文件原型零回归 + 规范同步
 function test4_SingleFileZeroRegression() {
   assert.ok(/isMulti/.test(ee), '缺isMulti单文件回退');
@@ -62,6 +88,7 @@ function runAllAssertions() {
     ['断言2 队列htmlFile落盘', test2_QueueHtmlFile],
     ['断言3 提交头与逐条文件一致', test3_SubmitHeaderConsistent],
     ['断言4 单文件原型零回归', test4_SingleFileZeroRegression],
+    ['断言5 精简拼装与层级父级', test5_CondenseSubmit],
   ];
   for (const [title, fn] of tests) {
     try { fn(); console.log(`[PASS] ${title}`); passed++; }

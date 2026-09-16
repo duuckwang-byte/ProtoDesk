@@ -323,7 +323,7 @@ function createSubPagePrompt(s){
       window.protoAPI.sandbox.createSubPage({ dir: s.sandboxDir, name: nm, kind: s.kind }).then(function(r){
         if(r&&r.ok){
           showToast('已创建子页面：' + r.file);
-          if(typeof loadSandboxSources==='function') loadSandboxSources(s.displayName);
+          if(typeof loadSandboxSources==='function') loadSandboxSources(s.displayName, true);
         } else {
           showToast('创建失败：' + ((r&&r.error)||'未知错误'));
         }
@@ -347,7 +347,7 @@ function renameSubPagePrompt(s, oldFile){
         if(r && r.ok){
           showToast('已重命名：' + oldName + ' → ' + nm);
           if(s.activeSubFile === oldFile) s.activeSubFile = r.newFile;
-          if(typeof loadSandboxSources === 'function') loadSandboxSources(s.displayName);
+          if(typeof loadSandboxSources === 'function') loadSandboxSources(s.displayName, true);
           setTimeout(function(){ loadSubPage(s, r.newFile); }, 200);
         } else {
           showToast('重命名失败：' + ((r && r.error) || '未知错误'));
@@ -365,7 +365,7 @@ function deleteSubPageConfirm(s, subFile){
       if(r&&r.ok){
         showToast('已删除子页面：' + subFile);
         if(s.activeSubFile === subFile) s.activeSubFile = '';
-        if(typeof loadSandboxSources==='function') loadSandboxSources(s.displayName);
+        if(typeof loadSandboxSources==='function') loadSandboxSources(s.displayName, true);
       } else {
         showToast('删除失败：' + ((r&&r.error)||'未知错误'));
       }
@@ -382,6 +382,7 @@ function loadSubPage(s, subFile){
     return;
   }
   currentSource = s;
+  try { if (typeof window !== 'undefined' && window.Store && typeof window.Store.setCurrentSource === 'function') window.Store.setCurrentSource(s); } catch (e) {}
   if(window.LinkBind) LinkBind.closeInspector();
   if(window.AnnotationEngine && typeof AnnotationEngine.closeAll === 'function') AnnotationEngine.closeAll();
   editHideHover();
@@ -687,7 +688,8 @@ function removeSource(s){
  var next=sources[idx]||sources[idx-1]||null;
  if(next){ loadSource(next); }
  else{
- currentSource=null; frame.removeAttribute('srcdoc');
+  currentSource=null; frame.removeAttribute('srcdoc');
+  try { if (typeof window !== 'undefined' && window.Store && typeof window.Store.setCurrentSource === 'function') window.Store.setCurrentSource(null); } catch (e) {}
  document.title='原型预览 · 投融资录入工作流';
  applyKind(); renderSourceList();
  }
@@ -708,7 +710,7 @@ function deleteSource(s){
    try{ localStorage.removeItem('ai_hist_'+encodeURIComponent(s.sandboxDir)); }catch(e){}
    delete groupsData.map[groupKeyOf(s)]; saveGroups(); /* 虚拟分组同步清理 */
    libStatus('已删除原型：'+nm+'（文件夹与文件已删除）。');
-   loadSandboxSources();
+   loadSandboxSources(undefined, true);
   });
 }
 
@@ -802,6 +804,7 @@ function onIframeNavigated(){
             var isMain = (targetFile.toLowerCase() === (s.mainHtmlFile||s.name||'').toLowerCase());
             if(s !== currentSource){
               currentSource = s;
+              try { if (typeof window !== 'undefined' && window.Store && typeof window.Store.setCurrentSource === 'function') window.Store.setCurrentSource(s); } catch (e) {}
               s.activeSubFile = targetFile;
               loadSourceDocs(s);
               applyKind(false);
@@ -989,7 +992,9 @@ function onSandboxFrameMessage(ev){
           text: String(mpl.text || '').slice(0, 500),
           rect: (mpl.rect && typeof mpl.rect === 'object') ? mpl.rect : null,
           page: String(mpl.page || '').slice(0, 256),
-          shift: !!mpl.shiftKey
+          shift: !!mpl.shiftKey,
+          ancestors: (function(){ var o=[]; try{ var a=mpl.ancestors; if(Array.isArray(a)){ for(var i=0;i<a.length&&i<8;i++) o.push(String(a[i]||'').slice(0,128)); } }catch(e){} return o; })(),
+          parentHtml: String(mpl.parentHtml || '').slice(0, 2000)
         };
         if(mres.selector && typeof window !== 'undefined' && typeof window.__onRemotePickMiss === 'function') window.__onRemotePickMiss(mres);
       }catch(e){}
@@ -1017,13 +1022,15 @@ function onSandboxFrameMessage(ev){
       if(!pend || pend.kind !== 'PICK') return;
       try { clearTimeout(pend.timer); }catch(e){}
       try { delete __sandboxPending[d.nonce]; }catch(e2){}
-      try {
-        var pl = (d.payload && typeof d.payload === 'object') ? d.payload : {};
-        var sel = String(pl.selector || '').slice(0, 2000);
-        var tag = String(pl.tagName || '').slice(0, 32);
-        var txt = String(pl.text || '').slice(0, 500);
-        var pg = String(pl.page || '').slice(0, 256);
-        pend.resolve({ selector: sel, tagName: tag, text: txt, rect: (pl.rect && typeof pl.rect === 'object') ? pl.rect : null, page: pg, nonce: d.nonce });
+        try {
+          var pl = (d.payload && typeof d.payload === 'object') ? d.payload : {};
+          var sel = String(pl.selector || '').slice(0, 2000);
+          var tag = String(pl.tagName || '').slice(0, 32);
+          var txt = String(pl.text || '').slice(0, 500);
+          var pg = String(pl.page || '').slice(0, 256);
+          var anc = []; try{ var pa=pl.ancestors; if(Array.isArray(pa)){ for(var ai=0;ai<pa.length&&ai<8;ai++) anc.push(String(pa[ai]||'').slice(0,128)); } }catch(e0){}
+          var ph = ''; try{ ph=String(pl.parentHtml||'').slice(0,2000); }catch(e1){}
+          pend.resolve({ selector: sel, tagName: tag, text: txt, rect: (pl.rect && typeof pl.rect === 'object') ? pl.rect : null, page: pg, nonce: d.nonce, ancestors: anc, parentHtml: ph });
       }catch(e){ try{ pend.reject(e); }catch(e2){} }
       return;
     }
@@ -1107,7 +1114,9 @@ function sandboxAgentSource(){
     '    var tx=""; try{ tx=String(tt.textContent||"").trim().replace(/\\s+/g," ").slice(0,120); }catch(e5){}',
     '    var rr=null; try{ var b=tt.getBoundingClientRect(); rr={left:b.left,top:b.top,width:b.width,height:b.height}; }catch(e6){}',
     '    var hh=""; try{ hh=String((location.hash||"").replace(/^#/,"")).slice(0,256); }catch(e7){}',
-    '    var mm={type:(missMode?"PICK_MISS":"PICK_RESULT"), nonce:nn, source:"frame", payload:{selector:String(s2||"").slice(0,2000), tagName:String(tg2||"").slice(0,32), text:String(tx||"").slice(0,500), rect:rr, page:hh, shiftKey:!!missShift}};',
+    '    var anc=[]; try{ var _an=tt.parentElement, _ad=0; while(_an && _an.nodeType===1 && _ad<8){ var _at=""; try{ _at=String(_an.tagName||"").toLowerCase(); }catch(ex){} if(!_at||_at==="html") break; var _as=_at; try{ var _ac=""; try{ _ac=String((_an.getAttribute&&_an.getAttribute("class"))||"").split(/\\s+/)[0]||""; }catch(ex2){} if(_ac) _as+="."+_ac; }catch(ex3){} try{ if(_an.id) _as+="#"+String(_an.id).slice(0,64); }catch(ex4){} anc.unshift(_as); _an=_an.parentElement; _ad++; } }catch(e9){}',
+    '    var ph=""; try{ var _pe=tt.parentElement; if(_pe&&_pe.outerHTML) ph=String(_pe.outerHTML).slice(0,2000); }catch(e10){}',
+    '    var mm={type:(missMode?"PICK_MISS":"PICK_RESULT"), nonce:nn, source:"frame", payload:{selector:String(s2||"").slice(0,2000), tagName:String(tg2||"").slice(0,32), text:String(tx||"").slice(0,500), rect:rr, page:hh, shiftKey:!!missShift, ancestors:anc, parentHtml:ph}};',
     '    if(bytes(mm) > MAXB) return;',
     '    try{ window.parent.postMessage(mm, "*"); }catch(e8){}',
     '  }, true);',

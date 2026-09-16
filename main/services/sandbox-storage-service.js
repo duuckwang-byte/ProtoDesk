@@ -15,10 +15,30 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('node:os');
-const { BrowserWindow, dialog } = require('electron');
+const { BrowserWindow, dialog, app } = require('electron');
 const shared = require('../state');
 const paths = require('../paths');
 const aiConfigStore = require('./ai-config-store');
+
+/* userData/exe 安全取值：Electron 主进程走 app.getPath；纯 Node 测试环境
+   require('electron') 仅返回路径字符串无 app 对象，回退到 paths 派生目录，保证不抛 ReferenceError/TypeError */
+function userDataDir() {
+  try { if (app && typeof app.getPath === 'function') return app.getPath('userData'); } catch (e) {}
+  try {
+    const el = require('electron');
+    if (el && el.app && typeof el.app.getPath === 'function') return el.app.getPath('userData');
+  } catch (e) {}
+  try { return path.dirname(paths.SANDBOX_ROOT); } catch (e) { return process.cwd(); }
+}
+function exeDir() {
+  try { if (app && typeof app.getPath === 'function') return path.dirname(app.getPath('exe')); } catch (e) {}
+  try {
+    const el = require('electron');
+    if (el && el.app && typeof el.app.getPath === 'function') return path.dirname(el.app.getPath('exe'));
+  } catch (e) {}
+  try { if (paths.pkgDir) return paths.pkgDir; } catch (e) {}
+  return process.cwd();
+}
 
 function ensureSandbox() {
   try {
@@ -38,8 +58,8 @@ function isFlatDir(dir) {
    - 所有旧扁平原型统一移入「默认项目」sandbox/默认项目/<名>/ */
 function normalizeProjects() {
   try {
-    if (fs.existsSync(path.join(app.getPath('userData'), paths.NORMALIZE_FLAG))) return;
-    if (!fs.existsSync(paths.SANDBOX_ROOT)) { try { fs.writeFileSync(path.join(app.getPath('userData'), paths.NORMALIZE_FLAG), '1'); } catch (e) {} return; }
+    if (fs.existsSync(path.join(userDataDir(), paths.NORMALIZE_FLAG))) return;
+    if (!fs.existsSync(paths.SANDBOX_ROOT)) { try { fs.writeFileSync(path.join(userDataDir(), paths.NORMALIZE_FLAG), '1'); } catch (e) {} return; }
     const top = fs.readdirSync(paths.SANDBOX_ROOT, { withFileTypes: true }).filter((d) => d.isDirectory() && !/^\./.test(d.name));
     let moved = 0;
     for (const d of top) {
@@ -50,7 +70,7 @@ function normalizeProjects() {
       if (fs.existsSync(dst)) continue;
       try { fs.mkdirSync(defProj, { recursive: true }); fs.renameSync(dir, dst); moved++; } catch (e) {}
     }
-    try { fs.writeFileSync(path.join(app.getPath('userData'), paths.NORMALIZE_FLAG), '1'); } catch (e) {}
+    try { fs.writeFileSync(path.join(userDataDir(), paths.NORMALIZE_FLAG), '1'); } catch (e) {}
     if (moved) libStatusSafe('已将沙箱整理为项目结构：' + moved + ' 个目录归入项目（旧数据兼容完成）。');
   } catch (e) {}
 }
@@ -59,15 +79,15 @@ function normalizeProjects() {
 function migrateLegacySandbox() {
   try {
     /* 用户曾选择「跳过」：写一次性标记，之后不再每次启动询问 */
-    const skipFlag = path.join(app.getPath('userData'), 'migrate-legacy-skip');
+    const skipFlag = path.join(userDataDir(), 'migrate-legacy-skip');
     if (fs.existsSync(skipFlag)) return;
-    const legacy = path.join(path.dirname(app.getPath('exe')), 'sandbox');
+    const legacy = path.join(exeDir(), 'sandbox');
     if (!fs.existsSync(legacy)) return;
     const fresh = !fs.existsSync(paths.SANDBOX_ROOT) || fs.readdirSync(paths.SANDBOX_ROOT).length === 0;
     if (!fresh) return;
     /* 旧 ai-config.json（CLI 手动指定等配置）一并迁移 */
-    const cfgOld = path.join(path.dirname(app.getPath('exe')), 'ai-config.json');
-    const cfgNew = path.join(app.getPath('userData'), 'ai-config.json');
+    const cfgOld = path.join(exeDir(), 'ai-config.json');
+    const cfgNew = path.join(userDataDir(), 'ai-config.json');
     if (fs.existsSync(cfgOld) && !fs.existsSync(cfgNew)) { try { fs.copyFileSync(cfgOld, cfgNew); } catch (e) {} }
     const r = dialog.showMessageBoxSync({
       type: 'question', buttons: ['迁移', '跳过'], defaultId: 0, cancelId: 1,
@@ -88,7 +108,7 @@ function migrateLegacySandbox() {
 function libStatusSafe(t) { try { console.log('[proto]', t); } catch (e) {} }
 
 /* ═══════ 本地日志：%APPDATA%/原型工具/logs/app-YYYYMMDD.log，启动清理 7 天前旧文件 ═══════ */
-function logsDir() { return path.join(app.getPath('userData'), 'logs'); }
+function logsDir() { return path.join(userDataDir(), 'logs'); }
 function cleanOldLogs() {
   try {
     const dir = logsDir();
@@ -580,7 +600,7 @@ function snapRootFor(dir) {
   const dn = path.normalize(String(dir || ''));
   if (!dn.startsWith(rootNorm + path.sep)) return null;
   const rel = dn.slice(rootNorm.length + 1); /* <项目>\<原型> */
-  return path.join(app.getPath('userData'), 'snapshots', rel);
+  return path.join(userDataDir(), 'snapshots', rel);
 }
 function listSnapshotDirs(snapRoot) {
   try {
@@ -648,30 +668,209 @@ function getProtoFileSignature(dirPath) {
   return sig;
 }
 
+/* ═══════ AI执行流 done.fileChanges 行级diff（功能说明 5.1/6.2）：任务前后快照做行级diff，不依赖git ═══════
+ * 沙箱文件不一定在 git 仓库，行数一律由任务前后内容快照逐行对比得出；任何失败回落为只有 {path,action}，永不抛错。
+ * 白名单仅覆盖常见文本扩展（html/md/js/css/json），单文件上限 200KB，含 NUL 字节按二进制跳过。 */
+const AI_DIFF_TEXT_EXTS = new Set(['.html', '.htm', '.md', '.js', '.css', '.json']);
+const AI_DIFF_MAX_BYTES = 200 * 1024;
+const AI_DIFF_LCS_CELL_LIMIT = 2500000;
+
+function isDiffableTextFile(relPath, size) {
+  try {
+    if (typeof size === 'number' && size > AI_DIFF_MAX_BYTES) return false;
+    const ext = path.extname(String(relPath || '')).toLowerCase();
+    return AI_DIFF_TEXT_EXTS.has(ext);
+  } catch (e) { return false; }
+}
+
+/**
+ * 快照原型目录内可diff文本文件的内容表（行级diff用，不依赖git）。
+ * @param {string} dirPath 沙箱目录（须在沙箱范围内，复用 validProtoDir/isSubPath 越权校验）
+ * @returns {Map<string,string>} 相对路径 -> UTF8文本内容（不可读/超限/二进制/非白名单扩展一律跳过，永不抛错）
+ */
+function snapshotProtoFileContents(dirPath) {
+  const out = new Map();
+  try {
+    if (!dirPath || !fs.existsSync(dirPath)) return out;
+    try {
+      const rootNorm = path.normalize(paths.SANDBOX_ROOT);
+      const dn = path.normalize(String(dirPath));
+      const inRoot = (dn === rootNorm) || dn.startsWith(rootNorm + path.sep);
+      if (!inRoot) return out;
+      if (dn !== rootNorm && typeof isSubPath === 'function' && !isSubPath(dn, paths.SANDBOX_ROOT)) return out;
+    } catch (e) { return out; }
+    const walk = (cur, relBase) => {
+      let entries = null;
+      try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch (e) { return; }
+      for (const entry of entries) {
+        try {
+          if (!entry || !entry.name || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+          const full = path.join(cur, entry.name);
+          const rel = path.join(relBase, entry.name).replace(/\\/g, '/');
+          if (entry.isDirectory()) { walk(full, rel); continue; }
+          if (!entry.isFile()) continue;
+          let st = null;
+          try { st = fs.statSync(full); } catch (e) { continue; }
+          if (!st || !st.isFile()) continue;
+          if (!isDiffableTextFile(rel, st.size)) continue;
+          let buf = null;
+          try { buf = fs.readFileSync(full); } catch (e) { continue; }
+          if (!buf || buf.length > AI_DIFF_MAX_BYTES) continue;
+          if (buf.indexOf(0) >= 0) continue;
+          let text = '';
+          try { text = buf.toString('utf8'); } catch (e) { continue; }
+          if (text.indexOf('\0') >= 0) continue;
+          out.set(rel, text);
+        } catch (e) {}
+      }
+    };
+    walk(path.normalize(String(dirPath)), '');
+  } catch (e) {}
+  return out;
+}
+
+/**
+ * 统计文本行数（空文件计 0，末尾换行不另计一行）。
+ * @param {string} text 文本内容
+ * @returns {number} 行数
+ */
+function countTextLines(text) {
+  try {
+    const s = String(text == null ? '' : text);
+    if (!s) return 0;
+    const parts = s.split(/\r?\n/);
+    if (parts.length && parts[parts.length - 1] === '') parts.pop();
+    return parts.length;
+  } catch (e) { return 0; }
+}
+
+/**
+ * 两段文本的行级diff（前后公共前缀/后缀裁剪后，中段用 LCS 精确计算；中段过大回落整段替换估算）。
+ * @param {string} beforeText 修改前全文
+ * @param {string} afterText 修改后全文
+ * @returns {{added:number,deleted:number}} 新增行数/删除行数
+ */
+function diffTextLines(beforeText, afterText) {
+  let aLines = [];
+  let bLines = [];
+  try {
+    const a = String(beforeText == null ? '' : beforeText);
+    const b = String(afterText == null ? '' : afterText);
+    aLines = a ? a.split(/\r?\n/) : [];
+    bLines = b ? b.split(/\r?\n/) : [];
+    if (aLines.length && aLines[aLines.length - 1] === '') aLines.pop();
+    if (bLines.length && bLines[bLines.length - 1] === '') bLines.pop();
+  } catch (e) { return { added: 0, deleted: 0 }; }
+  let pre = 0;
+  while (pre < aLines.length && pre < bLines.length && aLines[pre] === bLines[pre]) pre++;
+  let suf = 0;
+  while (suf < (aLines.length - pre) && suf < (bLines.length - pre) && aLines[aLines.length - 1 - suf] === bLines[bLines.length - 1 - suf]) suf++;
+  const aMid = aLines.slice(pre, aLines.length - suf);
+  const bMid = bLines.slice(pre, bLines.length - suf);
+  if (!aMid.length) return { added: bMid.length, deleted: 0 };
+  if (!bMid.length) return { added: 0, deleted: aMid.length };
+  if ((aMid.length * bMid.length) > AI_DIFF_LCS_CELL_LIMIT) return { added: bMid.length, deleted: aMid.length };
+  let prev = new Uint32Array(bMid.length + 1);
+  let cur = new Uint32Array(bMid.length + 1);
+  for (let i = 1; i <= aMid.length; i++) {
+    cur[0] = 0;
+    const ai = aMid[i - 1];
+    for (let j = 1; j <= bMid.length; j++) {
+      if (ai === bMid[j - 1]) cur[j] = prev[j - 1] + 1;
+      else cur[j] = prev[j] >= cur[j - 1] ? prev[j] : cur[j - 1];
+    }
+    const tmp = prev; prev = cur; cur = tmp;
+  }
+  const lcs = prev[bMid.length];
+  return { added: bMid.length - lcs, deleted: aMid.length - lcs };
+}
+
+/**
+ * 两份内容快照的内容级diff（created=全部行added，deleted=全部行deleted，modified=行级diff）。
+ * @param {Map<string,string>} beforeContents 修改前内容表
+ * @param {Map<string,string>} afterContents 修改后内容表
+ * @returns {Map<string,{added:number,deleted:number}>} 相对路径 -> 行数变化（永不抛错）
+ */
+function diffFileContents(beforeContents, afterContents) {
+  const out = new Map();
+  try {
+    const b = (beforeContents instanceof Map) ? beforeContents : new Map();
+    const a = (afterContents instanceof Map) ? afterContents : new Map();
+    const keys = new Set([...b.keys(), ...a.keys()]);
+    for (const k of keys) {
+      try {
+        const hasB = b.has(k);
+        const hasA = a.has(k);
+        if (hasB && !hasA) out.set(k, { added: 0, deleted: countTextLines(b.get(k)) });
+        else if (!hasB && hasA) out.set(k, { added: countTextLines(a.get(k)), deleted: 0 });
+        else out.set(k, diffTextLines(b.get(k), a.get(k)));
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return out;
+}
+
 /**
  * 对比任务前后的文件签名，返回真实修改的文件清单
+ * @param {Map<string,{size:number,mtimeMs:number}>} beforeMap 任务前签名表
+ * @param {Map<string,{size:number,mtimeMs:number}>} afterMap 任务后签名表
+ * @param {Map<string,string>} [beforeContents] 任务前内容快照（可选，传入则附带 added/deleted）
+ * @param {Map<string,string>} [afterContents] 任务后内容快照（可选，传入则附带 added/deleted）
+ * @returns {Array<{path:string,action:string,added?:number,deleted?:number}>} 变更清单（行数失败回落只有 path+action）
  */
-function diffFileSignatures(beforeMap, afterMap) {
+function diffFileSignatures(beforeMap, afterMap, beforeContents, afterContents) {
   const changes = [];
   if (!beforeMap || !afterMap) return changes;
+  const hasContents = (beforeContents instanceof Map) && (afterContents instanceof Map);
+  const withNumbers = (base, relPath, kind) => {
+    try {
+      if (!hasContents) return base;
+      let nums = null;
+      if (kind === 'deleted' && beforeContents.has(relPath)) {
+        nums = { added: 0, deleted: countTextLines(beforeContents.get(relPath)) };
+      } else if (kind === 'created' && afterContents.has(relPath)) {
+        nums = { added: countTextLines(afterContents.get(relPath)), deleted: 0 };
+      } else if (kind === 'modified' && beforeContents.has(relPath) && afterContents.has(relPath)) {
+        nums = diffTextLines(beforeContents.get(relPath), afterContents.get(relPath));
+      } else {
+        return base;
+      }
+      if (!nums) return base;
+      if (nums.added === 0 && nums.deleted === 0) return base;
+      base.added = nums.added;
+      base.deleted = nums.deleted;
+      return base;
+    } catch (e) { return base; }
+  };
 
   for (const [relPath, beforeStat] of beforeMap.entries()) {
     if (!afterMap.has(relPath)) {
-      changes.push({ path: relPath, action: 'deleted' });
+      try { changes.push(withNumbers({ path: relPath, action: 'deleted' }, relPath, 'deleted')); }
+      catch (e) { changes.push({ path: relPath, action: 'deleted' }); }
     } else {
       const afterStat = afterMap.get(relPath);
       if (beforeStat.size !== afterStat.size || Math.abs(beforeStat.mtimeMs - afterStat.mtimeMs) > 20) {
-        changes.push({ path: relPath, action: 'modified' });
+        try { changes.push(withNumbers({ path: relPath, action: 'modified' }, relPath, 'modified')); }
+        catch (e) { changes.push({ path: relPath, action: 'modified' }); }
       }
     }
   }
 
   for (const [relPath] of afterMap.entries()) {
     if (!beforeMap.has(relPath)) {
-      changes.push({ path: relPath, action: 'created' });
+      try { changes.push(withNumbers({ path: relPath, action: 'created' }, relPath, 'created')); }
+      catch (e) { changes.push({ path: relPath, action: 'created' }); }
     }
   }
 
+  /* AI执行流展示2.4：多文件修改时按path排序后返回，保证done.fileChanges回放确定性（只定序，不改元素结构） */
+  try {
+    changes.sort((a, b) => {
+      const pa = String((a && (a.path || a.file || a.name)) || '');
+      const pb = String((b && (b.path || b.file || b.name)) || '');
+      return pa < pb ? -1 : pa > pb ? 1 : 0;
+    });
+  } catch (e) {}
   return changes;
 }
 
@@ -1555,6 +1754,7 @@ function snapshotListImpl(ev, dir) {
   const dn = validProtoDir(dir);
   if (!dn) return { ok: true, items: [] };
   const root = snapRootFor(dn);
+  if (!root) return { ok: true, items: [] };
   /* 只展示正式任务快照（数字时间戳）；undo- 前缀为恢复前状态备份，不在列表展示但参与保留数清理 */
   const items = listSnapshotDirs(root)
     .filter((x) => /^\d{8}-\d{6}$/.test(x.name))
@@ -1573,6 +1773,7 @@ function snapshotRestoreImpl(ev, o) {
   const ts = String(o2.ts || '');
   if (!/^\d{8}-\d{6}$/.test(ts)) return { ok: false, error: '非法快照标识' };
   const root = snapRootFor(dn);
+  if (!root) return { ok: false, error: '目录不在沙箱范围内' };
   const src = path.join(root, ts);
   if (!fs.existsSync(src)) return { ok: false, error: '快照不存在' };
   try {
@@ -1793,6 +1994,11 @@ module.exports = {
   takeSnapshot,
   getProtoFileSignature,
   diffFileSignatures,
+  snapshotProtoFileContents,
+  diffFileContents,
+  diffTextLines,
+  countTextLines,
+  isDiffableTextFile,
   handleAnnoRead,
   handleAnnoSave,
   isSubPath,

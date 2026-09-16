@@ -19,7 +19,7 @@ module.exports = {
     }
     if (options.model && options.model !== 'default') {
       let m = String(options.model).trim();
-      if (m.endsWith('-free')) m = m.slice(0, -5);
+      /* free 独立模型：原样透传后缀，由服务商做免费路由，不再剥离 */
       if (m && m !== 'default') {
         args.push('-m', m);
       }
@@ -33,11 +33,7 @@ module.exports = {
     args: ['models'],
     timeoutMs: 5000,
     parse: (stdout, stderr) => {
-      const stripFree = (s) => {
-        s = String(s || '').trim();
-        if (/[-_]free$/i.test(s)) s = s.replace(/[-_]free$/i, '').trim();
-        return s;
-      };
+      /* free 独立模型：保留原始 id（含 -free 后缀），按全 id 去重，不再合并 */
       const isNoise = (s) => /embed|tts\b|text-to-speech|stt\b|whisper|dall-?e|text-embedding|image-?gen/i.test(s);
       const pickId = (v) => {
         if (typeof v === 'string') return v;
@@ -61,7 +57,7 @@ module.exports = {
       }
       const seen = new Set(); const out = [];
       for (const v of raw) {
-        let id = stripFree(pickId(v));
+        let id = String(pickId(v) || '').trim();
         if (!id || id === 'default') continue;
         if (isNoise(id)) continue;
         if (id.length > 128 || /\s/.test(id)) continue;

@@ -4249,7 +4249,7 @@ function docWinSelectProto(proto){
    if(typeof loadSandboxSources==='function'){
     var curProj='';
     try{ curProj=(typeof currentProject!=='undefined')?currentProject:''; }catch(e){ try{ curProj=window.currentProject||''; }catch(e2){} }
-    if(curProj){ try{ loadSandboxSources(proto); }catch(e){} return true; }
+    if(curProj){ try{ loadSandboxSources(proto, true); }catch(e){} return true; }
    }
   }catch(e){}
   return false;
@@ -4335,7 +4335,7 @@ function docWinBootProject(){
     else{
      try{ currentProject=qproj; }catch(e){ try{ window.currentProject=qproj; }catch(e2){} }
      try{ if(typeof updateProjectBar==='function')updateProjectBar(); }catch(e){}
-     try{ if(typeof loadSandboxSources==='function')loadSandboxSources(qproto||undefined); }catch(e){}
+     try{ if(typeof loadSandboxSources==='function')loadSandboxSources(qproto||undefined, true); }catch(e){}
     }
    }catch(e){}
    if(qproto){
@@ -4355,7 +4355,7 @@ function docWinBootProject(){
     else{
      try{ currentProject=last; }catch(e){ try{ window.currentProject=last; }catch(e2){} }
      try{ if(typeof updateProjectBar==='function')updateProjectBar(); }catch(e){}
-     try{ if(typeof loadSandboxSources==='function')loadSandboxSources(qproto||undefined); }catch(e){}
+     try{ if(typeof loadSandboxSources==='function')loadSandboxSources(qproto||undefined, true); }catch(e){}
     }
    }catch(e){}
    if(qproto){
@@ -4758,7 +4758,7 @@ function aiWinSelectProto(proto){
     __docMirrorApplying=true;
     try{
      if(typeof loadSource==='function'){ loadSource(found); }
-     else{ try{ currentSource=found; }catch(e){ try{ window.currentSource=found; }catch(e2){} } }
+     else{ try{ currentSource=found; }catch(e){ try{ window.currentSource=found; }catch(e2){} } try { if (typeof window !== 'undefined' && window.Store && typeof window.Store.setCurrentSource === 'function') window.Store.setCurrentSource(found); } catch (e3) {} }
     }catch(e){}
    }finally{ try{ __docMirrorApplying=false; }catch(e){} }
    try{ aiWinSyncTitleSbx(); }catch(e){}
@@ -4773,7 +4773,7 @@ function aiWinSelectProto(proto){
     var curProj='';
     try{ curProj=(typeof currentProject!=='undefined')?currentProject:''; }catch(e){ try{ curProj=window.currentProject||''; }catch(e2){} }
     if(curProj){
-     try{ loadSandboxSources(proto); }catch(e){}
+     try{ loadSandboxSources(proto, true); }catch(e){}
      return true;
     }
    }
@@ -4924,7 +4924,7 @@ function aiWinBootProject(){
     else{
      try{ currentProject=qproj; }catch(e){ try{ window.currentProject=qproj; }catch(e2){} }
      try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-     try{ if(typeof loadSandboxSources==='function') loadSandboxSources(qproto||undefined); }catch(e){}
+     try{ if(typeof loadSandboxSources==='function') loadSandboxSources(qproto||undefined, true); }catch(e){}
     }
    }catch(e){}
    if(qproto){
@@ -4946,7 +4946,7 @@ function aiWinBootProject(){
     else{
      try{ currentProject=last; }catch(e){ try{ window.currentProject=last; }catch(e2){} }
      try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-     try{ if(typeof loadSandboxSources==='function') loadSandboxSources(qproto||undefined); }catch(e){}
+     try{ if(typeof loadSandboxSources==='function') loadSandboxSources(qproto||undefined, true); }catch(e){}
     }
    }catch(e){}
    if(qproto){
@@ -5219,7 +5219,7 @@ function handleDocMirror(msg){
         else{
          try{ currentProject=projHint; }catch(e){ try{ window.currentProject=projHint; }catch(e2){} }
          try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-         try{ if(typeof loadSandboxSources==='function') loadSandboxSources(protoHint||nm||undefined); }catch(e){}
+         try{ if(typeof loadSandboxSources==='function') loadSandboxSources(protoHint||nm||undefined, true); }catch(e){}
         }
        }catch(e){}
        var _pp=protoHint||nm;
@@ -5241,7 +5241,7 @@ function handleDocMirror(msg){
         else{
          try{ currentProject=projHint; }catch(e){ try{ window.currentProject=projHint; }catch(e2){} }
          try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-         try{ if(typeof loadSandboxSources==='function') loadSandboxSources(protoHint||nm||undefined); }catch(e){}
+         try{ if(typeof loadSandboxSources==='function') loadSandboxSources(protoHint||nm||undefined, true); }catch(e){}
         }
        }catch(e){}
        var _pp2=protoHint||nm;
@@ -5309,7 +5309,7 @@ function handleDocMirror(msg){
         if(_inDoc&&!inAiS){ try{ if(typeof loadDesc==='function') loadDesc(); }catch(e){} try{ if(typeof refreshToc==='function') refreshToc(); }catch(e){} }
        }catch(e){}
       }else if(nm){
-      try{ if(typeof loadSandboxSources==='function') loadSandboxSources(nm); }catch(e){}
+      try{ if(typeof loadSandboxSources==='function') loadSandboxSources(nm, true); }catch(e){}
       if(inAiS&&protoHint){
        try{
         (function(pp){
@@ -5347,7 +5347,7 @@ function handleDocMirror(msg){
        else{
         try{ currentProject=proj2; }catch(e){ try{ window.currentProject=proj2; }catch(e2){} }
         try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-        try{ if(typeof loadSandboxSources==='function') loadSandboxSources(proto2||undefined); }catch(e){}
+        try{ if(typeof loadSandboxSources==='function') loadSandboxSources(proto2||undefined, true); }catch(e){}
        }
       }catch(e){}
       if(proto2){
@@ -5364,7 +5364,7 @@ function handleDocMirror(msg){
        else{
         try{ currentProject=proj2; }catch(e){ try{ window.currentProject=proj2; }catch(e2){} }
         try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-        try{ if(typeof loadSandboxSources==='function') loadSandboxSources(proto2||undefined); }catch(e){}
+        try{ if(typeof loadSandboxSources==='function') loadSandboxSources(proto2||undefined, true); }catch(e){}
        }
       }catch(e){}
       if(proto2){
