@@ -250,6 +250,107 @@ function test2_CssRulesContract() {
       `[CSS契约失败] app.css 缺失 BYOK 诊断面板状态规则: ${variant}`
     );
   }
+
+  // ── Ant全局换肤门 (DESIGN-桌面.md colors§5-31/rounded§83-90/typography§32-82/elevation§251-269; 仅app.css, 类名/id零改名; 尾部覆盖块后胜，取末次定义比对) ──
+  // 尾部覆盖块后胜 helper：取选择器在文件中最后一次定义该属性的值 (lastIndexOf思路：从后往前找首个含该属性的精确选择器块)
+  function lastPropForSelector(targetSel, prop) {
+    const esc = targetSel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(esc + '(?![A-Za-z0-9_-])', 'g');
+    let m; const cands = [];
+    while ((m = re.exec(cssContent)) !== null) cands.push(m.index);
+    for (let i = cands.length - 1; i >= 0; i--) {
+      const idx = cands[i];
+      const open = cssContent.indexOf('{', idx);
+      if (open < 0) continue;
+      if (cssContent.slice(idx, open).includes('}')) continue;
+      const close = cssContent.indexOf('}', open);
+      if (close < 0) continue;
+      const prevClose = cssContent.lastIndexOf('}', idx);
+      const selText = cssContent.slice(prevClose + 1, open).replace(/\/\*[\s\S]*?\*\//g, '\n');
+      const parts = selText.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!parts.includes(targetSel)) continue;
+      const decl = cssContent.slice(open + 1, close).replace(/\/\*[\s\S]*?\*\//g, '\n');
+      const pm = new RegExp(prop + '\\s*:\\s*([^;]+);?', 'i').exec(decl);
+      if (pm) return pm[1].trim();
+    }
+    return null;
+  }
+  function assertLastProp(targetSel, prop, expectedRe, msg) {
+    const v = lastPropForSelector(targetSel, prop);
+    assert.ok(v !== null, `${msg} (未找到 ${targetSel} 的 ${prop} 末次定义)`);
+    assert.ok(expectedRe.test(v), `${msg} (末次值为 ${v})`);
+  }
+  // :root 变量期望值
+  assert.ok(/--pri\s*:\s*#1677FF\b/i.test(cssContent), `[CSS契约失败][Ant] :root --pri 应为 #1677FF`);
+  assert.ok(/--ink\s*:\s*#1F1F1F\b/i.test(cssContent), `[CSS契约失败][Ant] :root --ink 应为 #1F1F1F`);
+  assert.ok(/--line\s*:\s*#D9D9D9\b/i.test(cssContent), `[CSS契约失败][Ant] :root --line 应为 #D9D9D9`);
+  assert.ok(/--bg\s*:\s*#F5F5F5\b/i.test(cssContent), `[CSS契约失败][Ant] :root --bg 应为 #F5F5F5`);
+  assert.ok(/--bg-subtle\s*:\s*#FAFAFA\b/i.test(cssContent), `[CSS契约失败][Ant] :root --bg-subtle 应为 #FAFAFA`);
+  // --shadow系为popup/tertiary三段值 (popup含rgba(0,0,0,0.08)特征串)
+  for (const v of ['--shadow', '--shadow-md', '--shadow-lg']) {
+    const val = lastPropForSelector(':root', v);
+    assert.ok(val !== null, `[CSS契约失败][Ant] :root ${v} 须有定义`);
+    assert.ok(/rgba\(0\s*,\s*0\s*,\s*0\s*,\s*0\.08\)/.test(val), `[CSS契约失败][Ant] :root ${v} 应为popup三段值(含rgba(0,0,0,0.08), 末次值为 ${val})`);
+    assert.ok(!/^none\b/i.test(val), `[CSS契约失败][Ant] :root ${v} 不得为none`);
+  }
+  {
+    const sm = lastPropForSelector(':root', '--shadow-sm');
+    assert.ok(sm !== null, `[CSS契约失败][Ant] :root --shadow-sm 须有定义`);
+    assert.ok(/0\s+1px\s+2px\s+0\s+rgba\(0\s*,\s*0\s*,\s*0\s*,\s*0\.05\)/.test(sm), `[CSS契约失败][Ant] :root --shadow-sm 应为tertiary三段值(末次值为 ${sm})`);
+    assert.ok(!/^none\b/i.test(sm), `[CSS契约失败][Ant] :root --shadow-sm 不得为none`);
+  }
+  // 字体栈含Ant栈 (-apple-system与Segoe UI)，不再要求BMW Type Next Latin/Inter
+  assert.ok(/--font\s*:[^;]*-apple-system/i.test(cssContent), `[CSS契约失败][Ant] --font 须含 -apple-system`);
+  assert.ok(/--font\s*:[^;]*Segoe UI/.test(cssContent), `[CSS契约失败][Ant] --font 须含 Segoe UI`);
+  // 圆角 (末次定义为准)：控件6px (.ai-input/.docs-btn)，表面8px (.modal/.ai-modal/.docs-panel)
+  assertLastProp('.ai-input', 'border-radius', /^6px\b/, `[CSS契约失败][Ant] 控件 .ai-input 末次圆角须为6px`);
+  assertLastProp('.docs-btn', 'border-radius', /^6px\b/, `[CSS契约失败][Ant] 控件 .docs-btn 末次圆角须为6px`);
+  assertLastProp('.modal', 'border-radius', /^8px\b/, `[CSS契约失败][Ant] 表面 .modal 末次圆角须为8px`);
+  assertLastProp('.ai-modal', 'border-radius', /^8px\b/, `[CSS契约失败][Ant] 表面 .ai-modal 末次圆角须为8px`);
+  assertLastProp('.docs-panel', 'border-radius', /^8px\b/, `[CSS契约失败][Ant] 表面 .docs-panel 末次圆角须为8px`);
+  // hover#4096FF / active#0958D9 (末次定义为准)
+  assertLastProp('.docs-btn.primary:hover', 'background', /#4096FF/i, `[CSS契约失败][Ant] .docs-btn.primary:hover 末次背景须为#4096FF`);
+  assertLastProp('.ai-fab:hover', 'background', /#4096FF/i, `[CSS契约失败][Ant] .ai-fab:hover 末次背景须为#4096FF`);
+  assertLastProp('.docs-btn.primary:active', 'background', /#0958D9/i, `[CSS契约失败][Ant] .docs-btn.primary:active 末次背景须为#0958D9`);
+  assertLastProp('.ai-fab:active', 'background', /#0958D9/i, `[CSS契约失败][Ant] .ai-fab:active 末次背景须为#0958D9`);
+  // 输入focus: pri边框+淡蓝光圈 (末次定义为准)
+  assertLastProp('.ai-input:focus', 'border-color', /var\(--pri\)/, `[CSS契约失败][Ant] .ai-input:focus 末次须 border-color:var(--pri)`);
+  assertLastProp('.ai-input:focus', 'box-shadow', /0\s+0\s+0\s+2px\s+rgba\(22,\s*119,\s*255,\s*0\.2\)/, `[CSS契约失败][Ant] .ai-input:focus 末次须淡蓝光圈0 0 0 2px rgba(22,119,255,0.2)`);
+  assertLastProp('.modal-input:focus', 'border-color', /var\(--pri\)/, `[CSS契约失败][Ant] .modal-input:focus 末次须 border-color:var(--pri)`);
+  assertLastProp('.modal-input:focus', 'box-shadow', /0\s+0\s+0\s+2px\s+rgba\(22,\s*119,\s*255,\s*0\.2\)/, `[CSS契约失败][Ant] .modal-input:focus 末次须淡蓝光圈0 0 0 2px rgba(22,119,255,0.2)`);
+  // 字重铬600 (抽查.docs-btn/.ai-head，时间线动词类除外；末次定义为准)
+  assertLastProp('.docs-btn', 'font-weight', /^600\b/, `[CSS契约失败][Ant] 工具铬 .docs-btn 末次字重须为600`);
+  assertLastProp('.ai-head', 'font-weight', /^600\b/, `[CSS契约失败][Ant] 工具铬 .ai-head 末次字重须为600`);
+  // 零渐变重申 (与static-verify I1同口径: 剥离CSS注释后扫)
+  assert.ok(!/linear-gradient/.test(cssContent.replace(/\/\*[\s\S]*?\*\//g, '\n')), `[CSS契约失败][Ant] app.css 须零渐变(无linear-gradient)`);
+  // BYPASS注明: .doc-shortcut-link 仍锁定旧蓝 #3B5BDB (verify-doc-edit A3 锁定, 视觉等同var(--pri)), Ant断言主动绕开其颜色, 不改生产代码
+  assert.ok(cssContent.includes('.doc-shortcut-link'), `[CSS契约失败] app.css 缺失 .doc-shortcut-link (存在性保留, 颜色绕开)`);
+
+  // ── Ant禁区回归 (AI时间线类颜色/字号数值未被改动; body.kind-mobile仍存在; 只做存在性+关键值抽查, 不过细) ──
+  assert.ok(/--faint\s*:\s*#BFBFBF\b/i.test(cssContent), `[CSS契约失败][禁区] :root --faint 应为 #BFBFBF (think压灰源)`);
+  assert.ok(/\.exp\s*\{[^}]*font-size\s*:\s*14\.5px/.test(cssContent), `[CSS契约失败][禁区] .exp 须保留14.5px`);
+  assert.ok(/\.exp\s*\{[^}]*color\s*:\s*var\(--ink\)/.test(cssContent), `[CSS契约失败][禁区] .exp 须保留墨字var(--ink)`);
+  assert.ok(/\.think-p\s*\{[^}]*font-size\s*:\s*14px/.test(cssContent), `[CSS契约失败][禁区] .think-p 须保留14px`);
+  // .think-p压灰已在上方断言 (color:var(--faint)), 此处重申关键值
+  assert.ok(/\.think-p\s*\{[^}]*color\s*:\s*var\(--faint\)/.test(cssContent), `[CSS契约失败][禁区] .think-p 须保留压灰var(--faint)`);
+  assert.ok(/\.edit-row\s*\{[^}]*font-size\s*:\s*14\.5px/.test(cssContent), `[CSS契约失败][禁区] .edit-row 须保留14.5px`);
+  assert.ok(/\.edit-row\s*\{[^}]*color\s*:\s*var\(--ink\)/.test(cssContent), `[CSS契约失败][禁区] .edit-row 须保留墨字var(--ink)`);
+  assert.ok(/\.shell-row\s*\{[^}]*font-size\s*:\s*14\.5px/.test(cssContent), `[CSS契约失败][禁区] .shell-row 须保留14.5px`);
+  assert.ok(/\.answer\s*\{[^}]*color\s*:\s*var\(--ink\)/.test(cssContent), `[CSS契约失败][禁区] .answer 须保留墨字var(--ink)`);
+  assert.ok(/\.answer\s*\{[^}]*font-size\s*:\s*13px/.test(cssContent), `[CSS契约失败][禁区] .answer 须保留13px`);
+  // .answer主色竖线已在上方断言 (border-left:3px solid var(--pri)), 此处不重复
+  assert.ok(/\.msg-foot\s*\{[^}]*font-size\s*:\s*12px/.test(cssContent), `[CSS契约失败][禁区] .msg-foot 须保留12px`);
+  assert.ok(/\.msg-foot\s*\{[^}]*color\s*:\s*var\(--faint\)/.test(cssContent), `[CSS契约失败][禁区] .msg-foot 须保留压灰var(--faint)`);
+  assert.ok(/\.snapshot-card\s*\{[^}]*font-size\s*:\s*12\.5px/.test(cssContent), `[CSS契约失败][禁区] .snapshot-card 须保留12.5px`);
+  assert.ok(/\.snapshot-card\s*\{[^}]*background\s*:\s*#F8FAFC/i.test(cssContent), `[CSS契约失败][禁区] .snapshot-card 须保留背景#F8FAFC`);
+  assert.ok(/\.cursor\s*\{[^}]*background\s*:\s*var\(--pri\)/.test(cssContent), `[CSS契约失败][禁区] .cursor 须保留主色var(--pri)`);
+  assert.ok(/\.cursor\s*\{[^}]*width\s*:\s*2px/.test(cssContent), `[CSS契约失败][禁区] .cursor 须保留2px`);
+  // .cursor复用i5blink+steps(1)已在上方断言, 此处不重复
+  assert.ok(/\.add\s*\{[^}]*color\s*:\s*#16A34A/i.test(cssContent), `[CSS契约失败][禁区] .add 须保留#16A34A`);
+  assert.ok(/\.del\s*\{[^}]*color\s*:\s*#DC2626/i.test(cssContent), `[CSS契约失败][禁区] .del 须保留#DC2626`);
+  assert.ok(/body\.kind-mobile/.test(cssContent), `[CSS契约失败][禁区] body.kind-mobile 规则须仍存在`);
+  assert.ok(/body\.kind-mobile\s+\.doc-hotzone/.test(cssContent), `[CSS契约失败][禁区] body.kind-mobile .doc-hotzone 须仍存在`);
+  assert.ok(/body\.kind-mobile\s+\.req-panel/.test(cssContent), `[CSS契约失败][禁区] body.kind-mobile .req-panel 须仍存在`);
 }
 
 // =========================================================================

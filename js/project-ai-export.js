@@ -3623,8 +3623,9 @@ function aiRenderBubbles(){
     return;
    }
   }
- }catch(e){}
- var m=s?s.m:null;
+  }catch(e){}
+  try{ if(aiChatView) aiChatView.innerHTML=''; }catch(e){} /* fallback同样先清空：空事件会话（如新建）否则残留旧气泡 */
+  var m=s?s.m:null;
   if(m) for(var i=0;i<m.length;i++){
    var msg=m[i]; if(msg&&msg.r==='tool') continue; var d=document.createElement('div');
   d.className='ai-msg '+(msg.r==='u'?'user':(msg.err?'err':'ai'));
@@ -3814,6 +3815,7 @@ function aiBubbleError(msg){
  if(g0){ g0.think=aiStreamThink||g0.think; g0.output=aiStreamText||g0.output; aiTraceFlushThink(g0); aiTraceFlushOutput(g0); aiTraceAppendLine(g0,{time:new Date().toTimeString().split(' ')[0],tag:'ERROR',level:'error',text:disp}); g0.status='err'; aiRefreshGroupMeta(g0); }
  aiStreamText=''; aiStreamThink='';
  if(aiStreaming){
+  try{ i5HideWaiting(); }catch(e){}
   var _hasTl=false; try{ var _tlE=aiStreaming.querySelector('.i5-timeline'); if(_tlE&&_tlE.children&&_tlE.children.length>0) _hasTl=true; else if(aiStreaming.querySelector('.think-p')||aiStreaming.querySelector('.exp')||aiStreaming.querySelector('.edit-row')||aiStreaming.querySelector('.shell-row')||aiStreaming.querySelector('.answer')) _hasTl=true; }catch(e){ _hasTl=false; }
    if(_hasTl){ try{ i5TlRemoveCursor(); }catch(e){} try{ var _tlF=null; try{ _tlF=aiStreaming.querySelector('.i5-timeline'); }catch(e){ _tlF=null; } if(_tlF){ try{ var _sb=_tlF.querySelectorAll('.silence'); for(var _sbi=0;_sbi<_sb.length;_sbi++){ try{ if(_sb[_sbi].parentNode) _sb[_sbi].parentNode.removeChild(_sb[_sbi]); }catch(e){} } }catch(e){} } }catch(e){} try{ i5TlSetStalled(false,0); }catch(e){} try{ i5ShellFinalizeAll(false); }catch(e){} try{ if(typeof i5EditMarkFailed==='function') i5EditMarkFailed(); }catch(e){} }
    else{ aiStreaming.classList.add('err');
@@ -4122,12 +4124,36 @@ function i5TlRemoveCursor(){
  }catch(e){}
 }
 function i5TlMoveCursorTo(node){
- try{
-  i5TlRemoveCursor();
-  if(!node||!aiStreaming) return;
-  var cur=document.createElement('span'); cur.className='cursor i5-cursor';
-  try{ node.appendChild(cur); }catch(e){}
- }catch(e){}
+  try{
+   i5TlRemoveCursor();
+   try{ i5HideWaiting(); }catch(e){} /* 任一实质内容落子即撤等待行 */
+   if(!node||!aiStreaming) return;
+   var cur=document.createElement('span'); cur.className='cursor i5-cursor';
+   try{ node.appendChild(cur); }catch(e){}
+  }catch(e){}
+}
+/* 发送后等待态：首包到达前时间线是空的，挂一个带闪烁光标的等待行；任一内容落子/结束/失败即撤 */
+function i5ShowWaiting(){
+  try{
+    if(!aiStreaming) return;
+    var tl=null; try{ tl=i5TlEnsureTimeline(); }catch(e){ return; }
+    if(!tl) return;
+    var has=null; try{ has=tl.querySelector('.i5-waiting'); }catch(e){}
+    if(has) return;
+    try{ i5TlRemoveCursor(); }catch(e){}
+    var w=document.createElement('div'); w.className='think-p i5-think-p i5-waiting';
+    w.textContent='等待响应…';
+    tl.appendChild(w);
+    var cur=document.createElement('span'); cur.className='cursor i5-cursor';
+    try{ w.appendChild(cur); }catch(e){}
+  }catch(e){}
+}
+function i5HideWaiting(){
+  try{
+    if(!aiStreaming) return;
+    var ws=aiStreaming.querySelectorAll('.i5-waiting');
+    for(var i=0;i<ws.length;i++){ try{ if(ws[i].parentNode) ws[i].parentNode.removeChild(ws[i]); }catch(e){} }
+  }catch(e){}
 }
 /* 思考切分（2.3）：终结符 。！？!?+右引号括号+空白换行；英文句号需后跟空格+大写/换行/结尾；\n\n最高权重；```围栏内暂停 */
 function i5SplitThink(src){
@@ -4833,8 +4859,9 @@ function finishAiStream(isCancel){
   if(g){ g.status=isCancel?'err':'ok'; aiTraceFlushThink(g); aiTraceFlushOutput(g); aiRefreshGroupMeta(g); }
   aiSetBusy(false);
   var _doneTs=0; try{ _doneTs=(typeof aiSessNow==='function')?aiSessNow():Date.now(); }catch(e){ try{ _doneTs=Date.now(); }catch(e2){ _doneTs=0; } }
-  if(aiStreaming){
-   try{ i5ThinkFlushPending(true); }catch(e){}
+   if(aiStreaming){
+    try{ i5HideWaiting(); }catch(e){}
+    try{ i5ThinkFlushPending(true); }catch(e){}
     try{ var _tl0=null; try{ _tl0=aiStreaming.querySelector('.i5-timeline'); }catch(e){ _tl0=null; } if(_tl0){ try{ var _sils=_tl0.querySelectorAll('.silence'); for(var _si=0;_si<_sils.length;_si++){ try{ var _sp=_sils[_si]; if(_sp&&_sp.parentNode) _sp.parentNode.removeChild(_sp); }catch(e){} } }catch(e){} try{ var _sils2=_tl0.querySelectorAll('.i5-silent'); for(var _si2=0;_si2<_sils2.length;_si2++){ try{ var _sp2=_sils2[_si2]; if(_sp2&&_sp2.parentNode) _sp2.parentNode.removeChild(_sp2); }catch(e){} } }catch(e){} } }catch(e){}
    try{
     var _tl=null; try{ _tl=aiStreaming.querySelector('.i5-timeline'); }catch(e){ _tl=null; }
@@ -5140,6 +5167,7 @@ function aiDoSend(){
   aiStreaming=aiAppendMsg('','ai'); aiStreamText=''; aiStreamThink=''; aiCurFileChanges=[]; try{ window.aiCurFileChanges=[]; }catch(e){}
   try{ i5TlReset(); aiTlLastPacket=Date.now(); aiTlLastType=''; }catch(e){}
    aiRenderStream(); /* 时间线保活：确保 .i5-timeline 容器，避免无反馈等待 */
+   try{ i5ShowWaiting(); }catch(e){} /* 首包到达前挂等待行+闪烁光标 */
    aiSetBusy(true); try{ aiTlLastPacket=Date.now(); }catch(e){}
    // 401 预检：Iteration6弹窗化后仅弹窗打开时比对表单，否则以当前使用项为准
    try {

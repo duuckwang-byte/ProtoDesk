@@ -7,16 +7,16 @@
 ::-webkit-scrollbar-corner{background:transparent}
 *{scrollbar-width:thin;scrollbar-color:#CBD2DC transparent}
 :root{
-  --bg:#EEF0F4;--panel:#FFFFFF;--line:#E3E6EC;--ink:#1F2937;--ink-2:#374151;--sub:#6B7280;--faint:#9CA3AF;
-  --pri:#3B5BDB;--pri-soft:#E7ECFB;--ok:#10B981;--ok-soft:#DCFCE7;
-  --r:12px;--font:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;
+  --bg:#F5F5F5;--panel:#ffffff;--line:#D9D9D9;--ink:#1F1F1F;--ink-2:#595959;--sub:#6b6b6b;--faint:#BFBFBF;
+  --pri:#1677FF;--pri-soft:#E6F4FF;--ok:#22c55e;--ok-soft:#DCFCE7;
+  --r:12px;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans',sans-serif;
   /* P1-6 fix: 暗色/阴影/z-index Token 体系补齐 */
-  --bg-subtle:#F8FAFC; /* P1-6 fix */
-  --bg-soft:#F1F5F9; /* P1-6 fix */
-  --shadow:0 12px 32px rgba(16,24,40,.16); /* P1-6 fix */
-  --shadow-md:0 14px 36px rgba(16,24,40,.18); /* P1-6 fix */
-  --shadow-lg:0 24px 60px rgba(16,24,40,.28); /* P1-6 fix */
-  --shadow-sm:0 2px 6px rgba(16,24,40,.08); /* P1-6 fix */
+  --bg-subtle:#FAFAFA; /* P1-6 fix */
+  --bg-soft:#F0F0F0; /* P1-6 fix */
+  --shadow:0 6px 16px 0 rgba(0,0,0,0.08),0 3px 6px -4px rgba(0,0,0,0.12),0 9px 28px 8px rgba(0,0,0,0.05); /* P1-6 fix */
+  --shadow-md:0 6px 16px 0 rgba(0,0,0,0.08),0 3px 6px -4px rgba(0,0,0,0.12),0 9px 28px 8px rgba(0,0,0,0.05); /* P1-6 fix */
+  --shadow-lg:0 6px 16px 0 rgba(0,0,0,0.08),0 3px 6px -4px rgba(0,0,0,0.12),0 9px 28px 8px rgba(0,0,0,0.05); /* P1-6 fix */
+  --shadow-sm:0 1px 2px 0 rgba(0,0,0,0.05),0 1px 6px -1px rgba(0,0,0,0.03),0 2px 4px 0 rgba(0,0,0,0.03); /* P1-6 fix */
   --z-header:30; /* P1-6 fix */
   --z-sidebar:40; /* P1-6 fix */
   --z-panel:60; /* P1-6 fix */
@@ -134,15 +134,15 @@ body.kind-pc .phone-wrap iframe{background:var(--panel) /* P1-6 fix */}
 .sb-hotzone{left:14px;flex-direction:column;gap:9px;align-items:flex-start}
 .doc-hotzone{right:14px;flex-direction:column;gap:10px}
 .docs-fab{height:34px;padding:0 18px;border-radius:99px;background:var(--pri);color:var(--panel);font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer;box-shadow:0 8px 22px rgba(59,91,219,.35);transition:background .15s;border:none;white-space:nowrap} /* P1-6 fix */
-.docs-fab:hover{background:#2F4BB8}
+.docs-fab:hover{background:#0653b6}
 /* 大模型对话按钮：位于“菜单栏”按钮上方 */
 .ai-fab{height:34px;padding:0 18px;border-radius:99px;background:var(--pri);color:var(--panel);font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer;box-shadow:0 8px 22px rgba(59,91,219,.4);transition:transform .15s,filter .15s;border:none;white-space:nowrap} /* P1-6 fix */
-.ai-fab:hover{filter:brightness(1.1)}
+.ai-fab:hover{background:#0653b6;filter:none}
 /* ═══════ 左下功能列表：触发展开仅限 菜单栏按钮 本体 ═══════ */
 .sb-hotzone{position:fixed;pointer-events:none}
 .sb-hotzone.sb-hz-open{pointer-events:auto}
 .sb-trigger{height:34px;min-width:34px;padding:0 9px;border-radius:99px;background:var(--pri);color:var(--panel);font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 22px rgba(59,91,219,.35);border:none;pointer-events:auto;transition:background .15s;position:relative;z-index:3 /* P1-6 fix */} /* P1-6 fix */
-.sb-trigger:hover{background:#2F4BB8}
+.sb-trigger:hover{background:#0653b6}
 .sb-hotzone .ai-fab{opacity:0;pointer-events:none;transform:translateY(10px);transition:opacity .18s ease,transform .18s ease,background .15s;position:relative;z-index:3 /* P1-6 fix */}
 .sb-hotzone.sb-hz-open .ai-fab{opacity:1;pointer-events:auto;transform:none}
 .sb-hotzone.sb-hz-open .ai-fab:hover{transform:translateY(-1px)}
@@ -167,7 +167,7 @@ body.kind-mobile .req-panel{display:none}
 .docs-btn{height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:var(--panel) /* P1-6 fix */;color:var(--ink-2);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s; display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1.4;vertical-align:middle} /* icon align fix */
 .docs-btn:hover{border-color:var(--pri);color:var(--pri)}
 .docs-btn.primary{background:var(--pri);border-color:var(--pri);color:var(--panel)} /* P1-6 fix */
-.docs-btn.primary:hover{background:#2F4BB8}
+.docs-btn.primary:hover{background:#0653b6}
 .docs-btn[disabled]{opacity:.45;cursor:not-allowed;border-color:var(--line);color:var(--faint)}
 /* ═══════ 左侧源文件列表栏（内嵌 Docked 布局，展开后不自动关闭，点击 菜单/收起 按钮收起） ═══════ */
 .sb{flex:none;width:0;min-width:0;display:flex;flex-direction:column;background:var(--panel);border-right:0 solid var(--line);overflow:hidden;transition:width .22s cubic-bezier(.4, 0, .2, 1),border-color .22s ease;position:relative;z-index:var(--z-sidebar) /* P1-6 fix */;box-shadow:none;transform:none}
@@ -385,7 +385,7 @@ body .sb-foot{padding-bottom:58px}
 .ai-msg-fold>summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--pri);list-style:none;display:flex;align-items:center;gap:5px;padding:2px 0}
 .ai-msg-fold>summary::before{content:"▸";transition:transform .15s ease;font-size:10px}
 .ai-msg-fold[open]>summary::before{transform:rotate(90deg)}
-.ai-msg-fold>summary:hover{color:#2547C9}
+.ai-msg-fold>summary:hover{color:#0653b6}
 .ai-msg-fold .ai-msg-body{display:block}
 /* think scroll fix - 回到最新按钮 */
 .ai-jump-latest{position:absolute;right:18px;bottom:76px;z-index:5;display:none}
@@ -434,7 +434,7 @@ body .sb-foot{padding-bottom:58px}
 .modal-row{display:flex;flex-direction:column;gap:6px}
 .modal-hint{font-size:12.5px;color:var(--faint);line-height:1.5}
 .modal-input{width:100%;box-sizing:border-box;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 12px;font-size:13px;background:#FAFBFC;outline:none;transition:all .2s}
-.modal-input:focus{border-color:var(--pri);background:var(--panel) /* P1-6 fix */;box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.modal-input:focus{border-color:var(--ink);background:var(--panel) /* P1-6 fix */;box-shadow:none}
 .settings-modal-v2{width:80vw;max-width:80vw;height:90vh;max-height:90vh;background:var(--panel) /* P1-6 fix */;border-radius:16px;box-shadow:var(--shadow-lg) /* P1-6 fix */;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line)}
 .settings-head{flex:none;padding:12px 18px;font-size:15px;font-weight:700;color:var(--ink);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:6px;line-height:1.4;vertical-align:middle;background:var(--bg-subtle) /* P1-6 fix */} /* icon align fix */
 .settings-layout{flex:1;min-height:0;display:flex}
@@ -799,7 +799,7 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 
 /* ═══════ Iteration5：前端现代化升级（复用 ui-preview-iteration5 原生零依赖视觉语言） ═══════
    顶栏保持 40px，无渐变，无 emoji（仅 ✕✎▾«＋） */
-:root{ --warn:#B45309; --warn-soft:#FEF3C7; --err:#DC2626; --err-soft:#FEE2E2; --purple:#7C3AED; --purple-soft:#EDE9FE; }
+:root{ --warn:#f59e0b; --warn-soft:#FEF3C7; --err:#DC2626; --err-soft:#FEE2E2; --purple:#7C3AED; --purple-soft:#EDE9FE; }
 /* 设置中心：多 Agent CLI 矩阵卡片流 */
 .ai-agent-matrix{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
 .agent-card{ border:1.5px solid var(--line); border-radius:12px; padding:12px; background:var(--panel); cursor:pointer; display:flex; flex-direction:column; gap:8px; transition:border-color .15s, box-shadow .15s; }
@@ -1032,7 +1032,7 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 .doc-micro-btn{ height:26px; padding:0 12px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink-2); font-size:12px; font-weight:600; cursor:pointer }
 .doc-micro-btn:hover{ border-color:var(--pri); color:var(--pri) }
 .doc-micro-btn.primary{ background:var(--pri); border-color:var(--pri); color:var(--panel) }
-.doc-micro-btn.primary:hover{ background:#2F4BB8 }
+.doc-micro-btn.primary:hover{ background:#0653b6 }
 .doc-micro-hint{ font-size:11px; color:var(--faint); line-height:1.5 }
 /* ======= P3：route穿梭 / 内联SVG（单面板100%宽，纯色，无渐变） ======= */
 /* Wave-B: dead rule removed (zero refs, grep confirmed) */
@@ -1059,7 +1059,7 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 .doc-state-arrow{ stroke:#64748B; stroke-width:1.6 }
 /* ======= 文档编辑快捷键入口与弹窗（纯色，无渐变） ======= */
 .doc-shortcut-link{ margin-left:8px; padding:0 4px; height:22px; font-size:11.5px; font-weight:600; color:#3B5BDB; background:transparent; border:none; cursor:pointer; vertical-align:1px } /* Wave-B: 保留#3B5BDB硬编码以满足verify-doc-edit A3断言（视觉等同var(--pri)，勿再变量化） */
-.doc-shortcut-link:hover{ color:#2F4BB8; text-decoration:underline }
+.doc-shortcut-link:hover{ color:#0653b6; text-decoration:underline }
 .doc-shortcut-table{ width:100%; border-collapse:collapse; font-size:12px; line-height:1.6 }
 .doc-shortcut-table th,.doc-shortcut-table td{ border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top }
 .doc-shortcut-table th{ background:var(--bg-subtle); color:var(--ink); font-weight:700; white-space:nowrap }
@@ -1131,7 +1131,7 @@ body.aiwin-mode .ai-head #btnAiWinToggle{ display:inline-flex }
 .inline-edit-btn{flex:none;height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);font-size:12px;font-weight:600;cursor:pointer}
 .inline-edit-btn:hover{border-color:var(--pri);color:var(--pri)}
 .inline-edit-btn.primary{background:var(--pri);border-color:var(--pri);color:var(--panel)}
-.inline-edit-btn.primary:hover{background:#2F4BB8}
+.inline-edit-btn.primary:hover{background:#0653b6}
 /* iter18 B1 隐敏兜底：API卡片三字段即使残留也不显示（纯色，无渐变） */
 .api-profile-matrix .api-profile-sub{display:none}
 /* iter18 B6 文档窗免选项目：全程隐藏项目选择弹窗（纯色） */
@@ -1227,3 +1227,44 @@ body.docwin-mode .doc-toc{z-index:70; position:static; flex:none; width:220px; m
 .i5-edit-fail .fail,.i5-edit-fail .i5-tag-fail{color:#DC2626;font-weight:600;font-size:13px;flex:none;cursor:pointer}
 .think-p .silence{margin-left:6px}
 .i5-think-p .i5-silent{margin-left:6px}
+
+/* Ant skin: desktop tool chrome, flat-first depth */
+body{font-weight:400;letter-spacing:0}
+.doc-content,.doc-content p{font-weight:400;letter-spacing:0}
+.docs-head,.modal-head,.settings-head,.sd-hd,.ed-head,.ai-head,.doc-title,.set-section-title,.agent-name,.api-profile-name,.kind-name,.li-card-name,.uispec-card-name{font-weight:600;letter-spacing:0}
+.docs-btn,.doc-micro-btn,.inline-edit-btn,.sb-add,.sb-set,.doc-mode-tab{font-weight:600;letter-spacing:0}
+.stage-head .kind-seg button{font-weight:600;letter-spacing:0}
+/* hover lift to #4096FF, press to #0958D9 */
+.docs-fab:hover,.sb-trigger:hover,.docs-btn.primary:hover,.doc-micro-btn.primary:hover,.inline-edit-btn.primary:hover{background:#4096FF;border-color:#4096FF;color:#fff}
+.ai-fab:hover{background:#4096FF;color:#fff;filter:none}
+.ai-msg-fold>summary:hover{color:#4096FF}
+.docs-fab:active,.ai-fab:active,.sb-trigger:active,.docs-btn.primary:active,.doc-micro-btn.primary:active,.inline-edit-btn.primary:active{background:#0958D9;border-color:#0958D9;color:#fff}
+.ai-fab:active{filter:none}
+.docs-fab,.ai-fab,.sb-trigger,.sb-set,.kind-opt.on{box-shadow:none}
+/* focus: pri border plus soft blue halo */
+.zoom-wrap input:focus,.zoom-wrap select:focus,.doc-edit textarea:focus,.ai-input:focus,.ai-model:focus,.modal-input:focus,.set-input:focus,.set-select:focus,.li-page-row select:focus,#liReqText:focus,.edit-req-input:focus,.indiv-input:focus,.doc-micro-ta:focus,.inline-edit-ta:focus{border-color:var(--pri);box-shadow:0 0 0 2px rgba(22,119,255,0.2);background:var(--panel)}
+/* 32px control heights, padding per spec */
+.docs-fab,.ai-fab{height:32px;padding:0 15px}
+.sb-trigger{height:32px;min-width:32px}
+.sb-add,.sb-set{height:32px}
+.settings-tab-btn,.li-req-btn,.agent-fold-bar{height:32px}
+.ai-input{height:32px;min-height:32px;max-height:32px;padding:4px 11px}
+.modal-input,.set-input{height:32px;padding:4px 11px}
+.set-select,.ai-model{height:32px;padding:0 11px}
+/* radii: controls 6px */
+.stage-proj-btn,.stage-head .kind-seg,.zoom-wrap input,.zoom-wrap select,.git-dropdown-menu,.export-dropdown-menu,.ctx-menu,.sb-group-pop,.doc-export-menu,.git-menu-item,.export-menu-item,.doc-export-item,.ctx-menu .ctx-item,.sb-group-pop .gp-i,.sb-item,.sb-sub-item,.sb-grp-h,.sb-set,.sb-add,.docs-fab,.ai-fab,.docs-btn,.ai-tab-header,.ai-tab-btn,.ai-input,.ai-target-wrap,.ai-model,.ai-hist,.modal-input,.set-input,.set-select,.set-val,.set-shortcut-row,.model-check-list,.model-check-item,.git-status-msg,.git-global-banner,.git-hint-weak,.git-confirm-list,.git-select-menu,.doc-toc .toc-item,.doc-edit textarea,.li-target-item,.li-page-row select,#liReqText,.lm-item-acts button,.mode-seg-tab,.seg-tab,.btn-mini,.btn-pick-cli,.doc-asset-btn,.doc-micro-ta,.doc-micro-btn,.doc-search-box,.doc-mode-tab,.inline-edit-btn,.ai-sess-item,.set-engine-group,.set-engine-group .set-radio{border-radius:6px}
+/* radii: surfaces 8px, flat-first no shadow on cards */
+.docs-panel,.req-panel,.doc-toc,.modal,.settings-modal-v2,.ai-modal,.side-drawer,#editDrawer,.agent-card,.agent-fold-bar,.api-profile-card,.api-profile-add,.uispec-card,.uispec-add,.proj-item,.export-item,.ed-item,.ed-item .ei-text,.ed-item .ei-editta,.ed-item .ei-edit-save,.ed-item .ei-edit-cancel,.li-card,.lm-item,.anno-mgr-item,.byok-test-panel,.ai-msg-bubble.ai-error-card,.doc-asset-card,.md-table-wrap,.inline-edit-pop,.doc-micro-pop,.kind-opt,.git-tree-list,.git-tree-proj{border-radius:8px}
+.stage-head .loc,.test-status-badge,.tool-status-tag,.sel-chip,.followup-chip,.state-chip{border-radius:4px}
+.docs-panel,.req-panel,.li-card,.lm-item,.git-tree-proj,.sb-set{box-shadow:none}
+/* floats use popup tier */
+.ctx-menu,.sb-group-pop,.doc-micro-pop,.inline-edit-pop,.anno-popover-card,.side-drawer,#editDrawer,.git-select-menu{box-shadow:0 6px 16px 0 rgba(0,0,0,0.08),0 3px 6px -4px rgba(0,0,0,0.12),0 9px 28px 8px rgba(0,0,0,0.05)}
+/* masks near rgba(0,0,0,0.45) */
+.modal-mask,.ai-mask,.drawer-mask{background:rgba(0,0,0,0.45)}
+body.aiwin-mode #aiMask{background:rgba(0,0,0,0.45)}
+/* toast leans to alert tints */
+.toast-item{background:#E6F4FF;color:var(--ink);border:1px solid #91CAFF;border-radius:8px;box-shadow:0 6px 16px 0 rgba(0,0,0,0.08),0 3px 6px -4px rgba(0,0,0,0.12),0 9px 28px 8px rgba(0,0,0,0.05)}
+.toast-item.success{background:#F6FFED;border-color:#B7EB8F;color:var(--ink)}
+.toast-item.warning{background:#FFFBE6;border-color:#FFE58F;color:var(--ink)}
+.toast-item.error{background:#FFF2F0;border-color:#FFCCC7;color:var(--ink)}
+.toast-item.info{background:#E6F4FF;border-color:#91CAFF;color:var(--ink)}
