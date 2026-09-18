@@ -1939,6 +1939,7 @@ function setEngineUi(engine, skipSync){
   if(curAiConfig) curAiConfig.engine = engine;
   try{ if(!isCli)renderApiProfileMatrix(); }catch(e){}
   renderModelManagerList(curAiConfig);
+  try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e){}
 }
 if(engCli)engCli.onchange=function(){ setEngineUi('cli'); };
 if(engApi)engApi.onchange=function(){ setEngineUi('api'); };
@@ -2041,8 +2042,12 @@ if(btnTestApi){
     var cfg={ protocol:byokUi.protocol, provider:byokUi.provider, baseUrl:byokUi.baseUrl, apiKey:byokUi.apiKey, model:byokUi.model };
     window.protoAPI.ai.testConnection(cfg).then(function(r){
       i5RenderByokTest(r);
+      try{ curAiConfig=curAiConfig||{}; curAiConfig.apiLastTestOk=!!(r&&r.ok); if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig)window.protoAPI.ai.saveConfig(curAiConfig); }catch(e){}
+      try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e2){}
     }).catch(function(e){
       i5RenderByokTest({ ok:false, kind:'unknown', message:String((e&&e.message)||e) });
+      try{ curAiConfig=curAiConfig||{}; curAiConfig.apiLastTestOk=false; if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig)window.protoAPI.ai.saveConfig(curAiConfig); }catch(e2){}
+      try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e3){}
     });
   };
 }
@@ -2357,25 +2362,31 @@ function renderApiProfileMatrix(){
  var list=(curAiConfig&&curAiConfig.apiProfiles)||[];
  var activeId=curAiConfig&&curAiConfig.activeApiProfileId;
  try{ box.innerHTML=''; }catch(e){}
- list.forEach(function(p){
-  if(!p)return;
-  var card=document.createElement('div');
-  card.className='api-profile-card'+(p.id===activeId?' active':'');
-  card.setAttribute('data-id', p.id);
-  var head=document.createElement('div'); head.className='api-profile-header';
-  var nameEl=document.createElement('span'); nameEl.className='api-profile-name'; nameEl.textContent=apiProfileLabel(p);
-  var badge=document.createElement('span'); badge.className='api-profile-badge'+(p.id===activeId?'':' idle'); badge.textContent=(p.id===activeId?'当前使用':'未使用');
-  head.appendChild(nameEl); head.appendChild(badge); card.appendChild(head);
-  /* B1 隐敏：卡片仅显服务商名称+使用态+操作按钮，URL/模型/Key三字段不渲染（标识data-id与数据p.*保留，明细进弹窗维护） */
-  var acts=document.createElement('div'); acts.className='api-profile-actions';
-  var useBtn=document.createElement('button'); useBtn.type='button'; useBtn.className='btn-mini'; useBtn.setAttribute('data-act','use'); useBtn.setAttribute('data-id',p.id);
-  if(p.id===activeId){ useBtn.textContent='当前使用'; useBtn.disabled=true; }else{ useBtn.textContent='设为当前使用'; }
-  useBtn.onclick=function(ev){ try{ if(ev&&ev.stopPropagation)ev.stopPropagation(); }catch(e){} setActiveApiProfile(p.id); };
+  list.forEach(function(p){
+   if(!p)return;
+   var _eng2='cli'; try{ _eng2=(typeof getActiveEngineInUi==='function')?getActiveEngineInUi():((curAiConfig&&curAiConfig.engine)||'cli'); }catch(e){}
+   var isCur2=(p.id===activeId)&&(_eng2==='api'); /* 跨tab单选：cli引擎下API侧不高亮 */
+   var card=document.createElement('div');
+   card.className='api-profile-card'+(isCur2?' active':'');
+   card.setAttribute('data-id', p.id);
+   var head=document.createElement('div'); head.className='api-profile-header';
+   var nameEl=document.createElement('span'); nameEl.className='api-profile-name'; nameEl.textContent=apiProfileLabel(p);
+   head.appendChild(nameEl);
+   if(isCur2){ var useFlag=document.createElement('span'); useFlag.className='api-use-flag'; useFlag.textContent='使用中'; head.appendChild(useFlag); }
+   card.appendChild(head);
+   /* B1 隐敏：卡片仅显服务商名称+使用态+操作按钮，URL/模型/Key三字段不渲染（标识data-id与数据p.*保留，明细进弹窗维护） */
+   var acts=document.createElement('div'); acts.className='api-profile-actions';
+   if(!isCur2){
+    var useBtn=document.createElement('button'); useBtn.type='button'; useBtn.className='btn-mini'; useBtn.setAttribute('data-act','use'); useBtn.setAttribute('data-id',p.id);
+    useBtn.textContent='设为当前使用';
+    useBtn.onclick=function(ev){ try{ if(ev&&ev.stopPropagation)ev.stopPropagation(); }catch(e){} setActiveApiProfile(p.id); };
+    acts.appendChild(useBtn);
+   }
   var editBtn=document.createElement('button'); editBtn.type='button'; editBtn.className='btn-mini'; editBtn.textContent='编辑'; editBtn.setAttribute('data-act','edit'); editBtn.setAttribute('data-id',p.id);
   editBtn.onclick=function(ev){ try{ if(ev&&ev.stopPropagation)ev.stopPropagation(); }catch(e){} openApiProfileModal('edit', p.id); };
   var delBtn=document.createElement('button'); delBtn.type='button'; delBtn.className='btn-mini'; delBtn.textContent='删除'; delBtn.setAttribute('data-act','del'); delBtn.setAttribute('data-id',p.id);
   delBtn.onclick=function(ev){ try{ if(ev&&ev.stopPropagation)ev.stopPropagation(); }catch(e){} deleteApiProfile(p.id); };
-  acts.appendChild(useBtn); acts.appendChild(editBtn); acts.appendChild(delBtn); card.appendChild(acts);
+   acts.appendChild(editBtn); acts.appendChild(delBtn); card.appendChild(acts);
   card.onclick=function(){ if(p.id!==activeId)setActiveApiProfile(p.id); };
   box.appendChild(card);
  });
@@ -2453,6 +2464,7 @@ function saveApiProfileModal(){
   curAiConfig.apiProfiles.push({ id:nid, name:String((fv.name!=null)?fv.name:'').trim(), provider:fv.provider, protocol:fv.protocol, baseUrl:fv.baseUrl, apiKey:fv.apiKey, model:fv.model||'deepseek-chat', customModels:_cm, enableTools:true });
   if(!curAiConfig.activeApiProfileId)curAiConfig.activeApiProfileId=nid;
  }
+ try{ curAiConfig.apiLastTestOk=false; }catch(e){} /* 配置变更后验证结论失效 */
  try{ syncActiveProfileToMirror(); }catch(e){}
  try{ renderApiProfileMatrix(); }catch(e){}
  try{ renderModelManagerList(curAiConfig); }catch(e){}
@@ -2466,6 +2478,9 @@ function setActiveApiProfile(id){
  for(var i=0;i<((curAiConfig&&curAiConfig.apiProfiles)||[]).length;i++){ if(curAiConfig.apiProfiles[i]&&curAiConfig.apiProfiles[i].id===id){ found=true; break; } }
  if(!found)return;
  curAiConfig.activeApiProfileId=id;
+ try{ curAiConfig.apiLastTestOk=false; }catch(e){}
+ try{ if(typeof setEngineUi==='function')setEngineUi('api'); }catch(e){} /* 跨tab单选：选中API卡即切api引擎，CLI侧高亮自动消失 */
+ try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e){}
  try{ syncActiveProfileToMirror(); }catch(e){}
  try{ renderApiProfileMatrix(); }catch(e){}
  try{ renderModelManagerList(curAiConfig); }catch(e){}
@@ -2673,6 +2688,7 @@ function openUispecAdd(editId){
   if(nm)nm.value=editTarget?(editTarget.name||''):'';
   if(ds)ds.value=editTarget?(editTarget.desc||''):'';
   if(fn)fn.textContent='未选择';
+  var pk0=$('uispecPickFile'); if(pk0&&pk0.classList)pk0.classList.remove('picked');
   if(tip)tip.textContent=uispecEditId?'仅修改名称与描述，不动规范正文文件。':'将归属到「'+(uispecCurTab==='pc'?'PC 端':'移动端')+'」下展示。';
   var mask=$('uispecAddMask');
   if(mask)mask.style.display='flex';
@@ -2696,6 +2712,7 @@ function closeUispecAdd(){
       uispecAddSrcPath=r.path;
       var fn=$('uispecAddFileName');
       if(fn)fn.textContent=r.name||r.path;
+      var pk=$('uispecPickFile'); if(pk&&pk.classList)pk.classList.add('picked');
       var nm=$('uispecAddName');
       if(nm&&!nm.value){
         var base=String(r.name||'').replace(/\.md$/i,'');
@@ -4936,14 +4953,53 @@ function aiOpenGroup(gid){
  }
  aiRenderTraceGroups();
 }
+function aiSyncBadgeDot(st){
+  try{
+    var badge=$('aiAgentBadge')||((typeof aiAgentBadge!=='undefined')?aiAgentBadge:null);
+    if(!badge) return;
+    var dot=null; try{ dot=badge.querySelector('.dot'); }catch(e){}
+    if(dot) dot.className='dot '+st;
+  }catch(e){}
+}
+/* 顶栏身份：CLI 显示主力名，API 显示服务商自定义名；圆点红/橘/绿即时展示，不等就绪 */
+function refreshAiTopIdentity(){
+  try{
+    var eng='cli'; try{ eng=(typeof getActiveEngineInUi==='function')?getActiveEngineInUi():'cli'; }catch(e){}
+    aiAgentBadge=$('aiAgentBadge')||aiAgentBadge; aiAgentName=$('aiAgentName')||aiAgentName;
+    if(eng==='api'){
+      var nm='API', key=false, ok=false;
+      try{
+        var profs=(curAiConfig&&curAiConfig.apiProfiles)||[];
+        var aid=curAiConfig&&curAiConfig.activeApiProfileId;
+        var p=null, i;
+        for(i=0;i<profs.length;i++){ if(profs[i]&&profs[i].id===aid){ p=profs[i]; break; } }
+        if(!p&&profs.length===1) p=profs[0];
+        if(p){ try{ nm=apiProfileLabel(p)||nm; }catch(e){} try{ key=!!String(p.apiKey||'').trim(); }catch(e2){} }
+        try{ ok=!!(curAiConfig&&curAiConfig.apiLastTestOk); }catch(e3){}
+      }catch(e){}
+      if(aiAgentName)aiAgentName.textContent=nm;
+      if(aiAgentBadge)aiAgentBadge.title='当前服务商：'+nm;
+      aiSyncBadgeDot(!key?'err':(ok?'ok':'warn'));
+      return nm;
+    }
+    var label='OpenCode', aid2='';
+    try{ aid2=(curAiConfig&&(curAiConfig.agentId||curAiConfig.mainAgent))||'opencode'; }catch(e){}
+    try{ label=(typeof I5_AGENT_FALLBACK!=='undefined'&&I5_AGENT_FALLBACK[aid2])||aid2||'OpenCode'; }catch(e){}
+    if(aiAgentName)aiAgentName.textContent=label;
+    if(aiAgentBadge)aiAgentBadge.title='当前主力 Agent：'+label;
+    return label;
+  }catch(e){ return ''; }
+}
 function aiRefreshCli(){
- if(!HAS_AI){ if(aiCliEl){ aiCliEl.textContent='仅桌面端可用'; aiCliEl.className='ai-cli err'; } return; }
- if(aiCliEl){ aiCliEl.textContent='检测中…'; aiCliEl.className='ai-cli warn'; }
+ if(!HAS_AI){ if(aiCliEl){ aiCliEl.textContent=''; aiCliEl.className='ai-cli err'; aiCliEl.title='仅桌面端可用'; } try{ if((typeof getActiveEngineInUi==='function'?getActiveEngineInUi():'cli')==='cli') aiSyncBadgeDot('err'); }catch(e){} return; }
+ if(aiCliEl){ aiCliEl.textContent=''; aiCliEl.className='ai-cli warn'; aiCliEl.title='检测中…'; }
+ try{ if((typeof getActiveEngineInUi==='function'?getActiveEngineInUi():'cli')==='cli') aiSyncBadgeDot('warn'); }catch(e){}
  window.protoAPI.ai.checkCli().then(function(r){
   if(aiCliEl){
-   if(r&&r.found){ aiCliEl.textContent='CLI 已就绪'+(r.version?' · v'+r.version:''); aiCliEl.className='ai-cli ok'; aiCliEl.title=r.path||''; }
-   else{ aiCliEl.textContent='未检测到 CLI'; aiCliEl.className='ai-cli err'; aiCliEl.title='可在设置中切换为 API 直连模式或指定 CLI 路径'; }
+   if(r&&r.found){ aiCliEl.textContent=''; aiCliEl.className='ai-cli ok'; aiCliEl.title='CLI 已就绪'+(r.version?' · v'+r.version:''); }
+   else{ aiCliEl.textContent=''; aiCliEl.className='ai-cli err'; aiCliEl.title='未检测到 CLI，可在设置中切换为 API 直连模式或指定 CLI 路径'; }
   }
+  try{ if((typeof getActiveEngineInUi==='function'?getActiveEngineInUi():'cli')==='cli') aiSyncBadgeDot(r&&r.found?'ok':'err'); }catch(e){}
  });
 }
 
@@ -5052,11 +5108,12 @@ function sweepStrayMasks(){
    aiSaveSesh();
   aiRenderSbx();
   aiRenderTargetPages();
-  aiMaskEl.style.display='flex';
-  aiRefreshCli();
-  aiLoadModels();
-  aiRenderBubbles();
-  // 进入后强制滚动到底部，可手动上滑查看历史
+   aiMaskEl.style.display='flex';
+   aiRefreshCli();
+   try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e){}
+   aiLoadModels();
+   aiRenderBubbles();
+   // 进入后强制滚动到底部，可手动上滑查看历史
   try{ aiUserScrolledPause=false; if(aiChatView){ aiChatView.scrollTop=aiChatView.scrollHeight; } }catch(e){}
   /* 弹窗关闭期间任务仍在进行：仅当属于当前沙箱时才恢复流式气泡，避免跨源串扰 */
   if(aiBusy&&aiStreaming&&aiChatView&&aiStreaming.parentNode!==aiChatView){
@@ -5106,11 +5163,12 @@ function sweepStrayMasks(){
    aiSaveSesh();
   aiRenderSbx();
   aiRenderTargetPages();
-  aiMaskEl.style.display='flex';
-  aiRefreshCli();
-  aiLoadModels();
-  aiRenderBubbles();
-  try{ aiUserScrolledPause=false; if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
+   aiMaskEl.style.display='flex';
+   aiRefreshCli();
+   try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e){}
+   aiLoadModels();
+   aiRenderBubbles();
+   try{ aiUserScrolledPause=false; if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
   /* 弹窗关闭期间任务仍在进行：仅当属于当前沙箱时才恢复流式气泡，避免跨源串扰 */
   if(aiBusy&&aiStreaming&&aiChatView&&aiStreaming.parentNode!==aiChatView){
     if(aiActiveKey===aiHistKey()){ aiChatView.appendChild(aiStreaming); aiRenderStream(); try{ if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){} }
@@ -5419,24 +5477,27 @@ function i5RenderAgentMatrix(agents, mainId){
 
   function makeAgentCard(a){
     var id=String(a.id||'');
+    var _eng='cli'; try{ _eng=(typeof getActiveEngineInUi==='function')?getActiveEngineInUi():((curAiConfig&&curAiConfig.engine)||'cli'); }catch(e){}
+    var isCur=(id===mainId)&&(_eng!=='api'); /* 跨tab单选：api引擎下CLI侧不高亮 */
     var card=document.createElement('div');
-    card.className='agent-card'+(id===mainId?' active':'');
+    card.className='agent-card'+(isCur?' active':'');
     card.setAttribute('data-id', id);
     var head=document.createElement('div'); head.className='agent-card-header';
     var nameEl=document.createElement('span'); nameEl.className='agent-name'; nameEl.textContent=i5AgentLabel(a);
-    var st=document.createElement('span'); st.className='agent-status '+(a.available?'ok':'err'); st.textContent=a.available?('已就绪'+(a.version?' · '+a.version:'')):'未检测到';
-    head.appendChild(nameEl); head.appendChild(st); card.appendChild(head);
+    head.appendChild(nameEl);
+    var right=document.createElement('span'); right.className='agent-head-right';
+    if(isCur){ var useFlag=document.createElement('span'); useFlag.className='agent-use-flag'; useFlag.textContent='使用中'; right.appendChild(useFlag); }
+    var st=document.createElement('span');
+    if(a.available){ st.className='agent-status dot'; try{ st.title='已就绪'+(a.version?' · '+a.version:''); }catch(e){} }
+    else{ st.className='agent-status dot err'; st.title='未检测到'; }
+    right.appendChild(st); head.appendChild(right); card.appendChild(head);
     var pathRow=document.createElement('div'); pathRow.className='agent-path-row';
     var pathEl=document.createElement('span'); pathEl.className='agent-path'; pathEl.textContent=a.path||'未安装，可指定自定义路径'; pathEl.title=a.path||'';
     pathRow.appendChild(pathEl); card.appendChild(pathRow);
     var acts=document.createElement('div'); acts.className='agent-card-actions';
-    var mainBtn=document.createElement('button'); mainBtn.type='button'; mainBtn.className='btn-mini';
-    if(id===mainId){ mainBtn.textContent='当前主力'; mainBtn.disabled=true; }
-    else{ mainBtn.textContent='设为主力'; mainBtn.disabled=!a.available; if(!a.available)mainBtn.style.opacity='.5'; }
-    mainBtn.onclick=function(ev){ ev.stopPropagation(); i5SetMainAgent(id); };
     var pickBtn=document.createElement('button'); pickBtn.type='button'; pickBtn.className='btn-mini btn-pick-cli'; pickBtn.textContent='指定路径';
     pickBtn.onclick=function(ev){ ev.stopPropagation(); i5PickAgentPath(id); };
-    acts.appendChild(mainBtn); acts.appendChild(pickBtn); card.appendChild(acts);
+    acts.appendChild(pickBtn); card.appendChild(acts);
     card.onclick=function(){ if(a.available)i5SetMainAgent(id); };
     return card;
   }
@@ -5468,15 +5529,43 @@ function i5RenderAgentMatrix(agents, mainId){
     foldBox.appendChild(foldBar); foldBox.appendChild(foldBody); aiAgentMatrix.appendChild(foldBox);
   }
 }
+/* 切CLI遮罩：点击卡片即显，覆盖保存+重探测全程；令牌防串，15s兜底 */
+var _agentSwSeq=0, _agentSwTimer=null;
+function showAgentSwitchMask(){
+  try{
+    var tok=++_agentSwSeq;
+    var m=document.getElementById('agentSwitchMask');
+    if(!m){
+      m=document.createElement('div'); m.id='agentSwitchMask'; m.className='agent-switch-mask';
+      m.innerHTML='<div class="agent-switch-box"><span class="agent-spin"></span><span>正在切换本地 CLI…</span></div>';
+      document.body.appendChild(m);
+    }
+    m.style.display='flex';
+    m.setAttribute('data-tok', String(tok));
+    if(_agentSwTimer){ try{ clearTimeout(_agentSwTimer); }catch(e){} }
+    _agentSwTimer=setTimeout(function(){ try{ hideAgentSwitchMask(tok); }catch(e){} }, 15000);
+    return tok;
+  }catch(e){ return 0; }
+}
+function hideAgentSwitchMask(tok){
+  try{
+    var m=document.getElementById('agentSwitchMask'); if(!m) return;
+    if(tok && m.getAttribute('data-tok')!==String(tok)) return;
+    m.style.display='none';
+  }catch(e){}
+}
 function i5SetMainAgent(id){
   if(!id)return;
   curAiConfig=curAiConfig||{};
   curAiConfig.agentId=id; curAiConfig.mainAgent=id;
+  try{ if(typeof setEngineUi==='function')setEngineUi('cli'); }catch(e){} /* 跨tab单选：选中CLI卡即切回cli引擎，API侧高亮自动消失 */
+  var _swTok=0; try{ _swTok=showAgentSwitchMask(); }catch(e){}
+  function _hideSw(){ try{ hideAgentSwitchMask(_swTok); }catch(e){} }
   aiInvalidateModels();
   try{ renderModelManagerList(curAiConfig); }catch(e){}
   if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig){
-    window.protoAPI.ai.saveConfig(curAiConfig).then(function(){ i5RefreshAgentBadge(id); try{ refreshCliInfo(); }catch(e){} aiInvalidateModels(); aiLoadModels(); try{ renderModelManagerList(curAiConfig); }catch(e){} aiRefreshCli(); });
-  }else{ i5RefreshAgentBadge(id); try{ refreshCliInfo(); }catch(e){} }
+    window.protoAPI.ai.saveConfig(curAiConfig).then(function(){ i5RefreshAgentBadge(id); var pr=null; try{ pr=refreshCliInfo(); }catch(e){} aiInvalidateModels(); aiLoadModels(); try{ renderModelManagerList(curAiConfig); }catch(e){} aiRefreshCli(); if(pr&&pr.then){ pr.then(function(){ _hideSw(); },function(){ _hideSw(); }); } else { _hideSw(); } },function(){ _hideSw(); });
+  }else{ i5RefreshAgentBadge(id); try{ refreshCliInfo(); }catch(e){} _hideSw(); }
 }
 function i5PickAgentPath(id){
   if(!window.protoAPI||!window.protoAPI.ai)return;
@@ -5496,7 +5585,7 @@ function refreshCliInfo(){
   aiAgentMatrix=$('aiAgentMatrix')||aiAgentMatrix;
   if(aiAgentMatrix&&!aiAgentMatrix.children.length)aiAgentMatrix.innerHTML='<div class="set-tip">正在探测本地 Agent CLI…</div>';
   if(!HAS_AI){ if(aiAgentMatrix)aiAgentMatrix.innerHTML='<div class="set-tip">仅桌面端可用</div>'; return; }
-  window.protoAPI.ai.checkCli().then(function(r){
+  return window.protoAPI.ai.checkCli().then(function(r){
    var agents=(r&&r.agents)||[];
    var mainId=(curAiConfig&&(curAiConfig.agentId||curAiConfig.mainAgent))||null;
    if(!mainId&&window.protoAPI.ai.getConfig){ /* 懒加载主力，避免矩阵默认高亮错误 */ }
@@ -6111,7 +6200,7 @@ function loadSandboxSources(selName, quiet){
     });
     /* 删除沙箱中已移除的预设源 */
     for(var i=sources.length-1;i>=0;i--){ var s=sources[i]; if(s&&s.isPreset&&s.sandboxDir&&!keep[s.name]){ sources.splice(i,1); } }
-    if(!sources.length){ renderSourceList(); libStatus('项目「'+currentProject+'」暂无原型：先点左下角「＋ 新建设计」创建，或通过「＋ 新增原型」导入 html 文件。'); return; }
+    if(!sources.length){ renderSourceList(); libStatus('项目「'+currentProject+'」暂无原型：先点左下角「新建设计」创建，或通过「导入原型」导入 html 文件。'); return; }
     if(_selNameForProto){ /* 新建原型后：按文件夹名选中（fix refresh preserve: subFile param不触发此分支） */
       for(var j=0;j<sources.length;j++){ var so=sources[j]; if(so&&(so.displayName===_selNameForProto||so.name===_selNameForProto+'.html')){ currentSource=so; break; } }
     }

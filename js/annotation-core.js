@@ -259,6 +259,32 @@ var AnnotationEngine = (function () {
   }
 
   /* ═══════ 画布徽标与 Popover 渲染 ═══════ */
+  var annoRectSeq = 0; /* 回包过期令牌：快速连续渲染只认最新一次 */
+  /* 帧视图变化（滚动/换页）与宿主滚动/缩放：节流重排徽标（同源直绑跨域失效，此为唯一通道） */
+  var annoViewTimer = null;
+  function onAnnoViewChanged(){
+    try{
+      if(annoViewTimer) return;
+      annoViewTimer=setTimeout(function(){ try{ annoViewTimer=null; }catch(e){} try{ renderAnnotationBadges(); }catch(e2){} try{ if(window.LinkBind&&typeof window.LinkBind.updateLinkBadge==='function') window.LinkBind.updateLinkBadge(); }catch(e3){} },200);
+    }catch(e){}
+  }
+  try{ window.__onAnnoViewChanged=function(){ onAnnoViewChanged(); }; }catch(e){}
+  try{
+    var _annoStage=null;
+    try{ _annoStage=document.querySelector('.stage-frame'); }catch(e){}
+    if(_annoStage&&!_annoStage.__annoScrollBound){ _annoStage.__annoScrollBound=true; try{ _annoStage.addEventListener('scroll',function(){ try{ onAnnoViewChanged(); }catch(e){} },{capture:true,passive:true}); }catch(e2){} }
+    if(!window.__annoResizeBound){ window.__annoResizeBound=true; window.addEventListener('resize',function(){ try{ onAnnoViewChanged(); }catch(e){} }); }
+    /* 动画跟随轮询：轮播/走马灯等会持续改变元素位置，帧内无事件可推，宿主每 2.5s 轻量重查一次；
+     * 有标注+开显示+页面可见时才跑，空载零开销 */
+    if(!window.__annoPollBound){ window.__annoPollBound=true; try{ setInterval(function(){
+      try{
+        if(!annoBadgesVisible) return;
+        if(!CURRENT_ANNOTATIONS || !CURRENT_ANNOTATIONS.length) return;
+        if(typeof document!=='undefined'&&document.hidden) return;
+        renderAnnotationBadges();
+      }catch(e){}
+    },2500); }catch(e){} }
+  }catch(e){}
   function renderAnnotationBadges() {
     updateTopBarBadge();
 
@@ -275,84 +301,87 @@ var AnnotationEngine = (function () {
     }
 
     var iframe = $('frame');
-    if (!iframe || !iframe.contentDocument) return;
-    var doc = iframe.contentDocument;
-    var curPage = getCurPage(doc);
+    if (!iframe || !iframe.contentWindow) return;
     var curHtml = (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || '';
 
-    /* 严格按当前页面路由/容器过滤标注 - Anno fix: 空 page 始终放行 */
-    var pageAnnos = CURRENT_ANNOTATIONS.filter(function (anno) {
-      var aPg = anno.page || '';
-      if (!aPg) return true; // Anno fix: 无 page 标注全局可见
-      if (curPage) return aPg === curPage;
-      return true;
-    });
+    /* 宿主侧文件过滤；跨域读不到帧 DOM，包围盒走帧桥批量查询（与 HOVER 同坐标系） */
+    var jobs = [];
+    var wantIds = {};
+    for (var gi = 0; gi < CURRENT_ANNOTATIONS.length; gi++) {
+      try {
+        var anno = CURRENT_ANNOTATIONS[gi];
+        if (!anno || !anno.id) continue;
+        if (anno.htmlFile && curHtml && anno.htmlFile !== curHtml) continue;
+        if (!anno.selector) continue;
+        wantIds[anno.id] = anno;
+        jobs.push({ key: String(anno.id), selector: String(anno.selector) });
+      } catch (e) {}
+    }
+    if (!jobs.length) return;
+    if (typeof sandboxRequestAnnoRects !== 'function') return;
 
-    var visibleIdx = 0;
-    var renderedIds = {}; // Anno fix: 记录已渲染 id 用于兜底
-    pageAnnos.forEach(function (anno, _pageIdx) {
-      if (anno.htmlFile && curHtml && anno.htmlFile !== curHtml) return;
-      var resolved = resolveAnnoTarget(doc, anno);
-      // Anno fix: 若严格定位未命中（逗号选择器多匹配等），回退取首个匹配元素，确保测试环境至少 1 个徽标可渲染
-      if (!resolved || !resolved.el) {
-        try { var _fb = doc.querySelector(anno.selector); if(_fb) resolved = { el:_fb, selector:anno.selector }; } catch(_e){}
-        if (!resolved || !resolved.el) return;
-      }
-
-      // Anno fix: 放宽 isElementVisible — 即使判定不可视，仍用真实元素位置，仅当 rect 无效时才兜底
-      var _isVis = isElementVisible(resolved.el, doc);
-      var rect = null;
-      var p = null;
-      try { rect = resolved.el.getBoundingClientRect(); } catch(e) { rect = null; }
-      // 优先用真实 rect 计算徽标位置，避免固定 20,20 导致漂移
-      try { p = annoRectToPage(rect); } catch(e) { p = null; }
-      if ((!p || typeof p.left !== 'number' || typeof p.top !== 'number') && rect) {
-        // rect 有效但转换失败，回退为 rect 本身偏移
-        p = { left: rect.left, top: rect.top, width: rect.width||20, height: rect.height||20, right: (rect.left||0)+(rect.width||20), bottom: (rect.top||0)+(rect.height||20) };
-      }
-      if (!p || (p.width<=0 && p.height<=0)) {
-        // 仅当完全无 rect 时才用固定兜底，避免漂移
-        var fbL = 20 + _pageIdx*22, fbT = 20;
-        p = { left: fbL, top: fbT, width:20, height:20, right: fbL+20, bottom: fbT+20 };
-        rect = { left: fbL, top: fbT, width:20, height:20, right: fbL+20, bottom: fbT+20 };
-      }
-
-      /* 校验元素所属容器页面 - Anno fix: 仅当标注有明确 page 且与当前页冲突时才过滤，空 page 已放行 */
-      var elPage = resolved.el.closest ? resolved.el.closest('.page, [data-page], section[id^="page-"]') : null;
-      if (elPage && curPage && elPage.id && elPage.id !== curPage && !elPage.classList.contains('root')) {
-        if (anno.page && anno.page !== '') {
-          return;
+    var seq = ++annoRectSeq;
+    var req = null;
+    try { req = sandboxRequestAnnoRects(jobs, 4000); } catch (e) { req = null; }
+    if (!req || !req.then) return;
+    req.then(function (res) {
+      if (seq !== annoRectSeq) return;
+      try {
+        var items = (res && Array.isArray(res.items)) ? res.items : [];
+        var framePage = String((res && res.page) || '');
+        var byKey = {};
+        for (var bi = 0; bi < items.length; bi++) {
+          var bit = items[bi];
+          if (bit && bit.key) byKey[String(bit.key)] = bit;
         }
-        // Anno fix: 标注 page 为空时不按 elPage 过滤，避免误丢弃
-      }
+        var visibleIdx = 0;
+        for (var oi = 0; oi < CURRENT_ANNOTATIONS.length; oi++) {
+          (function (oAnno) {
+            try {
+              if (!oAnno || !oAnno.id || !wantIds[oAnno.id]) return;
+              var hit = byKey[String(oAnno.id)];
+              if (!hit || !hit.rect) return;
+              /* 页面过滤：帧回传 hash 为准，空值放行（与旧宽松口径一致） */
+              var aPg = String(oAnno.page || '');
+              if (aPg && framePage && aPg !== framePage) return;
+              var p = null;
+              try { p = annoRectToPage(hit.rect); } catch (e) { p = null; }
+              if (!p) return;
+              /* 视口外裁剪：轮播/动画把元素移出可视区时不画点（如下次回来轮询会重画），防徽标飞到侧栏 */
+              try {
+                var _fr = (typeof frame !== 'undefined' && frame && frame.getBoundingClientRect) ? frame.getBoundingClientRect() : null;
+                if (_fr) {
+                  if (p.right < _fr.left || p.left > _fr.right || p.bottom < _fr.top || p.top > _fr.bottom) {
+                    try { window.__annoLastCull = (window.__annoLastCull || 0) + 1; } catch (e9) {}
+                    return;
+                  }
+                }
+              } catch (e8) {}
+              visibleIdx++;
+              /* 固定编号：用标注在全量列表中的创建顺序（oi+1），不随裁剪/过滤重排；1号被裁时2号仍显示2 */
+              var badgeNo = oi + 1;
+              var badge = document.createElement('div');
+              badge.className = 'anno-badge';
+              badge.textContent = String(badgeNo);
+              badge.title = (oAnno.title || '需求标注');
+              badge.style.top = (p.top - 6) + 'px';
+              badge.style.left = (p.right - 8) + 'px';
 
-      /* 若选择器重对齐更新，静默更新内存中的 selector */
-      if (resolved.selector && resolved.selector !== anno.selector) {
-        anno.selector = resolved.selector;
-      }
+              badge.onclick = (function (_anno, _p, _seq) {
+                return function (e) {
+                  try { e.stopPropagation(); } catch (ee) {}
+                  try { showAnnotationPopover(_anno, _p, _seq); } catch (ee2) {}
+                  try { syncAnnoMgrTo(_anno); } catch (ee3) {}
+                };
+              })(oAnno, p, badgeNo);
 
-      visibleIdx++;
-      renderedIds[anno.id] = true;
-
-      var badge = document.createElement('div');
-      badge.className = 'anno-badge';
-      badge.textContent = visibleIdx;
-      badge.title = (anno.title || '需求标注');
-      badge.style.top = (p.top - 6) + 'px';
-      badge.style.left = (p.right - 8) + 'px';
-
-      badge.onclick = (function(_anno, _p, _seq){
-        return function (e) {
-          e.stopPropagation();
-          showAnnotationPopover(_anno, _p, _seq);
-          syncAnnoMgrTo(_anno);
-        };
-      })(anno, p, visibleIdx);
-
-      container.appendChild(badge);
-    });
-
-    // 移除固定位置兜底（会导致漂移），依赖上方 lenient 渲染已保证可见性
+              container.appendChild(badge);
+            } catch (e) {}
+          })(CURRENT_ANNOTATIONS[oi]);
+        }
+        try { var _culled = 0; try { _culled = window.__annoLastCull || 0; window.__annoLastCull = 0; } catch (e9) {} window.__annoLastDiag = { total: jobs.length, shown: visibleIdx, culled: _culled, page: framePage, at: Date.now() }; } catch (e2) {}
+      } catch (e) {}
+    }, function () { /* 超时/失败：静默无徽标 */ try { window.__annoLastDiag = { total: jobs.length, shown: 0, page: '', timeout: true, at: Date.now() }; } catch (e2) {} });
   }
 
   function showAnnotationPopover(anno, rect, seqNum) {
@@ -375,8 +404,12 @@ var AnnotationEngine = (function () {
     }
 
     popover.style.display = 'block';
-    var top = rect.bottom + 8;
-    var left = Math.max(10, rect.left);
+    var ph = 0;
+    try { ph = popover.offsetHeight || 0; } catch (e) {}
+    var rct = rect || {};
+    var top = (typeof rct.top === 'number' ? rct.top : 0) - ph - 8;
+    if (top < 8) top = (typeof rct.bottom === 'number' ? rct.bottom : 0) + 8;
+    var left = Math.max(10, (typeof rct.left === 'number' ? rct.left : 10));
     if (left + 290 > window.innerWidth) {
       left = Math.max(10, window.innerWidth - 300);
     }
@@ -595,10 +628,60 @@ var AnnotationEngine = (function () {
     }
   }
 
+  /* ═══════ 标注颜色体系（深绿/蓝/橙/浅灰）：卡片与画布徽标同色，文字自适应 ═══════ */
+  var ANNO_COLORS = [
+    { id: 'green', bg: '#047857', fg: '#ffffff' },
+    { id: 'blue', bg: '#2563EB', fg: '#ffffff' },
+    { id: 'orange', bg: '#EA580C', fg: '#ffffff' },
+    { id: 'gray', bg: '#F1F5F9', fg: '#1F2937' }
+  ];
+  function annoColorOf(anno) {
+    var c = '';
+    try { c = String((anno && anno.color) || 'green'); } catch (e) {}
+    for (var i = 0; i < ANNO_COLORS.length; i++) { if (ANNO_COLORS[i].id === c) return ANNO_COLORS[i]; }
+    return ANNO_COLORS[0];
+  }
+  function annoCycleColor(id) {
+    try {
+      if (!id || !currentSource || !currentSource.sandboxDir) return;
+      var list = CURRENT_ANNOTATIONS.slice();
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === id) {
+          var cur = annoColorOf(list[i]).id, ni = 0;
+          for (var j = 0; j < ANNO_COLORS.length; j++) { if (ANNO_COLORS[j].id === cur) { ni = (j + 1) % ANNO_COLORS.length; break; } }
+          list[i].color = ANNO_COLORS[ni].id;
+          break;
+        }
+      }
+      saveAnnotations(currentSource.sandboxDir, list);
+    } catch (e) {}
+  }
+  function annoSetColor(id, colorId) {
+    try {
+      if (!id || !currentSource || !currentSource.sandboxDir) return;
+      var ok = false;
+      for (var k = 0; k < ANNO_COLORS.length; k++) { if (ANNO_COLORS[k].id === colorId) { ok = true; break; } }
+      if (!ok) return;
+      var list = CURRENT_ANNOTATIONS.slice();
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === id) {
+          if (annoColorOf(list[i]).id === colorId) return;
+          list[i].color = colorId;
+          break;
+        }
+      }
+      saveAnnotations(currentSource.sandboxDir, list);
+    } catch (e) {}
+  }
   function renderAnnoMgrList() {
     var body = $('annoMgrBody');
     var countEl = $('annoMgrCount');
     if (countEl) countEl.textContent = CURRENT_ANNOTATIONS.length;
+    /* 诊断：悬停计数可看到上轮画布命中 shown/total，便于定位“有数无标”（选择器/页面失配） */
+    try {
+      var _dg = (typeof window !== 'undefined') ? window.__annoLastDiag : null;
+      if (countEl) countEl.title = _dg ? ('画布命中 ' + _dg.shown + '/' + _dg.total + (_dg.culled ? (' · 移出视口' + _dg.culled) : '') + ' · 帧页' + (_dg.page || '空')) : '';
+    } catch (e) {}
     if (!body) return;
     body.innerHTML = '';
 
@@ -624,8 +707,11 @@ var AnnotationEngine = (function () {
       sec.appendChild(hd);
 
       groups[pg].forEach(function (anno, idx) {
+        /* 固定编号：全量列表中的创建顺序，与画布徽标/浮窗一致，不随分组重排 */
+        var globalNo = CURRENT_ANNOTATIONS.indexOf(anno) + 1;
+        if (!(globalNo >= 1)) globalNo = idx + 1;
         var it = document.createElement('div');
-        it.className = 'anno-mgr-item';
+        it.className = 'anno-mgr-item anno-c-' + annoColorOf(anno).id;
         it.setAttribute('data-anno-id', anno.id);
 
         var topRow = document.createElement('div');
@@ -635,12 +721,12 @@ var AnnotationEngine = (function () {
 
         var dot = document.createElement('span');
         dot.className = 'anno-mgr-dot';
-        dot.textContent = String(idx + 1);
+        dot.textContent = String(globalNo);
 
         // Anno fix: 简化总览 — 只保留 dot 数字圆点，隐藏标题/序号/文件名（保留节点但不可见，兼顾测试与用户视觉）
         var seqEl = document.createElement('span');
         seqEl.className = 'anno-mgr-seq';
-        seqEl.textContent = String(idx + 1); // Anno fix: 纯数字，与 dot 一致，避免显示“标注 1”
+        seqEl.textContent = String(globalNo); // Anno fix: 纯数字，与 dot 一致，避免显示“标注 1”
         seqEl.style.cssText = 'font-size:11px;color:var(--sub);margin-left:4px';
         seqEl.style.display = 'none'; // Anno fix: 隐藏，不再显示“标注 1”
         var fileEl = document.createElement('span');
@@ -654,10 +740,30 @@ var AnnotationEngine = (function () {
         titleEl.style.cssText = 'font-size:11px;color:var(--ink);margin-left:6px;flex:1';
         titleEl.style.display = 'none'; // Anno fix: 隐藏标题
 
+        /* 颜色直选：一色一小点，当前色高亮描边（替代旧单钮循环） */
+        var colorWrap = document.createElement('span');
+        colorWrap.className = 'anno-color-wrap';
+        ANNO_COLORS.forEach(function (cc) {
+          var d = document.createElement('span');
+          d.className = 'anno-color-dot';
+          d.title = '设为此颜色';
+          d.style.background = cc.bg;
+          d.onclick = (function (cid) {
+            return function (e) {
+              e.stopPropagation();
+              annoSetColor(anno.id, cid);
+            };
+          })(cc.id);
+          colorWrap.appendChild(d);
+        });
+
         var delBtn = document.createElement('span');
         delBtn.className = 'anno-mgr-del';
         delBtn.title = '删除此标注';
-        delBtn.textContent = '✕';
+        try {
+          if (typeof window !== 'undefined' && window.PlanBIcon) delBtn.innerHTML = window.PlanBIcon('trash', 13);
+          else delBtn.textContent = '✕';
+        } catch (e) { try { delBtn.textContent = '✕'; } catch (e2) {} }
         delBtn.onclick = function (e) {
           e.stopPropagation();
           deleteAnnoById(anno.id);
@@ -667,6 +773,7 @@ var AnnotationEngine = (function () {
         topRow.appendChild(seqEl);
         topRow.appendChild(fileEl);
         topRow.appendChild(titleEl);
+        topRow.appendChild(colorWrap);
         topRow.appendChild(delBtn);
 
         var sn = document.createElement('span');

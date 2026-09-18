@@ -365,7 +365,7 @@ var LinkBind = (function () {
     var pg = String((info && info.page !== undefined) ? info.page : framePageKey());
     var label = String((info && (info.label || info.text)) || info.tagName || sel).slice(0, 30);
     var txt = String((info && info.text) || '').slice(0, 30);
-    inspectorRemote = { selector: sel, page: pg, label: label, text: txt, tagName: String((info && info.tagName) || '') };
+    inspectorRemote = { selector: sel, page: pg, label: label, text: txt, tagName: String((info && info.tagName) || ''), dname: String((info && info.dname) || '') };
     var links = (currentSource && currentSource._links) || [];
     inspectorLink = null;
     for (var i = 0; i < links.length; i++) {
@@ -431,7 +431,7 @@ var LinkBind = (function () {
     /* 检查是否有 sandboxDir */
     if (!currentSource || !currentSource.sandboxDir) {
       bodyEl.innerHTML = '<div class="li-hint">该原型未入沙箱，暂不支持保存跳转。</div>';
-      if (chipEl) { chipEl.className = 'state-chip'; chipEl.textContent = ''; }
+      if (chipEl) { chipEl.className = 'state-dot off'; chipEl.textContent = ''; chipEl.title = ''; }
       return;
     }
     if (inspectorMode === 'select') {
@@ -443,7 +443,7 @@ var LinkBind = (function () {
       return;
     }
     /* 未绑定 */
-    if (chipEl) { chipEl.className = 'state-chip'; chipEl.textContent = ''; }
+    if (chipEl) { chipEl.className = 'state-dot off'; chipEl.textContent = ''; chipEl.title = ''; }
     bodyEl.innerHTML = '<div class="li-hint">该元素尚未设置跳转。</div>'
       + '<div class="li-actions"><button class="docs-btn primary" id="liSetJump">＋ 设置跳转目标</button></div>';
     var btn = $('liSetJump');
@@ -451,7 +451,7 @@ var LinkBind = (function () {
   }
 
   function renderSelectTarget(sel, pg, chipEl, bodyEl) {
-    if (chipEl) { chipEl.className = 'state-chip active'; chipEl.textContent = '选择中'; }
+    if (chipEl) { chipEl.className = 'state-dot active'; chipEl.textContent = ''; chipEl.title = '选择中'; }
     /* 获取其他源 */
     var others = [];
     for (var i = 0; i < sources.length; i++) {
@@ -523,15 +523,16 @@ var LinkBind = (function () {
   function renderBoundTarget(sel, pg, chipEl, bodyEl) {
     var link = inspectorLink;
     var stale = !!link._stale;
-    /* 状态签 */
+    /* 状态点：绿=已生效，橘黄=未生效（原文案进 title 悬停） */
     if (chipEl) {
       if (stale) {
-        chipEl.className = 'state-chip stale';
-        chipEl.textContent = '失效 · 原型已被修改';
+        chipEl.className = 'state-dot stale';
+        chipEl.title = '未生效：原型已被修改';
       } else {
-        chipEl.className = 'state-chip live';
-        chipEl.textContent = '已保存 · 即时生效';
+        chipEl.className = 'state-dot live';
+        chipEl.title = '已生效';
       }
+      chipEl.textContent = '';
     }
     var targetInfo = '→ ' + escHtml(link.target);
     if (link.targetPage) targetInfo += ' · ' + escHtml(link.targetPage);
@@ -601,14 +602,16 @@ var LinkBind = (function () {
         var links = currentSource._links || [];
         var remoteLbl = (typeof inspectorRemote !== 'undefined' && inspectorRemote && (inspectorRemote.label || inspectorRemote.text)) || '';
         var remoteTxt = (typeof inspectorRemote !== 'undefined' && inspectorRemote && inspectorRemote.text) || '';
-        var btnName = remoteLbl || ((typeof extractElementText === 'function') ? extractElementText(liveEl) : '');
+        /* 中文名优先链：帧侧中文显示名 > 原label/文本 > live元素文本 */
+        var remoteName = (typeof inspectorRemote !== 'undefined' && inspectorRemote && inspectorRemote.dname) || '';
+        var btnName = remoteName || remoteLbl || ((typeof extractElementText === 'function') ? extractElementText(liveEl) : '');
         var foundIdx = -1;
         for (var i = 0; i < links.length; i++) {
           if (links[i].selector === sel && links[i].page === pg) {
             links[i].btnName = btnName;
             links[i].target = targetName;
             links[i].targetPage = targetPage || '';
-            links[i].label = remoteLbl || editElementLabel(liveEl);
+            links[i].label = remoteName || remoteLbl || editElementLabel(liveEl);
             links[i].text = '';
             try { links[i].text = remoteTxt || String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { if (!links[i].text) links[i].text = remoteTxt; }
             links[i].ts = Date.now();
@@ -622,7 +625,7 @@ var LinkBind = (function () {
           var newLink = {
             id: plid, plid: plid, page: pg, selector: sel,
             btnName: btnName,
-            label: remoteLbl || editElementLabel(liveEl),
+            label: remoteName || remoteLbl || editElementLabel(liveEl),
             text: remoteTxt || (function () { try { return String(liveEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); } catch (e) { return ''; } })(),
             target: targetName, targetPage: targetPage || '',
             ts: Date.now()
@@ -807,6 +810,7 @@ var LinkBind = (function () {
       validateLinks();
     }
     renderLinkMgr();
+    try { updateLinkBadge(); } catch (e) {}
     var mask = $('linkMgrMask');
     var drawer = $('linkMgrDrawer');
     if (mask) mask.style.display = 'block';
@@ -837,7 +841,6 @@ var LinkBind = (function () {
       var l = links[i];
       var stale = !!l._stale;
       var staleCls = stale ? ' stale' : '';
-      var pageInfo = l.page || '首页';
       var targetInfo = escHtml(l.target);
       if (l.targetPage) targetInfo += ' · ' + escHtml(l.targetPage);
       
@@ -853,9 +856,9 @@ var LinkBind = (function () {
 
       var chipHtml = '';
       if (stale) {
-        chipHtml = '<span class="state-chip stale">失效</span>';
+        chipHtml = '<span class="state-dot stale" title="未生效：原型已被修改"></span>';
       } else {
-        chipHtml = '<span class="state-chip live">已生效</span>';
+        chipHtml = '<span class="state-dot live" title="已生效"></span>';
       }
 
       html += '<div class="lm-item' + staleCls + '" data-idx="' + i + '">'
@@ -866,12 +869,8 @@ var LinkBind = (function () {
         +   '</div>'
         +   chipHtml
         + '</div>'
-        + '<div class="lm-item-meta">'
-        +   '<span class="lm-meta-tag">所在页面: ' + escHtml(pageInfo) + '</span>'
-        +   '<span class="lm-meta-sel" title="' + escAttr(l.selector) + '">' + escHtml(l.label || l.selector) + '</span>'
-        + '</div>'
         + '<div class="lm-item-target-wrap">'
-        +   '<span class="lm-target-label">' + lbIco('target', '→') + ' 跳转至：</span>'
+        +   '<span class="lm-target-label">跳转至：</span>'
         +   '<span class="lm-target-val">' + targetInfo + '</span>'
         + '</div>'
         + '<div class="lm-item-acts">'
@@ -995,16 +994,25 @@ var LinkBind = (function () {
     renderLinkMgr();
   }
 
-  /* ═══════ 徽标 ═══════ */
+  /* ═══════ 徽标：只计当前页跳出的交互（跨页/跨原型的不计入） ═══════ */
+  function linkOnCurPage(l) {
+    try {
+      var cur = '';
+      try { cur = framePageKey(); } catch (e) {}
+      return String((l && l.page) || '') === String(cur || '');
+    } catch (e2) { return true; }
+  }
   function updateLinkBadge() {
     var links = (currentSource && currentSource._links) || [];
-    var n = links.length;
+    var curLinks = [];
+    for (var ci = 0; ci < links.length; ci++) { if (linkOnCurPage(links[ci])) curLinks.push(links[ci]); }
+    var n = curLinks.length;
     var badge = $('linkBadge');
     if (badge) {
       badge.textContent = n;
       badge.style.display = n ? '' : 'none';
-      /* 有失效项时追加警示 */
-      var hasStale = links.some(function (l) { return l._stale; });
+      /* 有失效项时追加警示（只看当前页） */
+      var hasStale = curLinks.some(function (l) { return l._stale; });
       badge.classList.toggle('warn', hasStale);
     }
   }
@@ -1013,8 +1021,8 @@ var LinkBind = (function () {
   function validateLinks() {
     if (!currentSource) return;
     var links = currentSource._links || [];
-    if (!links.length) return;
-    if (!frame || !frame.contentDocument) return;
+    /* 空列表/跨域读不到文档时只刷新徽标计数，不做戳校验（切原型后清零即走这里） */
+    if (!links.length || !frame || !frame.contentDocument) { try { updateLinkBadge(); } catch (e) {} return; }
     var doc = frame.contentDocument;
     var changed = false;
     for (var i = 0; i < links.length; i++) {

@@ -804,7 +804,7 @@ function testE3_ApiCardHide() {
   assert.ok(exportSrc.includes('function renderApiProfileMatrix('), '缺 renderApiProfileMatrix');
   const rap = extractFn(exportSrc, 'renderApiProfileMatrix');
   assert.ok(/B1 隐敏/.test(rap), '须注明 B1 隐敏');
-  assert.ok(/api-profile-name/.test(rap) && /api-profile-badge/.test(rap), '卡片须显名称+使用态');
+  assert.ok(/api-profile-name/.test(rap) && (/api-profile-badge/.test(rap) || /api-use-flag/.test(rap)), '卡片须显名称+使用态');
   assert.ok(/data-id/.test(rap), '卡片须保留 data-id 标识');
   assert.ok(!/baseUrl/.test(rap), '卡片不得渲染 baseUrl，实际含残留');
   assert.ok(!/apiKey/.test(rap), '卡片不得渲染 apiKey，实际含残留');

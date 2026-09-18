@@ -313,11 +313,15 @@ function test2_CssRulesContract() {
   assertLastProp('.ai-fab:hover', 'background', /#4096FF/i, `[CSS契约失败][Ant] .ai-fab:hover 末次背景须为#4096FF`);
   assertLastProp('.docs-btn.primary:active', 'background', /#0958D9/i, `[CSS契约失败][Ant] .docs-btn.primary:active 末次背景须为#0958D9`);
   assertLastProp('.ai-fab:active', 'background', /#0958D9/i, `[CSS契约失败][Ant] .ai-fab:active 末次背景须为#0958D9`);
-  // 输入focus: pri边框+淡蓝光圈 (末次定义为准)
-  assertLastProp('.ai-input:focus', 'border-color', /var\(--pri\)/, `[CSS契约失败][Ant] .ai-input:focus 末次须 border-color:var(--pri)`);
-  assertLastProp('.ai-input:focus', 'box-shadow', /0\s+0\s+0\s+2px\s+rgba\(22,\s*119,\s*255,\s*0\.2\)/, `[CSS契约失败][Ant] .ai-input:focus 末次须淡蓝光圈0 0 0 2px rgba(22,119,255,0.2)`);
-  assertLastProp('.modal-input:focus', 'border-color', /var\(--pri\)/, `[CSS契约失败][Ant] .modal-input:focus 末次须 border-color:var(--pri)`);
-  assertLastProp('.modal-input:focus', 'box-shadow', /0\s+0\s+0\s+2px\s+rgba\(22,\s*119,\s*255,\s*0\.2\)/, `[CSS契约失败][Ant] .modal-input:focus 末次须淡蓝光圈0 0 0 2px rgba(22,119,255,0.2)`);
+  // 输入focus: 卡片灰边框、无发散光圈 (末次定义为准)
+  assertLastProp('.ai-input:focus', 'border-color', /var\(--line\)/, `[CSS契约失败] .ai-input:focus 末次须 border-color:var(--line)`);
+  assertLastProp('.ai-input:focus', 'box-shadow', /^none\b/, `[CSS契约失败] .ai-input:focus 末次须无光圈`);
+  assertLastProp('.modal-input:focus', 'border-color', /var\(--line\)/, `[CSS契约失败] .modal-input:focus 末次须 border-color:var(--line)`);
+  assertLastProp('.modal-input:focus', 'box-shadow', /^none\b/, `[CSS契约失败] .modal-input:focus 末次须无光圈`);
+  // 菜单蓝字：选中与悬停均为pri文字
+  assertLastProp('.sb-item.active', 'color', /var\(--pri\)/, `[CSS契约失败] 侧栏选中须蓝字`);
+  assertLastProp('.sb-item:hover', 'color', /var\(--pri\)/, `[CSS契约失败] 侧栏悬停须蓝字`);
+  assertLastProp('.settings-tab-btn.active', 'color', /var\(--pri\)/, `[CSS契约失败] 设置选中须蓝字`);
   // 字重铬600 (抽查.docs-btn/.ai-head，时间线动词类除外；末次定义为准)
   assertLastProp('.docs-btn', 'font-weight', /^600\b/, `[CSS契约失败][Ant] 工具铬 .docs-btn 末次字重须为600`);
   assertLastProp('.ai-head', 'font-weight', /^600\b/, `[CSS契约失败][Ant] 工具铬 .ai-head 末次字重须为600`);
@@ -412,6 +416,199 @@ function test3_JsFunctionsAndConstantsContract() {
     /I5_PROTO_HINT\s*=\s*\{[\s\S]*?openai:[\s\S]*?anthropic:[\s\S]*?google:[\s\S]*?ollama:[\s\S]*?azure:/.test(jsContent),
     `[JS契约失败] I5_PROTO_HINT 必须覆盖 5 大通信协议端点提示`
   );
+  // 设置页卡片：天蓝边框 + 使用中文字标识（无边框按钮已删除）
+  assert.ok(
+    /agent-use-flag/.test(jsContent) && /使用中/.test(jsContent),
+    `[JS契约失败] agent卡片须有使用中文字标识`
+  );
+  assert.ok(
+    /agent-head-right/.test(jsContent),
+    `[JS契约失败] agent卡片头须有右侧容器（使用中+状态居右上）`
+  );
+  // 切换遮罩：点击即显，覆盖保存+重探测，令牌防串，失败也关
+  assert.ok(
+    /function showAgentSwitchMask/.test(jsContent) && /function hideAgentSwitchMask/.test(jsContent),
+    `[JS契约失败] 缺切换遮罩函数`
+  );
+  assert.ok(
+    /agent-switch-mask/.test(jsContent) && /正在切换/.test(jsContent),
+    `[JS契约失败] 遮罩须有样式类与切换中文案`
+  );
+  assert.ok(
+    /agent-status dot err/.test(jsContent),
+    `[JS契约失败] 未检测到须为红色圆点`
+  );
+  assert.ok(
+    !/textContent='当前主力'/.test(jsContent) && !/textContent='设为主力'/.test(jsContent),
+    `[JS契约失败] 主力切换按钮须删除（置顶badge标题除外）`
+  );
+  assert.ok(
+    /api-use-flag/.test(jsContent),
+    `[JS契约失败] api卡片须有使用中文字标识`
+  );
+  assert.ok(
+    /\.agent-card\s*\{[^}]*var\(--line\)/.test(cssContent),
+    `[CSS契约失败] agent卡片默认边框须为浅灰`
+  );
+  assert.ok(
+    /\.agent-card\.active\s*\{[^}]*var\(--pri\)/.test(cssContent),
+    `[CSS契约失败] agent选中态边框须与按钮同蓝`
+  );
+  assert.ok(
+    /\.agent-card\.active\s*\{[^}]*var\(--panel\)/.test(cssContent),
+    `[CSS契约失败] agent选中态背景须为纯白`
+  );
+  assert.ok(
+    /\.agent-status\.dot\.err\s*\{[^}]*var\(--err\)/.test(cssContent),
+    `[CSS契约失败] 未检测到圆点须为红色`
+  );
+  // 左侧浮动菜单：导入原型居首、新建设计去加号、设置垫后，sb-foot已移除
+  assert.ok(
+    htmlContent.indexOf('btnAddSource') !== -1 && htmlContent.indexOf('btnAddSource') < htmlContent.indexOf('btnNewProto'),
+    `[HTML契约失败] 导入原型须位于菜单首位`
+  );
+  assert.ok(
+    /id="btnNewProto"[^>]*>新建设计</.test(htmlContent),
+    `[HTML契约失败] 新建设计须去加号`
+  );
+  assert.ok(
+    htmlContent.indexOf('btnSettings') > htmlContent.indexOf('sbTrigger'),
+    `[HTML契约失败] 设置须位于菜单按钮下方`
+  );
+  assert.ok(
+    !/class="sb-foot"/.test(htmlContent),
+    `[HTML契约失败] 空sb-foot须移除`
+  );
+  // 导入原型与新建设计同式（ai-fab），设置仅齿轮图标无文字
+  assert.ok(
+    /class="ai-fab" id="btnAddSource"/.test(htmlContent),
+    `[HTML契约失败] 导入原型须与新建设计同用ai-fab`
+  );
+  assert.ok(
+    /id="btnSettings"[^>]*><i data-ic="settings"><\/i><\/button>/.test(htmlContent),
+    `[HTML契约失败] 设置须为齿轮图标无文字`
+  );
+  assert.ok(
+    /\.api-profile-card\s*\{[^}]*var\(--line\)/.test(cssContent),
+    `[CSS契约失败] api卡片默认边框须为浅灰`
+  );
+  assert.ok(
+    /\.api-profile-card\.active\s*\{[^}]*var\(--pri\)/.test(cssContent),
+    `[CSS契约失败] api选中态边框须与按钮同蓝`
+  );
+  assert.ok(
+    /\.uispec-card\s*\{[^}]*var\(--line\)/.test(cssContent),
+    `[CSS契约失败] 规范卡片默认边框须为浅灰`
+  );
+  assert.ok(
+    /\.uispec-card\.active\s*\{[^}]*var\(--pri\)/.test(cssContent),
+    `[CSS契约失败] 规范选中态边框须与按钮同蓝`
+  );
+  assert.ok(
+    /\.set-engine-group\s*\{[^}]*var\(--bg-subtle\)/.test(cssContent),
+    `[CSS契约失败] agent分段须与规范分段同底`
+  );
+  assert.ok(
+    /\.proj-item\.on\s*\{[^}]*var\(--panel\)/.test(cssContent),
+    `[CSS契约失败] 项目选择卡片选中须白底`
+  );
+}
+
+// =========================================================================
+// 断言 5：顶栏身份与设置入口（沙箱隐藏/三色点/历史位/服务商名/输入底色）
+// =========================================================================
+function test5_TopIdentity() {
+  // 设置按钮圆形
+  assert.ok(/\.sb-set\s*\{[^}]*border-radius\s*:\s*50%/.test(cssContent), '设置按钮须圆形');
+  // 沙箱名隐藏但元素保留
+  assert.ok(/#aiSbx\s*\{\s*display\s*:\s*none/.test(cssContent), '沙箱名须隐藏');
+  assert.ok(htmlContent.includes('id="aiSbx"'), '沙箱元素须保留');
+  // CLI徽标点化：无文字 + 三色
+  assert.ok(/aiCliEl\.textContent='';/.test(jsContent), 'CLI徽标须无文字');
+  assert.ok(/\.ai-cli\s*\{[^}]*width\s*:\s*8px/.test(cssContent), 'CLI徽标须为圆点尺寸');
+  // 历史按钮：无图标 + 白底灰框 + 独立窗口右侧/徽标左侧
+  assert.ok(/id="aiHistBtn"[^>]*>历史</.test(htmlContent), '历史按钮须无图标纯文字');
+  assert.ok(htmlContent.indexOf('btnAiWinToggle') < htmlContent.indexOf('aiHistBtn')
+    && htmlContent.indexOf('aiHistBtn') < htmlContent.indexOf('aiAgentBadge'), '历史按钮须在独立窗口右侧、徽标左侧');
+  assert.ok(/\.ai-hist\s*\{[^}]*var\(--panel\)/.test(cssContent), '历史按钮须白底');
+  // 徽标融合：服务商自定义名 + 三色点
+  assert.ok(/function refreshAiTopIdentity/.test(jsContent), '缺顶栏身份融合函数');
+  assert.ok(/apiProfileLabel\(p\)/.test(jsContent), 'API须显示服务商自定义名');
+  assert.ok(/\.agent-pill-badge \.dot\.ok/.test(cssContent) && /\.agent-pill-badge \.dot\.warn/.test(cssContent)
+    && /\.agent-pill-badge \.dot\.err/.test(cssContent), '徽标须红橘绿三色点');
+  // 规范文件行：按钮选中态 + 文件名纯文字
+  assert.ok(/uispecPickFile/.test(jsContent) && /classList.*picked/.test(jsContent), '选择文件按钮须有选中态');
+  assert.ok(/#uispecAddFileName\s*\{[^}]*border\s*:\s*none/.test(cssContent), '文件名须无边框纯文字');
+  // 输入底色：默认白 + 禁用灰
+  assert.ok(/\.set-input\s*\{[^}]*var\(--panel\)/.test(cssContent), '输入框默认须白底');
+  assert.ok(/\[disabled\]\s*\{[^}]*#E2E8F0/.test(cssContent), '输入禁用须灰底');
+  // 左侧栏：无收起按钮 + 新建文件夹纯文字 + 无原型名
+  assert.ok(!htmlContent.includes('btnSbCollapse'), '收起按钮须删除');
+  assert.ok(/id="btnAddGroup"[^>]*>新建文件夹</.test(htmlContent), '新建文件夹须去加号纯文字');
+  assert.ok(!htmlContent.includes('id="loc"'), '原型名须删除');
+  // 独立CLI点隐藏（状态并入徽标圆点）
+  assert.ok(/\.ai-cli\s*\{[^}]*display\s*:\s*none/.test(cssContent), '独立CLI点须隐藏');
+  // 新建设计弹窗卡片与CLI卡片同式
+  assert.ok(/\.kind-opt\s*\{[^}]*1\.5px solid var\(--line\)/.test(cssContent), 'kind卡片须浅灰边框');
+  assert.ok(/\.kind-opt\.on\s*\{[^}]*var\(--panel\)/.test(cssContent), 'kind选中须白底');
+  // 跨tab单选：选中即切引擎 + 仅当前引擎高亮
+  assert.ok(/setEngineUi\('cli'\)/.test(jsContent.match(/function i5SetMainAgent[\s\S]*?\n\}/)[0]), '选CLI卡须切引擎');
+  assert.ok(/setEngineUi\('api'\)/.test(jsContent.match(/function setActiveApiProfile[\s\S]*?\n\}/)[0]), '选API卡须切引擎');
+  assert.ok(/_eng!=='api'/.test(jsContent) && /_eng2==='api'/.test(jsContent), '双矩阵须按引擎门控高亮');
+  // 提示文案精简：7句冗余须删除
+  for (const s of ['点卡片设为主力', '右上角下拉菜单', '各选一个生效', '按栈顶优先', '在此保存会改写全局远端，影响全部项目', '保存即改写全局 origin', '我已知悉 Token']) {
+    assert.ok(!htmlContent.includes(s), `冗余文案须删除:${s.slice(0, 8)}`);
+  }
+  assert.ok(!htmlContent.includes('gitGlobalHint'), '全局单库横幅须删除');
+}
+
+// =========================================================================
+// 断言 6：标注与交互卡片（绿卡/垃圾桶/单行/中文按钮/序号）
+// =========================================================================
+function test6_AnnoLink() {
+  const lbSrc = fs.readFileSync(path.join(rootDir, 'js', 'link-bind.js'), 'utf8');
+  const anSrc = fs.readFileSync(path.join(rootDir, 'js', 'annotation-core.js'), 'utf8');
+  // 标注卡片：四色主题、无边框、黑白自适应正文、垃圾桶删除居右
+  assert.ok(/\.anno-mgr-item\.anno-c-green\s*\{[^}]*#047857/.test(cssContent), '深绿主题');
+  assert.ok(/\.anno-mgr-item\.anno-c-blue\s*\{[^}]*#2563EB/.test(cssContent), '蓝色主题');
+  assert.ok(/\.anno-mgr-item\.anno-c-orange\s*\{[^}]*#EA580C/.test(cssContent), '橙色主题');
+  assert.ok(/\.anno-mgr-item\.anno-c-gray\s*\{[^}]*#F1F5F9/.test(cssContent), '浅灰主题');
+  assert.ok(/\.anno-mgr-item\s*\{[^}]*border\s*:\s*none/.test(cssContent), '标注卡片须无边框');
+  assert.ok(/\.anno-mgr-snippet\s*\{[^}]*color\s*:\s*inherit/.test(cssContent), '标注文字须继承主题色');
+  assert.ok(/\.anno-mgr-snippet\s*\{[^}]*font-weight\s*:\s*700/.test(cssContent), '标注文字须加粗');
+  assert.ok(/\.anno-color-btn\s*\{[^}]*width\s*:\s*18px/.test(cssContent), '颜色按钮与圆点同大');
+  assert.ok(/\.anno-mgr-del\s*\{[^}]*margin-left\s*:\s*auto/.test(cssContent), '删除按钮须居右');
+  assert.ok(/PlanBIcon\('trash'/.test(anSrc), '删除按钮须垃圾桶图标');
+  assert.ok(/dot\.textContent = String\(globalNo\)/.test(anSrc), '圆点须写全局固定序号');
+  assert.ok(/\.anno-color-dot\s*\{[^}]*width\s*:\s*12px/.test(cssContent), '颜色直选小点12px');
+  assert.ok(/\.anno-color-wrap\s*\{[^}]*inline-flex/.test(cssContent), '颜色点须横向排列');
+  assert.ok(/annoSetColor\(anno\.id, cid\)/.test(anSrc), '颜色点须直选颜色');
+  // 浮窗在标注点上方（放不下才回落下方）
+  assert.ok(/- ph - 8/.test(anSrc), '浮窗须在上方');
+  // 卡片顺序：top/跳转/按钮/页面；跳转去图标；中文名链
+  const rlm = lbSrc.indexOf('lm-item-target-wrap');
+  assert.ok(rlm > lbSrc.indexOf('lm-item-top'), '跳转行须在顶部行之后');
+  for (const b of ['试跳', '更换目标', '删除']) {
+    assert.ok(lbSrc.includes('>' + b + '<'), `按钮须中文:${b}`);
+  }
+  assert.ok(/\.lm-target-val\s*\{[^}]*white-space\s*:\s*nowrap/.test(cssContent), '跳转值须不换行');
+  assert.ok(rlm > lbSrc.indexOf('lm-item-top'), '跳转行须在顶部行之后');
+  assert.ok(lbSrc.indexOf("' class=\"lm-item-acts\"'") > 0 || lbSrc.indexOf('lm-item-acts">') > 0, '按钮行存在');
+  assert.ok(!lbSrc.includes('lm-item-meta') && !lbSrc.includes('所在页面'), '所在页面行须删除');
+  assert.ok(lbSrc.includes('state-dot live') && lbSrc.includes('state-dot stale'), '状态须为圆点（绿=生效/橘黄=未生效）');
+  assert.ok(/\.state-dot\.live\s*\{[^}]*#22C55E/.test(cssContent), '生效点须绿色');
+  assert.ok(/\.state-dot\.stale\s*\{[^}]*#F59E0B/.test(cssContent), '未生效点须橘黄');
+  assert.ok(/function linkOnCurPage\(/.test(lbSrc) && /linkOnCurPage\(links\[ci\]\)/.test(lbSrc), '徽标只计当前页跳出');
+  assert.ok(/p\.right < _fr\.left \|\| p\.left > _fr\.right/.test(anSrc), '视口外徽标须裁剪（防飞点）');
+  assert.ok(/var badgeNo = oi \+ 1/.test(anSrc) && /badge\.textContent = String\(badgeNo\)/.test(anSrc), '画布徽标须用固定编号（裁剪不重排）');
+  assert.ok(/__annoPollBound/.test(anSrc) && /setInterval\(function\(\)/.test(anSrc), '动画元素须轮询跟随');
+  assert.ok(!lbSrc.includes("lbIco('target'"), '跳转图标须删除');
+  assert.ok(lbSrc.includes('remoteName'), '绑定命名须优先中文名');
+  const agentTpl = fs.readFileSync(path.join(rootDir, 'js', 'sandbox-agent.js'), 'utf8');
+  const coreTpl = fs.readFileSync(path.join(rootDir, 'js', 'sandbox-core.js'), 'utf8');
+  for (const [nm, src] of [['sandbox-agent', agentTpl], ['sandbox-core', coreTpl]]) {
+    assert.ok(src.includes('pickDname') && src.includes('dname'), nm + '帧模板须有中文名计算与回传');
+  }
 }
 
 // =========================================================================
@@ -753,7 +950,9 @@ function runAllAssertions() {
     ['断言1 原型+文档.html 关键容器与模板完整性', test1_HtmlDomContract],
     ['断言2 app.css 现代视觉体系与动效关键帧规则完整性', test2_CssRulesContract],
     ['断言3 js/project-ai-export.js 核心函数与常量契约', test3_JsFunctionsAndConstantsContract],
-    ['断言4 前端交互运行时仿真与数据处理无未捕获异常', test4_RuntimeSimulationAndBoundaryHandling]
+    ['断言4 前端交互运行时仿真与数据处理无未捕获异常', test4_RuntimeSimulationAndBoundaryHandling],
+    ['断言5 顶栏身份与设置入口', test5_TopIdentity],
+    ['断言6 标注与交互卡片', test6_AnnoLink]
   ];
 
   for (const [title, fn] of tests) {

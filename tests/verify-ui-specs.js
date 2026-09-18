@@ -190,7 +190,13 @@ console.log('UISPEC_PASS: UI规范种子与注入全绿');
     assert.ok(src.includes('CTRL_STATE'), nm + '帧模板缺CTRL_STATE类型');
     assert.ok(src.includes('sendEscape'), nm + '帧模板缺Esc转发');
     assert.ok(src.includes('sendHover') && src.includes('mousemove'), nm + '帧模板缺悬停上报');
+    assert.ok(src.includes('ANNO_RECTS') && src.includes('ANNO_RECTS_RESULT'), nm + '帧模板缺标注包围盒查询');
   }
+  assert.ok(sbSrc.includes('ANNO_RECTS: 1') && agentSrc.includes('ANNO_RECTS: 1'), '双向白名单须含ANNO_RECTS');
+  assert.ok(sbSrc.includes('function sandboxRequestAnnoRects('), '宿主缺包围盒请求函数');
+  assert.ok(sbSrc.includes("t === 'ANNO_RECTS_RESULT'"), '宿主缺包围盒回包分支');
+  assert.ok(sbSrc.includes('ANNO_VIEW: 1') && agentSrc.includes('sendAnnoView'), '视图变化须帧推宿主重排');
+  assert.ok(sbSrc.includes("__onAnnoViewChanged"), '宿主须分发视图变化到注册表');
   assert.ok(sbSrc.includes('CTRL_STATE: 1') && agentSrc.includes('CTRL_STATE: 1'), '双向白名单须含CTRL_STATE');
   assert.ok(sbSrc.includes('__onRemoteCtrlState'), '宿主须分发CTRL_STATE到注册表');
   assert.ok(sbSrc.includes("t === 'PICK_MISS'") && agentSrc.includes('PICK_MISS'), '未武装补偿须双端实现');
@@ -202,6 +208,38 @@ console.log('UISPEC_PASS: UI规范种子与注入全绿');
   assert.ok(eeSrc.includes('function remoteEscape(') && eeSrc.includes('__onRemoteEscape'), '帧Esc须进统一关闭链');
   assert.ok(eeSrc.includes('function cancelCtrlPickState(') && eeSrc.includes('__cancelCtrlPick'), '须有拾取取消出口');
   assert.ok(eeSrc.includes('function editShowHoverRect(') && eeSrc.includes('__onRemoteHover'), '远端悬停须复用高亮框');
+  const anSrc = fs.readFileSync(path.join(rootDir, 'js', 'annotation-core.js'), 'utf8');
+  assert.ok(anSrc.includes('sandboxRequestAnnoRects'), '标注徽标须走帧桥查包围盒');
+  assert.ok(anSrc.includes('function onAnnoViewChanged(') && anSrc.includes('__onAnnoViewChanged'), '视图变化须节流重排');
+  assert.ok(!/contentDocument\) return;/.test(anSrc.match(/function renderAnnotationBadges\(\)[\s\S]*?var curHtml/)?.[0] || ''), '徽标渲染不得再以contentDocument为门');
+  // 双副本一致性硬门禁：内嵌模板须可求值、可解析、与 ESM 源逐字节一致（防丢行导致帧脚本全挂）
+  {
+    const vm = require('node:vm');
+    const brace = (src, name) => {
+      const hm = src.match(new RegExp('function\\s+' + name + '\\s*\\(\\s*\\)\\s*\\{'));
+      assert.ok(hm, '[提取失败] function ' + name);
+      let i = hm.index + hm[0].length, depth = 1, inS = null, inL = false, inB = false;
+      for (; i < src.length; i++) {
+        const c = src[i], n = src[i + 1];
+        if (inL) { if (c === '\n') inL = false; continue; }
+        if (inB) { if (c === '*' && n === '/') { inB = false; i++; } continue; }
+        if (inS) { if (c === '\\') { i++; continue; } if (c === inS) inS = null; continue; }
+        if (c === '/' && n === '/') { inL = true; i++; continue; }
+        if (c === '/' && n === '*') { inB = true; i++; continue; }
+        if (c === '"' || c === "'" || c === '`') { inS = c; continue; }
+        if (c === '{') depth++;
+        if (c === '}') { depth--; if (depth === 0) break; }
+      }
+      assert.ok(depth === 0, '[括号失衡] function ' + name);
+      return src.slice(hm.index, i + 1);
+    };
+    const ident = (t) => String(t || '');
+    const inlineCode = new Function('sandboxSafeScript', brace(sbSrc, 'sandboxAgentSource') + '\nreturn sandboxAgentSource();')(ident);
+    const esmCode = new Function('sandboxSafeScript', brace(agentSrc, 'sandboxAgentSource') + '\nreturn sandboxAgentSource();')(ident);
+    assert.doesNotThrow(() => new vm.Script(inlineCode, { filename: 'inline-agent.js' }), '内嵌帧模板语法非法，帧内监听全挂');
+    assert.doesNotThrow(() => new vm.Script(esmCode, { filename: 'esm-agent.js' }), 'ESM帧模板语法非法');
+    assert.strictEqual(inlineCode, esmCode, '帧模板双副本漂移：内嵌副本须与 ESM 源逐字节一致');
+  }
   assert.ok(paeSrc.includes('正在刷新'), '刷新须有开始提示（祛静默）');
   assert.ok(paeSrc.includes('尚未进入任何项目'), '无项目刷新须提示（祛静默）');
   // 绑定后默认刷新原型：saveJumpBinding 成功路径须走刷新链路（子页面保持）

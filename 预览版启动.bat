@@ -16,6 +16,13 @@ for /f %%v in ('node --version') do echo Node 版本：%%v
 for /f %%v in ('node --version') do echo Node 版本：%%v>> "%LOG%"
 echo [2/3] 检查依赖...
 if not exist "node_modules\electron\cli.js" (
+  where npm >nul 2>&1
+  if errorlevel 1 (
+    echo [错误] 缺少依赖且未找到 npm，请先安装 Node.js 官网长期支持版（含 npm）。
+    echo [错误] 未找到 npm >> "%LOG%"
+    pause
+    exit /b 1
+  )
   echo 缺少依赖，正在 npm install（可能需要几分钟）...
   call npm install >> "%LOG%" 2>&1
   if errorlevel 1 (

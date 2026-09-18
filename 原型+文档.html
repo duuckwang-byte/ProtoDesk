@@ -13,7 +13,6 @@
  <!-- /* P1-6 fix */ 顶部溢出: stage-head 保持40px, flex横滑+省略, 暗色Token已补齐 -->
  <header class="stage-head">
   <button class="stage-proj-btn" id="sbProject" title="当前项目，点击切换项目"><i data-ic="folder"></i> <span class="stage-proj-name">项目：—</span></button><!-- icon align fix: i[data-ic] 已在 app.css 统一基线 -->
-  <span class="loc" id="loc">智能录入</span>
   <span class="kind-seg" id="kindSeg" title="若识别有误，可手动切换端别展示">
    <button id="btnKindMobile" title="按移动端预览">移动</button>
    <span class="sep"></span>
@@ -64,16 +63,9 @@
   <aside class="sb">
    <div class="sb-head">
     <span class="sb-title">原型列表</span>
-    <button class="sb-addg" id="btnAddGroup" title="新建文件夹（虚拟分组，不创建真实目录）">＋ 文件夹</button>
-    <button class="sb-c" id="btnSbCollapse" title="收起左侧栏">«</button>
+    <button class="sb-addg" id="btnAddGroup" title="新建文件夹（虚拟分组，不创建真实目录）">新建文件夹</button>
    </div>
    <div class="sb-list" id="sbList"></div>
-   <div class="sb-foot">
-    <div class="sb-add-wrap">
-     <button class="sb-add" id="btnAddSource">＋ 新增原型</button>
-    </div>
-    <button class="sb-set" id="btnSettings" title="设置">设置</button>
-   </div>
   </aside>
   <main class="stage">
    <div class="stage-frame" id="stageFrame">
@@ -126,9 +118,11 @@
  </div>
 </div>
 <span class="sb-hotzone" title="打开菜单">
-  <button class="ai-fab" id="btnNewProto" title="新建一个原型：先选 PC 端或移动端，再创建独立文件夹沙箱（空 html + md）并支持大模型对话">＋ 新建设计</button>
+  <button class="ai-fab" id="btnAddSource">导入原型</button>
+  <button class="ai-fab" id="btnNewProto" title="新建一个原型：先选 PC 端或移动端，再创建独立文件夹沙箱（空 html + md）并支持大模型对话">新建设计</button>
   <button class="ai-fab" id="aiDesignFab" title="在当前原型沙箱打开大模型对话，继续最近一次的 AI 创作">AI设计</button>
   <button class="sb-trigger" id="sbTrigger" title="打开/收起菜单栏"><i data-ic="menu"></i></button>
+  <button class="sb-set" id="btnSettings" title="设置"><i data-ic="settings"></i></button>
 </span>
 <span class="doc-hotzone" title="打开功能说明">
   <button class="docs-fab" id="reqFab" title="打开「最新需求」文档（当前迭代需求，独立 md 文件）">最新需求</button>
@@ -337,7 +331,6 @@
         <div class="ai-agent-matrix" id="aiAgentMatrix"><div class="set-tip">正在探测本地 Agent CLI…</div></div>
        <div class="set-row" style="margin-top:8px">
         <button class="docs-btn" id="btnRedetectAgents" title="并发重新探测全部 Agent CLI">重新探测</button>
-        <span class="set-tip">点卡片设为主力，每卡支持指定路径与重新探测。</span>
        </div>
       </div>
       </div>
@@ -352,8 +345,7 @@
     <!-- Tab 2: 模型显示管理 -->
     <div class="settings-pane" id="paneSetModels" style="display:none">
      <div class="set-section-title">对话框模型下拉过滤</div>
-     <div class="set-tip">勾选要在对话框右上角下拉菜单中展示的模型。未勾选的将自动隐藏，避免列表过长。</div>
-      <div class="model-mgr-toolbar">
+     <div class="model-mgr-toolbar">
        <input class="set-input model-search" id="setModelSearch" placeholder="搜索模型...">
        <button class="docs-btn" id="btnFetchModels2" title="从当前引擎拉取全部模型，在弹窗中勾选">获取模型</button>
        <button class="docs-btn" id="btnClearAllModels">清空</button>
@@ -368,7 +360,6 @@
     <!-- Tab: 设计规范（移动/PC 分开展示卡片，每端最多选中一个） -->
     <div class="settings-pane" id="paneSetUispec" style="display:none">
      <div class="set-section-title">设计规范（AI 生成原型时遵循）</div>
-     <div class="set-tip">移动端与 PC 端各选一个生效（可不选）。选中后新建/修改对应端原型即按该规范生成；直接改 specs/ 下 md 文件即时生效。</div>
       <div class="mode-seg-tab">
        <button class="seg-tab on" id="uispecSubMobile" type="button">移动端</button>
        <button class="seg-tab" id="uispecSubPc" type="button">PC 端</button>
@@ -393,7 +384,6 @@
     <!-- Tab 4: 快捷键 -->
     <div class="settings-pane" id="paneSetShortcut" style="display:none">
      <div class="set-section-title">快捷键一览</div>
-     <div class="set-tip">编辑框类仅在对应输入框聚焦时生效，Esc 由 MaskStack 按栈顶优先关闭，点遮罩同效。</div>
       <div class="set-box">
        <div class="set-field">
         <label>预览拾取与就地改</label>
@@ -780,8 +770,6 @@
    <span class="modal-x" id="gitConfigClose" title="关闭">✕</span>
   </div>
    <div class="modal-body">
-    <div class="git-global-banner" id="gitGlobalHint">全局单库：全部项目共用一个远端（<span id="gitGlobalOriginText">未配置</span>）。在此保存会改写全局远端，影响全部项目。</div>
-    <div class="modal-row"><span class="modal-hint">配置全局原型库远程仓库（单库模型：全部项目共用一个远端，保存即改写全局 origin）。支持阿里云 Codeup、GitLab、Gitee、GitHub 等 HTTPS 仓库。</span></div>
     <div class="modal-row">
      <label style="font-size:12px; font-weight:700; color:var(--fg); display:block; margin-bottom:4px;">远程仓库地址 (HTTPS)</label>
      <input class="modal-input" id="gitRemoteUrl" type="text" placeholder="如 https://codeup.aliyun.com/.../PRFile.git" spellcheck="false" style="width:100%;">
@@ -805,7 +793,6 @@
       <button class="docs-btn" id="btnGitTokenEye" type="button" style="font-size:12px; padding:0 8px;">显示</button>
      </div>
      <div class="git-field-hint" id="gitTokenHint">留空表示不更新已保存凭据。</div>
-     <div class="git-hint-weak">我已知悉 Token 将加密存于本机，仅本机可用</div>
     </div>
    <div class="modal-row" style="display:flex; align-items:center; gap:8px; margin-top:8px;">
     <button class="docs-btn" id="btnTestGitConn" type="button">测试连通性</button>
@@ -933,10 +920,10 @@
    <button class="ai-tab-btn" id="tabLogsBtn"><i data-ic="file-text"></i> 执行日志 (Trace)<span class="log-err-dot" id="logErrDot" style="display:none">!</span></button>
    </div>
    <button class="docs-btn" id="btnAiWinToggle" title="在独立窗口中打开AI对话">独立窗口</button>
+   <span class="ai-hist" id="aiHistBtn" title="历史版本：每次 AI 任务前自动保存，可一键恢复">历史</span>
    <span class="ai-cli ok" id="aiSbx" title="当前沙箱（模型工作目录）">沙箱：—</span>
   <span class="ai-cli warn" id="aiCli">检测中…</span>
   <span class="agent-pill-badge" id="aiAgentBadge" title="当前主力 Agent（设置中心矩阵切换）"><span class="dot"></span><span id="aiAgentName">OpenCode</span></span>
-  <span class="ai-hist" id="aiHistBtn" title="历史版本：每次 AI 任务前自动保存，可一键恢复">⏱ 历史</span>
   <span class="modal-x" id="aiClose" title="关闭">✕</span>
   </div>
   <div class="ai-main" style="display:flex;flex:1;min-height:0;overflow:hidden">
