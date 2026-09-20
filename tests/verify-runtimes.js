@@ -2,7 +2,9 @@
 // Iteration 2 runtimes 自动化验证（纯 Node，无 Electron 依赖，CommonJS）
 // 覆盖方案 2.4 节 4 项断言，win32 下全绿。
 const assert = require('node:assert');
+const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 
 const { BASE_AGENT_DEFS, getAgentDef, getAllAgentDefs } = require('../runtimes/registry');
 const { detectAllAgents } = require('../runtimes/detection');
@@ -25,7 +27,7 @@ async function test1_RegistryContract() {
     assert.ok(ids.has(expected), `id集合应含 ${expected}，实际 [${[...ids].join(', ')}]`);
   }
 
-  const allowedFormats = new Set(['claude-stream-json', 'json-event-stream', 'plain']);
+  const allowedFormats = new Set(['claude-stream-json', 'json-event-stream', 'plain', 'qoder-stream-json']);
   const allowedProtocols = new Set(['acp-json-rpc', 'copilot-stream-json', 'qoder-stream-json', 'pi-rpc']);
   for (const def of defs) {
     for (const field of ['id', 'name', 'bin', 'versionArgs', 'fallbackModels', 'buildArgs']) {
@@ -35,7 +37,7 @@ async function test1_RegistryContract() {
     assert.strictEqual(typeof def.promptViaStdin, 'boolean', `def[${def.id}].promptViaStdin 应为boolean`);
     assert.ok(
       allowedFormats.has(def.streamFormat),
-      `def[${def.id}].streamFormat 应为三者之一，实际 ${def.streamFormat}`
+      `def[${def.id}].streamFormat 应为四者之一，实际 ${def.streamFormat}`
     );
     assert.ok(Array.isArray(def.versionArgs), `def[${def.id}].versionArgs 应为数组`);
     assert.ok(Array.isArray(def.fallbackModels) && def.fallbackModels.length > 0, `def[${def.id}].fallbackModels 应为非空数组`);
@@ -44,7 +46,7 @@ async function test1_RegistryContract() {
       assert.ok(allowedProtocols.has(def.needsProtocol), `def[${def.id}].needsProtocol 非法：${def.needsProtocol}`);
     }
   }
-  assert.strictEqual(defs.filter((d) => d.needsProtocol).length, 12, '发现型CLI应为12个');
+  assert.strictEqual(defs.filter((d) => d.needsProtocol).length, 11, '发现型CLI应为11个（qoder已直驱）');
 
   // buildArgs('hi',[],[],{},{}) 返回数组且含免交互参数
   const byId = new Map(defs.map((d) => [d.id, d]));
@@ -89,6 +91,26 @@ async function test1_RegistryContract() {
 
   assert.strictEqual(getAgentDef('claude').id, 'claude', "getAgentDef('claude').id 应==='claude'");
   assert.strictEqual(getAgentDef('nope'), null, "getAgentDef('nope') 应===null");
+  // Qoder CN版识别：manifest备选名 + resolution厂商目录版本化识别（避开0字节占位）
+  {
+    const mf = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'runtimes', 'defs', 'manifest.json'), 'utf8'));
+    const qe = (mf.defs || []).find((d) => d && d.id === 'qoder');
+    assert.ok(qe, 'manifest须含qoder条目');
+    assert.ok(Array.isArray(qe.fallbackBins) && qe.fallbackBins.includes('qoderclicn'), 'qoder须含CN备选名qoderclicn');
+    const qd = getAgentDef('qoder');
+    assert.ok(qd && Array.isArray(qd.fallbackBins) && qd.fallbackBins.includes('qoderclicn'), '工厂须透出CN备选名');
+    const resSrc = fs.readFileSync(path.join(__dirname, '..', 'runtimes', 'resolution.js'), 'utf8');
+    assert.ok(/function qoderCnExecutable\(/.test(resSrc), '缺CN厂商目录识别函数');
+    assert.ok(/qoderclicn-\(\\d\+\)/.test(resSrc), '须按版本化文件名识别');
+    // 本机若装有CN版则行为断言：命中版本化实文件而非0字节占位
+    const home = process.env.USERPROFILE || process.env.HOME || '';
+    const cnDir = home ? path.join(home, '.qoder-cn', 'bin', 'qoderclicn') : '';
+    if (cnDir && fs.existsSync(cnDir)) {
+      const p = await resolveAgentExecutable(qd, undefined);
+      assert.ok(p && /qoderclicn-\d+\.\d+\.\d+\.exe$/i.test(p), `CN版须命中版本化实文件，实际 ${p}`);
+      assert.ok(fs.statSync(p).size > 0, '不得命中0字节占位');
+    }
+  }
   // BASE_AGENT_DEFS 导出一致性
   assert.ok(Array.isArray(BASE_AGENT_DEFS), 'BASE_AGENT_DEFS 应为数组');
   assert.strictEqual(BASE_AGENT_DEFS.length, 26, 'BASE_AGENT_DEFS 长度应===26');
@@ -346,6 +368,49 @@ async function test4_StreamParsers() {
     parser.flush(h);
     assert.ok(chunks.join('').includes('tail'), `claude flush 应补发 tail，实际 ${JSON.stringify(chunks)}`);
     assert.strictEqual(parser.hasEmittedContent(), true, 'claude flush 后应为 true');
+  }
+
+  // 4g. qoder-stream-json：assistant三块（thinking/text/tool_use）+ result收session不复读 + 非JSON行跳过
+  {
+    const parser = getStreamParser('qoder-stream-json');
+    assert.ok(parser && typeof parser.push === 'function', 'qoder parser 应有 push');
+    assert.strictEqual(parser.hasEmittedContent(), false, 'qoder parser 初始应为 false');
+    const chunks = [];
+    const thinkings = [];
+    const tools = [];
+    const sessions = [];
+    const h = {
+      onChunk: (e) => chunks.push(e && e.text),
+      onThinking: (e) => thinkings.push(e && e.text),
+      onToolCall: (e) => tools.push(e),
+      onSession: (e) => sessions.push(e && e.id),
+    };
+    parser.push('{"type":"system","subtype":"init","session_id":"sess-1"}\n', h);
+    parser.push('Model "x" is not available right now; using "auto" instead.\n', h);
+    parser.push('{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"plan here"},{"type":"text","text":"Output: X"},{"type":"tool_use","id":"call_1","name":"Bash","input":{"command":"echo X"}}]}}\n', h);
+    parser.push('{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"X"}]},"session_id":"sess-1"}\n', h);
+    parser.push('{"type":"result","subtype":"success","is_error":false,"result":"Output: X","session_id":"sess-1"}\n', h);
+    assert.ok(thinkings.join('').includes('plan here'), `qoder thinking块须进onThinking，实际 ${JSON.stringify(thinkings)}`);
+    assert.ok(chunks.join('').includes('Output: X'), `qoder text块须进onChunk，实际 ${JSON.stringify(chunks)}`);
+    assert.strictEqual(chunks.filter((c) => String(c).includes('Output: X')).length, 1, 'result文本不得复读');
+    assert.ok(!chunks.join('').includes('not available'), '非JSON提示行不得污染正文');
+    assert.strictEqual(tools.length, 1, 'tool_use须触发一次onToolCall');
+    assert.strictEqual(tools[0].tool, 'Bash', 'tool名须归一到tool字段');
+    assert.strictEqual(tools[0].input.command, 'echo X', 'input须透传');
+    assert.deepStrictEqual(sessions, ['sess-1'], 'session_id须去重只派发一次');
+    assert.strictEqual(parser.hasEmittedContent(), true, 'qoder有内容后应为true');
+    assert.strictEqual(parser.getPendingError(), null, '成功流无pendingError');
+    parser.flush(h);
+  }
+
+  // 4h. qoder-stream-json：失败result记pendingError（供engine非零退出诊断）
+  {
+    const parser = getStreamParser('qoder-stream-json');
+    let err = null;
+    const h = { onChunk: () => {}, onThinking: () => {}, onError: (e) => { err = e; } };
+    parser.push('{"type":"result","subtype":"error_auth","is_error":true,"result":"bad key","session_id":"sess-9"}\n', h);
+    assert.ok(parser.getPendingError() && String(parser.getPendingError().message).includes('bad key'), '失败须记pendingError');
+    parser.flush(h);
   }
 }
 

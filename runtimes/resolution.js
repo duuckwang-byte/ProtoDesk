@@ -80,7 +80,44 @@ function collectFallbackDirs() {
 }
 
 /**
- * 二进制文件深度解析器：自定义路径 -> PATH -> npm/scoop/choco -> 文件校验
+ * Qoder CN 版私有安装目录识别：安装器落盘于 ~/.qoder-cn/bin/qoderclicn/，
+ * 内为版本化实文件 qoderclicn-x.y.z.exe + 0 字节占位 qoderclicn.exe。
+ * 精确名匹配会命中占位死文件，故按版本 glob 取最大可用版；目录常年不在 PATH 内。
+ * @returns {string|null} 可用实文件绝对路径，找不到返回 null（不抛错）
+ */
+function qoderCnExecutable() {
+  try {
+    const home = process.env.USERPROFILE || process.env.HOME || '';
+    if (!home) return null;
+    const dir = path.join(home, '.qoder-cn', 'bin', 'qoderclicn');
+    let names = null;
+    try { names = fs.readdirSync(dir); } catch (_) { return null; }
+    if (!Array.isArray(names)) return null;
+    const rx = /^qoderclicn-(\d+)\.(\d+)\.(\d+)\.exe$/i;
+    let best = null;
+    let bestV = null;
+    for (const n of names) {
+      const m = rx.exec(String(n || ''));
+      if (!m) continue;
+      const full = path.join(dir, n);
+      try {
+        const st = fs.statSync(full);
+        if (!st.isFile() || st.size <= 0) continue;
+      } catch (_) { continue; }
+      const v = [+m[1], +m[2], +m[3]];
+      if (!bestV || (v[0] !== bestV[0] ? v[0] > bestV[0] : (v[1] !== bestV[1] ? v[1] > bestV[1] : v[2] > bestV[2]))) {
+        bestV = v;
+        best = full;
+      }
+    }
+    return best;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 二进制文件深度解析器：自定义路径 -> 厂商私有目录(qoderCN) -> PATH -> npm/scoop/choco -> 文件校验
  * @param {Object} def Agent 定义（含 bin / fallbackBins）
  * @param {string} [customPath] 用户手动指定的可执行文件路径
  * @returns {Promise<string|null>} 解析出的绝对路径，找不到返回 null（不抛错）
@@ -130,7 +167,14 @@ async function resolveAgentExecutable(def, customPath) {
     const bases = [def && def.bin, ...((def && def.fallbackBins) || [])].filter(Boolean);
     if (!bases.length) return null;
 
-    // 2. PATH 遍历查找
+    // 2. 厂商私有目录优先于 PATH：qoderCN 占位 exe 会让精确名匹配命中死文件，
+    //    且该目录常年不在 PATH 内；仅 id=qoder 生效，其他 def 原流程不变
+    if (def && def.id === 'qoder') {
+      const vendor = qoderCnExecutable();
+      if (vendor) return vendor;
+    }
+
+    // 3. PATH 遍历查找
     const pathDirs = getPathDirs();
     for (const base of bases) {
       for (const dir of pathDirs) {
@@ -141,7 +185,7 @@ async function resolveAgentExecutable(def, customPath) {
       }
     }
 
-    // 3. npm / scoop / choco 兜底
+    // 4. npm / scoop / choco 兜底
     const extraDirs = collectFallbackDirs();
     for (const base of bases) {
       for (const dir of extraDirs) {

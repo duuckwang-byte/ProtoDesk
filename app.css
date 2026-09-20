@@ -424,6 +424,36 @@ body .sb-foot{padding-bottom:58px}
 .ai-model:hover{border-color:#B9C2E6}
 .ai-model:focus{border-color:var(--line);background:var(--panel) /* P1-6 fix */}
 .ai-model[disabled]{opacity:.6;cursor:not-allowed;background:#E2E8F0}
+/* AI 模型与思考强度级联选择器 */
+.ai-model-cascader{position:relative;display:inline-flex;align-items:center}
+.ai-model-btn{height:30px;max-width:240px;min-width:130px;border:1px solid var(--line);border-radius:8px;padding:0 8px;font-size:12px;font-family:inherit;color:var(--ink);background:var(--panel);outline:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:space-between;gap:6px;transition:border-color .2s,background .2s}
+.ai-model-btn:hover{border-color:#B9C2E6}
+.ai-model-btn[disabled]{opacity:.6;cursor:not-allowed;background:#E2E8F0}
+.ai-model-name-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;font-weight:500;text-align:left}
+.ai-model-effort-badge{font-size:10px;font-weight:600;padding:1px 5px;border-radius:4px;background:rgba(22,119,255,.1);color:var(--pri);white-space:nowrap;flex:none}
+.ai-model-arrow{flex:none;color:var(--faint);transition:transform .2s}
+.ai-model-cascader.open .ai-model-arrow{transform:rotate(180deg)}
+
+/* 主弹层：仅包裹一级模型列表，高度由模型列表自身决定，绝对不受二级浮层影响 */
+.ai-cascader-popover{position:absolute;bottom:calc(100% + 6px);left:0;z-index:var(--z-modal-high, 1000);background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg, 0 8px 24px rgba(0,0,0,.15));width:180px;animation:aiPopoverIn .15s ease-out}
+@keyframes aiPopoverIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+/* 一级模型列表容器：自身滚动，高度独立固定 */
+.ai-cascader-primary{width:100%;max-height:280px;overflow-y:auto;padding:4px;box-sizing:border-box;border-radius:7px}
+/* 二级推理强度卡片：从底部对齐、向上展开，脱离主层文档流，高度自适应独立 */
+.ai-cascader-sub{position:absolute;left:100%;bottom:-1px;margin-left:-1px;width:155px;max-height:280px;overflow-y:auto;padding:4px;background:var(--bg-subtle);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg, 0 8px 24px rgba(0,0,0,.15));z-index:10;box-sizing:border-box;animation:aiSubIn .15s ease-out}
+@keyframes aiSubIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.ai-cascader-sub-title{font-size:11px;font-weight:600;color:var(--faint);padding:6px 8px 4px;user-select:none}
+.ai-cascader-item{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:5px;font-size:12px;color:var(--ink);cursor:pointer;transition:background .15s,color .15s;user-select:none;position:relative}
+.ai-cascader-item:hover,.ai-cascader-item.hover-active{background:rgba(22,119,255,.08);color:var(--pri)}
+.ai-cascader-item.active{font-weight:600;color:var(--pri)}
+.ai-cascader-item.active::before{content:"";position:absolute;left:2px;top:6px;bottom:6px;width:3px;background:var(--pri);border-radius:2px}
+.ai-cascader-item-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.ai-cascader-item-arrow{font-size:10px;color:var(--faint);margin-left:4px}
+.ai-cascader-optgroup-label{font-size:10px;font-weight:700;color:var(--faint);padding:6px 8px 2px;text-transform:uppercase}
+.ai-cascader-sub-item{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:5px;font-size:12px;color:var(--ink);cursor:pointer;transition:background .15s,color .15s;user-select:none}
+.ai-cascader-sub-item:hover{background:rgba(22,119,255,.08);color:var(--pri)}
+.ai-cascader-sub-item.active{background:rgba(22,119,255,.14);font-weight:600;color:var(--pri)}
+.ai-cascader-manage-item{border-top:1px solid var(--line);margin-top:4px;padding-top:6px;color:var(--faint);font-size:11px}
 .set-input[disabled],.modal-input[disabled],.set-select[disabled],textarea[disabled],select[disabled],.edit-req-input[disabled],.indiv-input[disabled],.doc-micro-ta[disabled]{background:#E2E8F0;color:var(--faint);cursor:not-allowed}
 #uispecAddFileName{background:none;border:none;padding:6px 0}
 #uispecPickFile.picked{border-color:var(--pri);color:var(--pri)}
@@ -868,6 +898,16 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 .agent-fold-body::-webkit-scrollbar{ width:8px; }
 .agent-fold-body::-webkit-scrollbar-thumb{ background:var(--line); border-radius:4px; }
 .agent-fold-body .agent-card{ opacity:.92; }
+/* 设置页防撑破：双列轨道定死为minmax(0,1fr)，卡片及行内文本永不撑宽窗口，超宽单行省略 */
+.ai-agent-matrix, .api-profile-matrix, .agent-fold-body{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+.agent-card, .api-profile-card, .api-profile-add, .agent-fold{ min-width:0; }
+.agent-card-header, .api-profile-header{ min-width:0; }
+.agent-name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.api-profile-name{ flex:1; min-width:0; }
+.model-check-item > span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.model-check-item > span:first-of-type{ flex:1; }
+.model-check-item .model-del{ flex:none; }
+.model-mgr-toolbar .set-input{ min-width:0; }
 /* 设置中心：BYOK 连通性诊断面板 */
 .byok-test-panel{ border-radius:10px; padding:10px 12px; display:flex; align-items:flex-start; gap:10px; font-size:12.5px; border:1px solid var(--line); background:var(--bg-subtle); }
 .byok-test-panel.success{ background:var(--ok-soft); border-color:var(--ok); }

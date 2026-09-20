@@ -72,7 +72,7 @@ npm run build   # 或 npx electron-builder --win --x64
 | `js/annotation-core.js` | 零污染元素标注引擎（Sidecar 存储 + 稳定定位 + 页面隔离） |
 | `platform/` | 跨平台基础设施 4 文件（`command.js` 命令构造 / `process.js` 进程树 / `env.js` 环境变量 / `budget.js` 预算守卫），供 `main.js` / `runtimes/engine.js` 调用 |
 | `providers/` | 多协议 BYOK 引擎 3 文件（`protocols.js` 5 协议 + `normalizeProviderBaseUrl` / `connection-test.js` 诊断 / `model-fetcher.js` 拉取） |
-| `runtimes/` | 26 Agent 适配器矩阵：顶层 7 js（`registry` 注册 / `detection + resolution` 探测 / `parsers` 解析 / `engine` 执行 + `needsProtocol` 降级 / `diagnostics` 诊断 / `types` 类型 / `byok-opencode` 桥接）+ `defs/26（14 直驱 + 12 发现型）` + `parsers/4` |
+| `runtimes/` | 26 Agent 适配器矩阵：顶层 7 js（`registry` 注册 / `detection + resolution` 探测 / `parsers` 解析 / `engine` 执行 + `needsProtocol` 降级 / `diagnostics` 诊断 / `types` 类型 / `byok-opencode` 桥接）+ `defs/26（15 直驱 + 11 发现型，qoder已直驱）` + `parsers/5` |
 | `main.js` / `preload.js` | Electron 主进程与预加载（沙箱/项目/快照/links/日志/版本/AI 等 IPC） |
 | `toolPrompt.md` | AI 工作提示词（原型与文档分离修改、工作目录约定），随包分发 |
 | `tests/` | 26 套门禁（`npm test`，纯 Node 可进 CI：24 套 verify + 打包完整性 `check-pack` + static-verify）+ CDP UI 回归（`npm run test:ui`，需 GUI）+ `cases/`，见下文 |

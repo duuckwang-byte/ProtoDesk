@@ -497,6 +497,18 @@ function test3_JsFunctionsAndConstantsContract() {
     `[CSS契约失败] api选中态边框须与按钮同蓝`
   );
   assert.ok(
+    /repeat\(2,minmax\(0,1fr\)\)/.test(cssContent),
+    `[CSS契约失败] 设置页双列轨道须定死minmax(0,1fr)防撑破`
+  );
+  assert.ok(
+    /\.agent-name\s*\{[^}]*text-overflow\s*:\s*ellipsis/.test(cssContent),
+    `[CSS契约失败] agent名称超宽须省略号`
+  );
+  assert.ok(
+    /\.model-check-item\s*>\s*span\s*\{[^}]*text-overflow\s*:\s*ellipsis/.test(cssContent),
+    `[CSS契约失败] 模型行超宽须省略号`
+  );
+  assert.ok(
     /\.uispec-card\s*\{[^}]*var\(--line\)/.test(cssContent),
     `[CSS契约失败] 规范卡片默认边框须为浅灰`
   );

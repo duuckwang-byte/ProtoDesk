@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Wave-D/G Agent工厂化：发现型(needsProtocol)12适配器数据驱动矩阵。bespoke 14仅登记元信息以保26完整，仍由原JS实现；factory仅实例化driver=factory条目，保持registry/engine/detection接口不变。",
+  "note": "Wave-D/G Agent工厂化：发现型(needsProtocol)11适配器数据驱动矩阵。bespoke 14仅登记元信息以保26完整，qoder已直驱（stream-json解析+行式模型表），仍由原JS实现；factory仅实例化driver=factory条目，保持registry/engine/detection接口不变。",
   "defs": [
     {
       "id": "opencode",
@@ -176,14 +176,30 @@
       "versionArgs": ["--version"],
       "fallbackModels": [
         { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
-        { "id": "Gemini 3.1 Pro (High)", "label": "Gemini 3.1 Pro (High)" },
-        { "id": "Gemini 3.1 Pro (Low)", "label": "Gemini 3.1 Pro (Low)" },
-        { "id": "Gemini 3.5 Flash (High)", "label": "Gemini 3.5 Flash (High)" },
-        { "id": "Gemini 3.5 Flash (Medium)", "label": "Gemini 3.5 Flash (Medium)" },
-        { "id": "Gemini 3.5 Flash (Low)", "label": "Gemini 3.5 Flash (Low)" },
-        { "id": "Claude Sonnet 4.6 (Thinking)", "label": "Claude Sonnet 4.6 (Thinking)" },
-        { "id": "Claude Opus 4.6 (Thinking)", "label": "Claude Opus 4.6 (Thinking)" },
-        { "id": "GPT-OSS 120B (Medium)", "label": "GPT-OSS 120B (Medium)" }
+        { "id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)" },
+        { "id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium)" },
+        { "id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)" },
+        { "id": "gemini-3.7-flash-high", "label": "Gemini 3.7 Flash (High)" },
+        { "id": "gemini-3.7-flash-medium", "label": "Gemini 3.7 Flash (Medium)" },
+        { "id": "gemini-3.7-flash-low", "label": "Gemini 3.7 Flash (Low)" },
+        { "id": "gemini-3.6-flash-high", "label": "Gemini 3.6 Flash (High)" },
+        { "id": "gemini-3.6-flash-medium", "label": "Gemini 3.6 Flash (Medium)" },
+        { "id": "gemini-3.6-flash-low", "label": "Gemini 3.6 Flash (Low)" },
+        { "id": "gemini-3.1-pro-high", "label": "Gemini 3.1 Pro (High)" },
+        { "id": "gemini-3.1-pro-low", "label": "Gemini 3.1 Pro (Low)" },
+        { "id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6 (Thinking)" },
+        { "id": "claude-opus-4-6-thinking", "label": "Claude Opus 4.6 (Thinking)" },
+        { "id": "gpt-oss-120b-medium", "label": "GPT-OSS 120B (Medium)" }
+      ],
+      "listModels": {
+        "args": ["models"],
+        "timeoutMs": 10000
+      },
+      "reasoningOptions": [
+        { "id": "default", "label": "默认推荐 (CLI 预设)", "default": true },
+        { "id": "high", "label": "高强度 (High)" },
+        { "id": "medium", "label": "中强度 (Medium)" },
+        { "id": "low", "label": "低强度 (Low)" }
       ],
       "driver": "bespoke",
       "promptViaStdin": false,
@@ -341,6 +357,7 @@
       "id": "qoder",
       "name": "Qoder CLI",
       "bin": "qodercli",
+      "fallbackBins": ["qoderclicn"],
       "versionArgs": ["--version"],
       "fallbackModels": [
         { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
@@ -353,8 +370,8 @@
       "driver": "factory",
       "buildArgs": { "kind": "model-cwd", "args": ["-p", "--output-format", "stream-json", "--yolo"], "modelFlag": "--model", "cwdFlag": "-w" },
       "promptViaStdin": true,
-      "streamFormat": "plain",
-      "needsProtocol": "qoder-stream-json"
+      "streamFormat": "qoder-stream-json",
+      "listModels": { "args": ["--list-models"], "timeoutMs": 8000, "lineBased": true, "skipHeader": "MODEL" }
     },
     {
       "id": "reasonix",

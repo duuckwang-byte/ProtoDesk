@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -536,9 +536,11 @@
     <div class="modal-hint">勾选即时生效，无需确认</div>
     <div class="model-check-list" id="modelFetchList" style="max-height:46vh"></div>
    </div>
-   <div class="modal-foot">
-    <span class="modal-hint" id="fetchSelectCount" style="margin-right:auto"></span>
-    <button class="docs-btn" id="modelFetchCancel">取消</button>
+    <div class="modal-foot">
+     <span class="modal-hint" id="fetchSelectCount" style="margin-right:auto"></span>
+     <button class="docs-btn" id="btnFetchSelectAll">全选</button>
+     <button class="docs-btn" id="btnFetchDeselectAll">取消全选</button>
+     <button class="docs-btn" id="modelFetchCancel">取消</button>
     <button class="docs-btn primary" id="modelFetchOk">完成</button>
   </div>
  </div>
@@ -956,8 +958,22 @@
     <span class="ai-target-label">作用页面:</span>
     <select class="ai-target-select" id="aiTargetPageSelect"></select>
   </div>
- <select class="ai-model" id="aiModel" title="选择当前对话使用的模型">
-  <option value="">加载模型…</option>
+  <div class="ai-model-cascader" id="aiModelCascader">
+    <button type="button" class="ai-model-btn" id="aiModelBtn" title="选择当前对话使用的模型与思考强度">
+      <span class="ai-model-name-txt" id="aiModelNameTxt">选择模型</span>
+      <span class="ai-model-effort-badge" id="aiModelEffortBadge" style="display:none">默认</span>
+      <svg class="ai-model-arrow" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+    </button>
+    <div class="ai-cascader-popover" id="aiCascaderPopover" style="display:none">
+      <div class="ai-cascader-primary" id="aiCascaderPrimary"></div>
+      <div class="ai-cascader-sub" id="aiCascaderSub" style="display:none">
+        <div class="ai-cascader-sub-title">选择思考强度</div>
+        <div class="ai-cascader-sub-list" id="aiCascaderSubList"></div>
+      </div>
+    </div>
+  </div>
+ <select class="ai-model" id="aiModel" style="display:none" title="选择当前对话使用的模型">
+  <option value="">选择模型…</option>
  </select>
   <button class="docs-btn" id="aiClear" title="清空本次对话">清空</button>
   <button class="docs-btn primary ai-send" id="aiSend">发送</button>

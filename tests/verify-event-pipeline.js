@@ -654,9 +654,9 @@ function testR14_ThinkChain() {
 function testR16_SessClearWaiting() {
   // 静态：fallback分支先清空（空事件会话如新建不再残留旧气泡）
   assert.ok(/aiChatView\.innerHTML='';?\s*\}catch\(e\)\{\}\s*\/\* fallback同样先清空/.test(pae), 'fallback须先清空');
-  // 静态：发送挂等待行，结束/失败撤等待行
+  // 静态：发送挂等待行，结束/失败撤等待行（T-CLI启动中：先挂启动中，run_started到后切等待响应）
   const doSrc = pae.match(/function aiDoSend[\s\S]*?\n\}/)[0];
-  assert.ok(/i5ShowWaiting\(\);/.test(doSrc), '发送须挂等待行');
+  assert.ok(/i5ShowBooting\(_eng0,_ag0\)/.test(doSrc), '发送须先挂启动中');
   const finSrc = pae.match(/function finishAiStream[\s\S]*?\n\}/)[0];
   assert.ok(/i5HideWaiting\(\)/.test(finSrc), '结束须撤等待行');
   // 行为：show挂行带光标 → 重复不叠加 → 内容落子撤行跟光标
@@ -679,6 +679,52 @@ function testR16_SessClearWaiting() {
   show.move(p);
   assert.strictEqual(tl.querySelectorAll('.i5-waiting').length, 0, '内容落子撤等待行');
   assert.ok(p.querySelector('.cursor'), '光标跟到新行');
+}
+
+// ========== 运行17: CLI启动中两阶段（方案B真信号：boot→run_started→等待响应→落子撤行） ==========
+function testR17_CliBootWaiting() {
+  // 静态：后端真信号（spawn成功触发onStart，主进程透出run_started，仍走ai:event无新通道）
+  const engSrc = fs.readFileSync(path.join(rootDir, 'runtimes', 'engine.js'), 'utf8');
+  assert.ok(/handlers\.onStart/.test(engSrc), 'engine须触发onStart');
+  assert.ok(/child\.on\('spawn'/.test(engSrc), 'engine须绑spawn兜底');
+  assert.ok(/_startFired/.test(engSrc), 'onStart须幂等只发一次');
+  assert.ok(/type:\s*'run_started'/.test(aiProcContent), '主进程须透出run_started');
+  assert.ok(/agentId/.test(aiProcContent.split("type: 'run_started'")[0].slice(-400) + aiProcContent.split("type: 'run_started'")[1].slice(0, 200)), 'run_started须带agent标识');
+  // 静态：前端状态机（同行原地换字，未知事件回落不丢弃）
+  assert.ok(/function i5ShowBooting\(/.test(pae), '缺i5ShowBooting');
+  assert.ok(/function i5MarkRunStarted\(/.test(pae), '缺i5MarkRunStarted');
+  assert.ok(/function i5SetWaitingText\(/.test(pae), '缺i5SetWaitingText');
+  assert.ok(/ev\.type==='run_started'/.test(pae), '事件分发须接run_started');
+  assert.ok(/请求发送中/.test(pae), 'API模式须用请求发送中文案');
+  // 行为：boot挂启动中（带CLI名）→ run_started切等待响应（不另起行）→ 落子撤行
+  const mockDoc = makeMockDoc();
+  const aiStreaming = new MockElement('div');
+  const api = new Function('document', 'aiStreaming',
+    extract(pae, 'i5TlEnsureTimeline') + '\n' + extract(pae, 'i5TlRemoveCursor') + '\n' + extract(pae, 'i5TlMoveCursorTo') + '\n'
+    + extract(pae, 'i5SetWaitingText') + '\n' + extract(pae, 'i5ShowBooting') + '\n' + extract(pae, 'i5MarkRunStarted') + '\n'
+    + extract(pae, 'i5ShowWaiting') + '\n' + extract(pae, 'i5HideWaiting')
+    + '\nreturn { boot: i5ShowBooting, started: i5MarkRunStarted, move: i5TlMoveCursorTo, hide: i5HideWaiting };')(mockDoc, aiStreaming);
+  api.boot('cli', 'opencode');
+  const tl = aiStreaming.querySelector('.i5-timeline');
+  assert.ok(tl, '时间线容器应存在');
+  let w = tl.querySelector('.i5-waiting');
+  assert.ok(w && w.textContent.includes('opencode') && w.textContent.includes('启动中'), '启动中文案须带CLI名');
+  assert.ok(w.querySelector('.cursor'), '启动行带闪烁光标');
+  api.started({});
+  w = tl.querySelector('.i5-waiting');
+  assert.ok(w && w.textContent.includes('等待响应'), 'run_started须切等待响应');
+  assert.strictEqual(tl.querySelectorAll('.i5-waiting').length, 1, '换字不另起行');
+  api.boot('api', '');
+  w = tl.querySelector('.i5-waiting');
+  assert.ok(w && w.textContent.includes('请求发送中'), 'API模式须用请求发送中文案');
+  api.started({});
+  w = tl.querySelector('.i5-waiting');
+  assert.ok(w && w.textContent.includes('等待响应'), 'API模式run_started后同样切等待响应');
+  const p = mockDoc.createElement('div'); p.className = 'think-p';
+  tl.appendChild(p);
+  api.move(p);
+  assert.strictEqual(tl.querySelectorAll('.i5-waiting').length, 0, '内容落子撤等待行');
+  api.hide();
 }
 
 // ========== 运行15: 对话框打磨（发送到底/落款出泡/无图标） ==========
@@ -713,7 +759,7 @@ function testR15_UiPolish() {
 
 function runAll() {
   let p = 0, f = 0;
-  const ts = [['S1 onEvent管线', testS1_OnEventPipeline], ['R1b session落盘', testR1b_SessionOidPersist], ['S2 finish尾', testS2_FinishTail], ['S2b 完成不重写', testS2b_FinishNoRewrite], ['S2c 无followup', testS2c_NoFollowup], ['S2d 落款', testS2d_MsgFoot], ['S3 模式清零', testS3_EditModeZero], ['S4 唯一ESC', testS4_SingleEsc], ['R5 动词映射+计数', testR5_VerbExplore], ['R5c opencode形态', testR5c_OpencodePartShape], ['R7 审计删除+快照', testR7_NoAuditSnap], ['R8 ErrorCard', testR8_ErrorCard], ['R9 思考切分', testR9_ThinkSplit], ['R10 光标/编辑', testR10_CursorEdit], ['S5 done新字段', testS5_DoneFields], ['R12 历史回放', testR12_Replay], ['R13 显示发送分离', testR13_MsgSplit], ['R14 思考入链', testR14_ThinkChain], ['R15 对话框打磨', testR15_UiPolish], ['R16 会话清空与等待行', testR16_SessClearWaiting]];
+  const ts = [['S1 onEvent管线', testS1_OnEventPipeline], ['R1b session落盘', testR1b_SessionOidPersist], ['S2 finish尾', testS2_FinishTail], ['S2b 完成不重写', testS2b_FinishNoRewrite], ['S2c 无followup', testS2c_NoFollowup], ['S2d 落款', testS2d_MsgFoot], ['S3 模式清零', testS3_EditModeZero], ['S4 唯一ESC', testS4_SingleEsc], ['R5 动词映射+计数', testR5_VerbExplore], ['R5c opencode形态', testR5c_OpencodePartShape], ['R7 审计删除+快照', testR7_NoAuditSnap], ['R8 ErrorCard', testR8_ErrorCard], ['R9 思考切分', testR9_ThinkSplit], ['R10 光标/编辑', testR10_CursorEdit], ['S5 done新字段', testS5_DoneFields], ['R12 历史回放', testR12_Replay], ['R13 显示发送分离', testR13_MsgSplit], ['R14 思考入链', testR14_ThinkChain], ['R15 对话框打磨', testR15_UiPolish], ['R16 会话清空与等待行', testR16_SessClearWaiting], ['R17 CLI启动中两阶段', testR17_CliBootWaiting]];
   for (const [t, fn] of ts) { try { fn(); console.log(`[PASS] ${t}`); p++; } catch (e) { console.error(`[FAIL] ${t}`); console.error(e); f++; } }
   console.log(`SUMMARY passed=${p} failed=${f}\n`);
   if (f) process.exit(1);

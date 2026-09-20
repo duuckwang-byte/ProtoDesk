@@ -157,11 +157,15 @@ if (!/id="btnSubmitEdit"/.test(html)) fails.push('editbtn: 待提交列表按钮
   }
 }
 
-// ── 模型获取弹窗 + 全选移除 ──
-for (const id of ['modelFetchMask', 'modelFetchModal', 'modelFetchList', 'fetchSearchInput', 'fetchSelectCount', 'btnFetchModels2', 'modelFetchClose', 'modelFetchCancel', 'modelFetchOk']) {
+// ── 模型获取弹窗 + 全选/取消全选 ──
+for (const id of ['modelFetchMask', 'modelFetchModal', 'modelFetchList', 'fetchSearchInput', 'fetchSelectCount', 'btnFetchModels2', 'modelFetchClose', 'modelFetchCancel', 'modelFetchOk', 'btnFetchSelectAll', 'btnFetchDeselectAll']) {
   if (!new RegExp('id="' + id + '"').test(html)) fails.push('modelfetch: DOM 缺失 #' + id);
 }
-if (/id="btnSelectAllModels"/.test(html) || /btnSelectAllModels/.test(js['project-ai-export'])) fails.push('modelfetch: 全选按钮未彻底移除');
+if (/id="btnSelectAllModels"/.test(html) || /btnSelectAllModels/.test(js['project-ai-export'])) fails.push('modelfetch: 旧全选按钮未彻底移除');
+if (!/function batchFetchCheck\(want\)/.test(js['project-ai-export'])) fails.push('modelfetch: 批量勾选 batchFetchCheck 缺失');
+if (!/batchFetchCheck\(true\)/.test(js['project-ai-export']) || !/batchFetchCheck\(false\)/.test(js['project-ai-export'])) fails.push('modelfetch: 全选/取消全选未接 batchFetchCheck');
+// ── 下拉：在用模型被移除后不再显示，自动落首个 ──
+if (!/被移出配置/.test(js['project-ai-export']) || !/aiStoreModel\(cur\)/.test(js['project-ai-export'])) fails.push('modeldropdown: 移除回落逻辑缺失');
 if (!/function openModelFetch/.test(js['project-ai-export']) || !/function closeModelFetch/.test(js['project-ai-export'])) fails.push('modelfetch: 获取弹窗 open/close 缺失');
 if (!/function setVisibleModels/.test(js['project-ai-export']) || !/model-del/.test(js['project-ai-export'])) fails.push('modelfetch: 可见集合/删除按钮逻辑缺失');
 if (!/scrollbar-gutter:\s*stable/.test(css)) fails.push('settings: 防挤压 scrollbar-gutter 缺失');

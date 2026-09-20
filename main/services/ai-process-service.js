@@ -106,6 +106,23 @@ function normalizeCliModelIds(rawList) {
   });
   return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
+/* 行式模型表兜底解析（qoderclicn --list-models 类纯文本表）：按行取id，跳过表头与空行；
+ * 仅当 def.listModels.lineBased 显式开启时启用，其他 def 保持原 [] 语义不变 */
+function parseLineBasedModels(out, def) {
+  try {
+    if (!def || !def.listModels || def.listModels.lineBased !== true) return [];
+    const skip = String(def.listModels.skipHeader || '').trim().toLowerCase();
+    const ids = [];
+    String(out || '').split(/\r?\n/).forEach((line) => {
+      const id = String(line || '').trim();
+      if (!id) return;
+      if (skip && id.toLowerCase() === skip) return;
+      if (/\s/.test(id) || id.length > 128) return;
+      if (ids.indexOf(id) < 0) ids.push(id);
+    });
+    return ids;
+  } catch (e) { return []; }
+}
 function execCliListModels(resolvedBin, def) {
   return new Promise((resolve) => {
     try {
@@ -126,7 +143,7 @@ function execCliListModels(resolvedBin, def) {
         done = true;
         try {
           const parse = def && def.listModels && typeof def.listModels.parse === 'function' ? def.listModels.parse : null;
-          let items = parse ? parse(out, err) : [];
+          let items = parse ? parse(out, err) : parseLineBasedModels(out, def);
           if (!Array.isArray(items)) items = [];
           resolve(items);
         } catch (e) { resolve(null); }
@@ -231,7 +248,20 @@ async function aiModelsImpl(ev, hint) {
       const protocol = known.includes(String(rawProv)) ? String(rawProv) : 'openai';
       const apiKey = String(src.apiKey || '').trim();
       const baseUrl = String(src.baseUrl || '').trim();
-      const list = await fetchProviderModels({ protocol, apiKey, baseUrl, timeoutMs: 10000 });
+      const list = (await fetchProviderModels({ protocol, apiKey, baseUrl, timeoutMs: 10000 })) || [];
+      const defaultApiReasoning = [
+        { id: 'default', label: '默认推荐 (Default)', default: true },
+        { id: 'high', label: '高强度 (High)' },
+        { id: 'medium', label: '中强度 (Medium)' },
+        { id: 'low', label: '低强度 (Low)' }
+      ];
+      const listWithReasoning = list.map((m) => {
+        if (!m || typeof m !== 'object') return { id: String(m || ''), name: String(m || ''), reasoningOptions: defaultApiReasoning };
+        return {
+          ...m,
+          reasoningOptions: (Array.isArray(m.reasoningOptions) && m.reasoningOptions.length) ? m.reasoningOptions : defaultApiReasoning
+        };
+      });
       const dispProv = String(src.provider || protocol);
       const labelMap = {
         deepseek: 'DeepSeek 官方', ali: '阿里百炼 DashScope',
@@ -241,9 +271,18 @@ async function aiModelsImpl(ev, hint) {
       };
       const label = labelMap[dispProv] || dispProv;
       const defModel = String(src.model || cfg.model || ((Array.isArray(list) && list[0] && list[0].id) || 'default'));
-      return { ok: true, groups: [{ provider: dispProv, label, models: list }], default: defModel, engine: 'api', visibleModels: visible || [] };
+      return { ok: true, groups: [{ provider: dispProv, label, models: listWithReasoning }], default: defModel, engine: 'api', visibleModels: visible || [] };
     } catch (e) {
-      const fb = [{ id: 'deepseek-chat', label: 'deepseek-chat' }, { id: 'deepseek-reasoner', label: 'deepseek-reasoner' }];
+      const fbReasoning = [
+        { id: 'default', label: '默认推荐', default: true },
+        { id: 'high', label: '高强度 (High)' },
+        { id: 'medium', label: '中强度 (Medium)' },
+        { id: 'low', label: '低强度 (Low)' }
+      ];
+      const fb = [
+        { id: 'deepseek-chat', label: 'deepseek-chat', reasoningOptions: fbReasoning },
+        { id: 'deepseek-reasoner', label: 'deepseek-reasoner', reasoningOptions: fbReasoning }
+      ];
       return { ok: true, groups: [{ provider: 'custom', label: '自定义 API', models: fb }], default: 'deepseek-chat', engine: 'api', visibleModels: visible || [] };
     }
   }
@@ -291,12 +330,19 @@ async function aiModelsImpl(ev, hint) {
     const id = id0; /* free 独立模型：按全 id 去重，不再合并 */
     if (!id || seenIds.has(id)) return;
     seenIds.add(id);
-    merged.push({ id, label: String((m && m.label) || id) });
+    const reasoning = (m && Array.isArray(m.reasoningOptions) && m.reasoningOptions.length)
+      ? m.reasoningOptions
+      : (Array.isArray(def.reasoningOptions) && def.reasoningOptions.length ? def.reasoningOptions : null);
+    merged.push({ id, label: String((m && m.label) || id), reasoningOptions: reasoning });
   };
   fms.forEach(pushM);
   (Array.isArray(dynItems) ? dynItems : []).forEach(pushM);
   (Array.isArray(cliCustoms) ? cliCustoms : []).forEach((id) => pushM({ id, label: id }));
-  const useList = merged.length ? merged : fms.map((m) => ({ id: String(m.id || '').trim(), label: m.label || m.id })).filter((m) => m.id);
+  const useList = merged.length ? merged : fms.map((m) => ({
+    id: String(m.id || '').trim(),
+    label: m.label || m.id,
+    reasoningOptions: (m && Array.isArray(m.reasoningOptions) && m.reasoningOptions.length) ? m.reasoningOptions : (def.reasoningOptions || null)
+  })).filter((m) => m.id);
   const byProv = {};
   useList.forEach((m) => {
     const id = String((m && m.id) || '').trim();
@@ -305,7 +351,10 @@ async function aiModelsImpl(ev, hint) {
     const i = id.indexOf('/');
     const provider = i > 0 ? id.slice(0, i) : def.id;
     const name = i > 0 ? id.slice(i + 1) : label;
-    (byProv[provider] = byProv[provider] || []).push({ id, name });
+    const reasoningOptions = (m && Array.isArray(m.reasoningOptions) && m.reasoningOptions.length)
+      ? m.reasoningOptions
+      : (Array.isArray(def.reasoningOptions) && def.reasoningOptions.length ? def.reasoningOptions : null);
+    (byProv[provider] = byProv[provider] || []).push({ id, name, reasoningOptions });
   });
   const groups = Object.keys(byProv).map((k) => ({ provider: k, label: k, models: byProv[k] }))
     .sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
@@ -316,7 +365,8 @@ async function aiModelsImpl(ev, hint) {
   } catch (e) {}
   return {
     ok: true, groups, default: process.env.PROTO_AI_MODEL || cfg.model || defId,
-    engine: 'cli', visibleModels: visible || [], agentId: def.id
+    engine: 'cli', visibleModels: visible || [], agentId: def.id,
+    reasoningOptions: def.reasoningOptions || null
   };
 
 }
@@ -353,10 +403,10 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
   let def = null;
   let resolvedBin = null;
   const rawModel = String(model || '').trim();
-  let normModel = (!rawModel || rawModel === '__none__') ? '' : rawModel;
-  /* free 独立模型：原样透传，由服务商做免费路由 */
-  let targetModel = normModel || String(aiCfg.model || '').trim() || 'default';
-  if (targetModel === '__none__') targetModel = 'default';
+  let normModel = (!rawModel || rawModel === '__none__' || rawModel === 'default') ? '' : rawModel;
+  /* free 独立模型：原样透传，由服务商做免费路由；若未选模型则空置，使用 CLI 原生配置 */
+  let targetModel = normModel || String(aiCfg.model || '').trim() || '';
+  if (targetModel === '__none__' || targetModel === 'default') targetModel = '';
   // 严格区分：positional 参数 sessionId 代表 Agent 远端/CLI 会话标识（如 OpenCode 的 ses_...）
   // extraOpts.uiSessionId 代表前端 Tab 标识（s_...），严禁侵入底层执行选项 options.sessionId
   let agentSessionToken = (typeof sessionId === 'string' && sessionId.trim()) ? sessionId.trim() : null;
@@ -405,6 +455,9 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
     }
     executionOptions.env = byokConfig.env;
     executionOptions.model = byokConfig.modelId;
+    if (extraOpts && extraOpts.reasoning) {
+      executionOptions.reasoning = String(extraOpts.reasoning).trim();
+    }
   } else {
     const agentId = aiCfg.agentId || 'opencode';
     def = getAgentDef(agentId) || getAgentDef('opencode');
@@ -423,8 +476,10 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
         message: ('未找到 ' + def.name + ' 可执行文件，请在终端执行安装或在设置中心指定路径。')
       });
       return { ok: false, success: false, error: '未检测到 ' + def.name };
+    executionOptions.model = (targetModel && targetModel !== '__none__') ? targetModel : '';
+    if (extraOpts && extraOpts.reasoning && targetModel) {
+      executionOptions.reasoning = String(extraOpts.reasoning).trim();
     }
-    executionOptions.model = (targetModel && targetModel !== '__none__') ? targetModel : 'default';
   }
 
   /* UI 规范注入：按端别取启用的出厂/用户规范拼到 prompt 头部；取不到则原样下发（不断链） */
@@ -450,6 +505,12 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
       cwd,
       options: opts,
       handlers: {
+        onStart: (info) => {
+          try {
+            var _pid = (info && info.pid) || (shared.activeExecution ? shared.activeExecution.pid : null);
+            emitAiEvent({ type: 'run_started', pid: _pid, agentId: def.id, agentName: (info && info.agentName) || def.name || def.id, engine: isApiMode ? 'api' : 'cli' });
+          } catch (e) {}
+        },
         onThinking: (text) => emitAiEvent({ type: 'thinking', text: String((text && text.text) || text || '') }),
         onChunk: (text) => emitAiEvent({ type: 'chunk', text: String((text && text.text) || text || '') }),
         onToolCall: (data) => {

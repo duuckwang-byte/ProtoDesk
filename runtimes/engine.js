@@ -13,7 +13,8 @@ const { getStreamParser } = require('./parsers');
  * @param {string} params.prompt - 用户提示词（可包含数十KB HTML）
  * @param {string} params.cwd - 沙箱工作目录
  * @param {Object} [params.options] - 选项 (model, resumeSessionId 等)
- * @param {Object} params.handlers - 回调 { onThinking, onChunk, onToolCall, onSession, onError, onClose }
+ * @param {Object} params.handlers - 回调 { onStart, onThinking, onChunk, onToolCall, onSession, onError, onClose }
+ *   onStart({pid, agentId, agentName}) 在进程创建成功后触发一次，供渲染层把“启动中”切为“等待响应”
  * @returns {{ cancel: () => Promise<void>, pid: number | null }}
  */
 function startAgentExecution({ def, resolvedBin, prompt, cwd, options = {}, handlers }) {
@@ -56,6 +57,14 @@ function startAgentExecution({ def, resolvedBin, prompt, cwd, options = {}, hand
   }
 
   const pid = child.pid;
+  /* T-CLI启动信号：spawn成功（有pid）即触发一次onStart；再绑spawn事件兜底，幂等 */
+  var _startFired = false;
+  function _fireStart() {
+    if (_startFired) return; _startFired = true;
+    try { if (handlers && typeof handlers.onStart === 'function') handlers.onStart({ pid: (child && child.pid) || pid || null, agentId: def.id, agentName: def.name || def.id }); } catch (e) {}
+  }
+  try { if (pid) _fireStart(); } catch (e) {}
+  try { child.on('spawn', function() { _fireStart(); }); } catch (e) {}
   const parser = getStreamParser(def.streamFormat, def.eventParser);
 
   // 核心：严格通过标准输入 Stdin 流式灌入 Prompt，彻底绕开命令行 32KB 截断

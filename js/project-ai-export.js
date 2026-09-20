@@ -2228,6 +2228,21 @@ function refreshFetchCount(){
   if(fetchSelectCount)fetchSelectCount.textContent='已选 '+n+' / '+t+' 个（勾选即时生效）';
   return {checked:n,shown:t};
 }
+function batchFetchCheck(want){
+  if(!modelFetchList)return;
+  modelFetchList.querySelectorAll('.model-check-item').forEach(function(item){
+    if(item.style.display==='none')return;
+    var box=item.querySelector('input[type="checkbox"]');
+    if(box && box.checked !== !!want){
+      box.checked = !!want;
+      applyFetchToggle(box.value, !!want);
+    }
+  });
+  refreshFetchCount();
+}
+var btnFetchSelectAll=$('btnFetchSelectAll'), btnFetchDeselectAll=$('btnFetchDeselectAll');
+if(btnFetchSelectAll) btnFetchSelectAll.onclick=function(){ batchFetchCheck(true); };
+if(btnFetchDeselectAll) btnFetchDeselectAll.onclick=function(){ batchFetchCheck(false); };
 function setVisibleModels(ids){
   curAiConfig=curAiConfig||{};
   if(getActiveEngineInUi()==='cli'){ setCliVisibleIds(ids); }
@@ -3704,6 +3719,7 @@ function aiSetBusy(b){
   }
   if(aiInputEl)aiInputEl.disabled=b;
   if(aiModelEl)aiModelEl.disabled=b;
+  var _mb=$('aiModelBtn'); if(_mb)_mb.disabled=b;
   if(b){ aiThinkStart=Date.now(); if(!aiThinkTimer) aiThinkTimer=setInterval(aiThinkTick,1000); }
   else{ if(aiThinkTimer){ clearInterval(aiThinkTimer); aiThinkTimer=null; } aiThinkStart=0; }
 }
@@ -4149,23 +4165,71 @@ function i5TlMoveCursorTo(node){
    try{ node.appendChild(cur); }catch(e){}
   }catch(e){}
 }
-/* 发送后等待态：首包到达前时间线是空的，挂一个带闪烁光标的等待行；任一内容落子/结束/失败即撤 */
+/* 发送后等待态：首包到达前时间线是空的，挂一个带闪烁光标的等待行；任一内容落子/结束/失败即撤
+ * T-CLI启动中（方案B）：同一行原地换字，boot→wait两阶段；i5ShowWaiting默认即wait文案保持兼容 */
+var aiWaitPhase='';
+var aiWaitBootTimer=null;
+function i5SetWaitingText(txt){
+  try{
+    if(!aiStreaming) return;
+    var tl=null; try{ tl=i5TlEnsureTimeline(); }catch(e){ return; }
+    if(!tl) return;
+    var ws=null; try{ ws=tl.querySelectorAll('.i5-waiting'); }catch(e){ return; }
+    for(var i=0;i<ws.length;i++){ try{ if(ws[i].parentNode) ws[i].parentNode.removeChild(ws[i]); }catch(e){} }
+    try{ i5TlRemoveCursor(); }catch(e){}
+    var w=document.createElement('div'); w.className='think-p i5-think-p i5-waiting';
+    w.textContent=String(txt||'');
+    tl.appendChild(w);
+    var cur=document.createElement('span'); cur.className='cursor i5-cursor';
+    try{ w.appendChild(cur); }catch(e){}
+  }catch(e){}
+}
+function i5ShowBooting(engine, agentLabel){
+  try{
+    var txt='Agent CLI启动中…';
+    try{
+      if(String(engine||'')==='api'){ txt='请求发送中…'; }
+      else{ var nm=String(agentLabel||'').trim(); if(nm){ txt=nm+' CLI启动中…'; } }
+    }catch(e){}
+    try{ i5SetWaitingText(txt); }catch(e){ try{ i5ShowWaiting(); return; }catch(e2){ return; } }
+    try{ aiWaitPhase='boot'; }catch(e){}
+    try{ if(aiWaitBootTimer){ clearTimeout(aiWaitBootTimer); aiWaitBootTimer=null; } }catch(e){}
+    try{
+      aiWaitBootTimer=setTimeout(function(){
+        try{
+          if(aiWaitPhase!=='boot') return;
+          var w=null; try{ w=(aiStreaming&&aiStreaming.querySelector)?aiStreaming.querySelector('.i5-waiting'):null; }catch(e){ w=null; }
+          if(!w) return;
+          i5SetWaitingText(txt+'（启动较慢，仍在等待）');
+        }catch(e){}
+      },8000);
+    }catch(e){}
+  }catch(e){}
+}
+function i5MarkRunStarted(ev){
+  try{ if(aiWaitBootTimer){ clearTimeout(aiWaitBootTimer); aiWaitBootTimer=null; } }catch(e){}
+  try{ aiWaitPhase='wait'; }catch(e){}
+  try{ i5SetWaitingText('等待响应…'); }catch(e){ try{ i5ShowWaiting(); }catch(e2){} }
+}
 function i5ShowWaiting(){
   try{
     if(!aiStreaming) return;
     var tl=null; try{ tl=i5TlEnsureTimeline(); }catch(e){ return; }
     if(!tl) return;
     var has=null; try{ has=tl.querySelector('.i5-waiting'); }catch(e){}
-    if(has) return;
+    if(has){ try{ i5SetWaitingText('等待响应…'); }catch(e){} try{ aiWaitPhase='wait'; }catch(e){} try{ if(aiWaitBootTimer){ clearTimeout(aiWaitBootTimer); aiWaitBootTimer=null; } }catch(e){} return; }
     try{ i5TlRemoveCursor(); }catch(e){}
     var w=document.createElement('div'); w.className='think-p i5-think-p i5-waiting';
     w.textContent='等待响应…';
     tl.appendChild(w);
     var cur=document.createElement('span'); cur.className='cursor i5-cursor';
     try{ w.appendChild(cur); }catch(e){}
+    try{ aiWaitPhase='wait'; }catch(e){}
   }catch(e){}
 }
 function i5HideWaiting(){
+  try{ if(aiWaitBootTimer){ clearTimeout(aiWaitBootTimer); aiWaitBootTimer=null; } }catch(e){}
+  try{ aiWaitPhase=''; }catch(e){}
   try{
     if(!aiStreaming) return;
     var ws=aiStreaming.querySelectorAll('.i5-waiting');
@@ -5006,33 +5070,274 @@ function aiRefreshCli(){
 /* ── 模型列表：支持白名单过滤与直连/CLI 分组 ── */
 var aiModelCache=null;
 var AI_MODEL_KEY='ai_model',AI_MODEL_DEFAULT='default';
-function aiStoredModel(){ try{ return localStorage.getItem(AI_MODEL_KEY)||''; }catch(e){ return ''; } }
-function aiStoreModel(m){ try{ localStorage.setItem(AI_MODEL_KEY,m||''); }catch(e){} }
+var AI_REASONING_KEY='ai_model_reasoning',AI_REASONING_DEFAULT='default';
+function aiStoredModel(){
+  try{
+    var m=localStorage.getItem(AI_MODEL_KEY)||'';
+    if(m==='__none__'||m==='default'){
+      try{ localStorage.removeItem(AI_MODEL_KEY); }catch(e){}
+      return '';
+    }
+    return m;
+  }catch(e){ return ''; }
+}
+function aiStoreModel(m){
+  try{
+    if(!m||m==='__none__'||m==='default'){
+      localStorage.removeItem(AI_MODEL_KEY);
+    }else{
+      localStorage.setItem(AI_MODEL_KEY,m);
+    }
+  }catch(e){}
+}
+function aiStoredReasoning(){ try{ return localStorage.getItem(AI_REASONING_KEY)||''; }catch(e){ return ''; } }
+function aiStoreReasoning(r){ try{ localStorage.setItem(AI_REASONING_KEY,r||''); }catch(e){} }
+function aiCurReasoning(){
+  var s=aiStoredReasoning();
+  return s||AI_REASONING_DEFAULT;
+}
 function aiCurModel(){
-  if(aiModelEl&&aiModelEl.value&&aiModelEl.value!=='__none__' && aiModelEl.value!=='__manage_models__')return aiModelEl.value;
-  var s=aiStoredModel(); if(s&&s!=='__none__')return s;
+  if(aiModelEl&&aiModelEl.value&&aiModelEl.value!=='__none__'&&aiModelEl.value!=='__manage_models__'&&aiModelEl.value!=='default')return aiModelEl.value;
+  var s=aiStoredModel(); if(s&&s!=='__none__'&&s!=='default')return s;
   return '';
 }
 function aiInvalidateModels(){ aiModelCache=null; }
+
+var aiStandardReasoningOptions=[
+  { id: 'default', label: '默认推荐 (CLI 预设)', default: true },
+  { id: 'high', label: '高强度 (High)' },
+  { id: 'medium', label: '中强度 (Medium)' },
+  { id: 'low', label: '低强度 (Low)' }
+];
+
+function aiReasoningBadgeText(rId){
+  if(rId==='high') return '高强度';
+  if(rId==='medium') return '中强度';
+  if(rId==='low') return '低强度';
+  return '默认';
+}
+
+function aiSyncModelBtn(){
+  var btn=$('aiModelBtn'), txt=$('aiModelNameTxt'), badge=$('aiModelEffortBadge');
+  if(!btn||!txt)return;
+  btn.disabled=Boolean(aiBusy);
+  var curM=aiCurModel();
+  var curR=aiCurReasoning();
+  if(!aiModelCache){
+    txt.textContent='加载模型…';
+    txt.title='加载模型…';
+    if(badge) badge.style.display='none';
+    return;
+  }
+  if(!curM){
+    txt.textContent='选择模型';
+    txt.title='选择当前对话使用的模型';
+    if(badge) badge.style.display='none';
+    return;
+  }
+  var mName='';
+  var groups=(aiModelCache&&aiModelCache.groups)||[];
+  for(var i=0;i<groups.length;i++){
+    var ms=groups[i].models||[];
+    for(var j=0;j<ms.length;j++){
+      if(ms[j]&&ms[j].id===curM){
+        mName=ms[j].name||ms[j].id;
+        break;
+      }
+    }
+    if(mName)break;
+  }
+  if(!mName)mName=curM;
+  txt.textContent=mName;
+  txt.title=mName+' (思考强度: '+aiReasoningBadgeText(curR)+')';
+  if(badge){
+    badge.textContent=aiReasoningBadgeText(curR);
+    badge.style.display='inline-block';
+  }
+}
+
+function aiRenderCascader(r){
+  var cascader=$('aiModelCascader');
+  var btn=$('aiModelBtn');
+  var popover=$('aiCascaderPopover');
+  var primary=$('aiCascaderPrimary');
+  var sub=$('aiCascaderSub');
+  var subList=$('aiCascaderSubList');
+  if(!cascader||!btn||!popover||!primary||!sub||!subList)return;
+
+  var cleanId=function(s){ return String(s||'').trim(); };
+  var stored=cleanId(aiStoredModel());
+  if(stored==='__none__'||stored==='default') stored='';
+  var cur=stored;
+  var curReasoning=aiCurReasoning();
+
+  primary.innerHTML='';
+  subList.innerHTML='';
+  sub.style.display='none';
+
+  var groups=(r&&r.groups)||[];
+  var visible=(r&&Array.isArray(r.visibleModels)&&r.visibleModels.length)?r.visibleModels.map(cleanId):null;
+  var fallbackReasoning=(r&&Array.isArray(r.reasoningOptions)&&r.reasoningOptions.length)?r.reasoningOptions:aiStandardReasoningOptions;
+
+  var activePrimaryItem=null;
+
+  function showSubForModel(mId, mName, rOpts, primaryEl){
+    if(activePrimaryItem) activePrimaryItem.classList.remove('hover-active');
+    activePrimaryItem=primaryEl;
+    if(primaryEl) primaryEl.classList.add('hover-active');
+
+    subList.innerHTML='';
+    sub.style.display='block';
+    var opts=(Array.isArray(rOpts)&&rOpts.length)?rOpts:fallbackReasoning;
+    for(var k=0;k<opts.length;k++){
+      (function(opt){
+        var itemEl=document.createElement('div');
+        itemEl.className='ai-cascader-sub-item'+((mId===cur && opt.id===curReasoning)?' active':'');
+        itemEl.textContent=opt.label||opt.id;
+        itemEl.title=opt.label||opt.id;
+        itemEl.onclick=function(ev){
+          ev.stopPropagation();
+          /* 核心契约：点击右侧推理强度才真正选中模型并关闭弹窗 */
+          var targetModel = (mId==='__none__'?'':mId);
+          cur=targetModel;
+          curReasoning=opt.id;
+          aiStoreModel(targetModel);
+          aiStoreReasoning(opt.id);
+          if(aiModelEl) aiModelEl.value = targetModel;
+          aiSyncModelBtn();
+          closeCascader();
+          if(typeof aiRenderModelOptions==='function') aiRenderModelOptions(r);
+        };
+        subList.appendChild(itemEl);
+      })(opts[k]);
+    }
+  }
+
+  function closeCascader(){
+    popover.style.display='none';
+    cascader.classList.remove('open');
+    if(activePrimaryItem){
+      activePrimaryItem.classList.remove('hover-active');
+      activePrimaryItem=null;
+    }
+    sub.style.display='none';
+  }
+
+  // 各供应商分组及模型项
+  for(var i=0;i<groups.length;i++){
+    var g=groups[i], items=(g&&g.models)||[];
+    var gVisibleItems=[];
+    for(var j=0;j<items.length;j++){
+      var it=items[j], id=cleanId(it.id||'');
+      if(!id)continue;
+      if(visible && visible.indexOf(id)<0)continue;
+      gVisibleItems.push(it);
+    }
+    if(!gVisibleItems.length)continue;
+
+    if(groups.length>1||g.label||g.provider){
+      var grpLabel=document.createElement('div');
+      grpLabel.className='ai-cascader-optgroup-label';
+      grpLabel.textContent=g.label||g.provider||'供应商';
+      primary.appendChild(grpLabel);
+    }
+
+    for(var j=0;j<gVisibleItems.length;j++){
+      (function(it){
+        var id=cleanId(it.id||''), name=it.name||id;
+        var rOpts=(Array.isArray(it.reasoningOptions)&&it.reasoningOptions.length)?it.reasoningOptions:fallbackReasoning;
+        var itEl=document.createElement('div');
+        itEl.className='ai-cascader-item'+(id===cur?' active':'');
+        itEl.innerHTML='<span class="ai-cascader-item-txt">'+escHtml(name)+'</span><span class="ai-cascader-item-arrow">›</span>';
+        itEl.title=name;
+        itEl.onmouseenter=function(){
+          showSubForModel(id, name, rOpts, itEl);
+        };
+        itEl.onclick=function(ev){
+          ev.stopPropagation();
+          // 点击模型选项不直接选中，必须选右侧推理强度
+          showSubForModel(id, name, rOpts, itEl);
+        };
+        primary.appendChild(itEl);
+      })(gVisibleItems[j]);
+    }
+  }
+
+  // 底部：管理模型列表...
+  var manageItem=document.createElement('div');
+  manageItem.className='ai-cascader-item ai-cascader-manage-item';
+  manageItem.innerHTML='<span class="ai-cascader-item-txt">管理模型列表...</span>';
+  manageItem.onmouseenter=function(){
+    if(activePrimaryItem) activePrimaryItem.classList.remove('hover-active');
+    activePrimaryItem=manageItem;
+    manageItem.classList.add('hover-active');
+    sub.style.display='none';
+  };
+  manageItem.onclick=function(ev){
+    ev.stopPropagation();
+    closeCascader();
+    openSettings('models');
+  };
+  primary.appendChild(manageItem);
+
+  btn.onclick=function(ev){
+    ev.stopPropagation();
+    if(aiBusy)return;
+    var isOpen = cascader.classList.contains('open');
+    if(isOpen){
+      closeCascader();
+    } else {
+      cascader.classList.add('open');
+      popover.style.display='block';
+      var activeEl=primary.querySelector('.ai-cascader-item.active') || primary.querySelector('.ai-cascader-item:not(.ai-cascader-manage-item)');
+      if(activeEl && typeof activeEl.onmouseenter==='function'){
+        activeEl.onmouseenter();
+      }
+    }
+  };
+
+  if(!window._aiCascaderDocHandlerAttached){
+    window._aiCascaderDocHandlerAttached=true;
+    document.addEventListener('click', function(ev){
+      var cEl=$('aiModelCascader');
+      if(cEl && !cEl.contains(ev.target)){
+        var pEl=$('aiCascaderPopover');
+        if(pEl) pEl.style.display='none';
+        cEl.classList.remove('open');
+        var sEl=$('aiCascaderSub');
+        if(sEl) sEl.style.display='none';
+      }
+    });
+  }
+
+  aiSyncModelBtn();
+}
+
 function aiLoadModels(){
  if(!HAS_AI||!aiModelEl)return;
  if(aiModelCache){ aiRenderModelOptions(aiModelCache); return; }
- aiModelEl.innerHTML='<option value="">加载模型…</option>';
+ aiModelEl.innerHTML='<option value="">选择模型…</option>';
  aiModelEl.disabled=aiBusy;
+ aiSyncModelBtn();
  window.protoAPI.ai.listModels().then(function(r){
   if(r&&r.ok){ aiModelCache=r; aiRenderModelOptions(r); }
-  else{ aiModelEl.innerHTML='<option value="">模型加载异常</option><option value="__manage_models__">管理模型列表...</option>'; aiModelEl.disabled=aiBusy; }
+  else{
+    aiModelEl.innerHTML='<option value="">模型加载异常</option><option value="__manage_models__">管理模型列表...</option>';
+    aiModelEl.disabled=aiBusy;
+    aiSyncModelBtn();
+  }
  }).catch(function(){
   aiModelEl.innerHTML='<option value="">模型加载异常</option><option value="__manage_models__">管理模型列表...</option>';
   aiModelEl.disabled=aiBusy;
+  aiSyncModelBtn();
  });
 }
 function aiRenderModelOptions(r){
  if(!aiModelEl)return;
   var cleanId=function(s){ return String(s||'').trim(); }; /* free 独立模型：仅去空白，不再清洗后缀 */
- var stored=cleanId(aiStoredModel()),def=cleanId((r&&r.default)||AI_MODEL_DEFAULT);
- if(!def||def==='__none__')def='default';
- var cur=(stored&&stored!=='__none__')?stored:def;
+ var stored=cleanId(aiStoredModel());
+ if(stored==='__none__'||stored==='default') stored='';
+ var cur=stored;
  var groups=(r&&r.groups)||[];
  var visible=(r&&Array.isArray(r.visibleModels)&&r.visibleModels.length)?r.visibleModels.map(cleanId):null;
  var html='';
@@ -5051,29 +5356,46 @@ function aiRenderModelOptions(r){
    html+='<optgroup label="'+escHtml(g.label||g.provider||'未命名供应商')+'">'+gHtml+'</optgroup>';
   }
  }
+  /* 在用模型被移出配置：不再给旧模型开豁免（下拉不显示），自动落到本轮首个可见模型并持久化 */
+  if(!found&&stored&&stored!=='__none__'&&stored!=='default'&&html){
+   var firstId='';
+   try{
+    var m0=html.match(/<option value="([^"]+)"/);
+    if(m0)firstId=cleanId(m0[1]);
+   }catch(e){}
+   if(firstId){
+    cur=firstId;
+    try{ aiStoreModel(cur); }catch(e2){}
+    try{ html=html.replace('<option value="'+escHtml(firstId)+'"', '<option value="'+escHtml(firstId)+'" selected'); }catch(e3){}
+    found=true;
+   }
+  }
 
  if(!html){
   /* 安全保底：全未勾选时强制保留default推荐项，杜绝废弃-free */
   aiModelEl.innerHTML='<option value="default">默认推荐模型 (CLI 预设)</option><option value="__manage_models__">管理模型列表...</option>';
   aiModelEl.value='default';
   aiModelEl.disabled=aiBusy;
+  aiRenderCascader(r);
   return;
  }
- aiModelEl.innerHTML='<option value="__none__"'+(found?'':' selected')+'>— 默认模型 —</option>'+html+'<option value="__manage_models__">管理模型列表...</option>';
+ aiModelEl.innerHTML='<option value=""'+(found?'':' selected')+'>选择模型…</option>'+html+'<option value="__manage_models__">管理模型列表...</option>';
  aiModelEl.disabled=aiBusy;
  aiModelEl.title='选择当前对话使用的模型';
  aiModelEl.onchange=function(){
   var v=aiModelEl.value;
   if(v==='__manage_models__'){
    openSettings('models');
-   aiModelEl.value=(stored&&stored!=='__none__')?stored:'__none__';
+   aiModelEl.value=stored||'';
    return;
   }
-  aiStoreModel(v==='__none__'?'':v);
+  aiStoreModel(v);
+  aiSyncModelBtn();
  };
- if(!found&&cur&&cur!==def){
+ if(!found&&cur){
   aiStoreModel('');
  }
+ aiRenderCascader(r);
 }
 /* 收敛全屏遮罩：打开/关闭 AI 弹窗前强制清除全部游离抽屉遮罩，杜绝灰罩叠加残留
    已知遮罩（linkInspMask/linkMgrMask/multiEditMask）由各自逻辑管理并一并收敛；
@@ -5225,7 +5547,7 @@ function aiDoSend(){
   aiStreaming=aiAppendMsg('','ai'); aiStreamText=''; aiStreamThink=''; aiCurFileChanges=[]; try{ window.aiCurFileChanges=[]; }catch(e){}
   try{ i5TlReset(); aiTlLastPacket=Date.now(); aiTlLastType=''; }catch(e){}
    aiRenderStream(); /* 时间线保活：确保 .i5-timeline 容器，避免无反馈等待 */
-   try{ i5ShowWaiting(); }catch(e){} /* 首包到达前挂等待行+闪烁光标 */
+   try{ var _eng0=(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')); var _ag0=null; try{ _ag0=(curAiConfig&&(curAiConfig.agentId||curAiConfig.mainAgent))||null; }catch(e){} if(typeof i5ShowBooting==='function') i5ShowBooting(_eng0,_ag0); else i5ShowWaiting(); }catch(e){ try{ i5ShowWaiting(); }catch(e2){} } /* T-CLI启动中先行，run_started到后再切等待响应 */
    aiSetBusy(true); try{ aiTlLastPacket=Date.now(); }catch(e){}
    // 401 预检：Iteration6弹窗化后仅弹窗打开时比对表单，否则以当前使用项为准
    try {
@@ -5244,7 +5566,7 @@ function aiDoSend(){
    var activePg = (typeof aiDetectCurrentPage==='function' ? aiDetectCurrentPage() : '');
    var targetFile = (aiTargetPageSelect && aiTargetPageSelect.value) || (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || '';
    /* 回滚说明：规范注入位置加错（用户出完原型再做），aiDoSend恢复直通原文t；快照helpers保留供导出附录/预读+后续复用 */
-    window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, uiKind:((typeof currentSource!=='undefined'&&currentSource&&(currentSource.kind||''))||'mobile'), enableTools:_enk}).then(function(r){
+    window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, uiKind:((typeof currentSource!=='undefined'&&currentSource&&(currentSource.kind||''))||'mobile'), enableTools:_enk, reasoning:(typeof aiCurReasoning==='function'?(aiCurModel()?aiCurReasoning():''):'')}).then(function(r){
    if(r&&r.error==='busy'){ aiBubbleError('（已有任务在运行，请稍候）'); }
    else if(r&&!r.ok){ if(aiStreaming)aiBubbleError(String(r.error||'发送失败')); else aiSetBusy(false); }
   }).catch(function(e){ aiBubbleError('发送失败：'+(e&&e.message||e)); });
@@ -5334,6 +5656,9 @@ if(HAS_AI){
      if(k===aiHistKey()||(k&&k.indexOf(SESS_KEY)===0)){ var s=aiCurSesh(); if(s){ s.oid=ev.id||''; aiSaveSesh(); } }
      else{ aiWriteSeshFor(k,function(v){ v.oid=ev.id||''; }); }
     }
+     else if(ev.type==='run_started'){
+       try{ i5MarkRunStarted(ev); }catch(e){}
+     }
     else if(ev.type==='tool_call'){
       try{ i5AppendToolCall(ev); }catch(e){}
       try{ if(typeof aiToolEventFrom==='function'){ var _te=aiToolEventFrom(ev); if(_te&&typeof aiCurTaskEvents!=='undefined'&&aiCurTaskEvents) aiCurTaskEvents.push(_te); } }catch(e){}
