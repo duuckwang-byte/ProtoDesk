@@ -476,6 +476,7 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
         message: ('未找到 ' + def.name + ' 可执行文件，请在终端执行安装或在设置中心指定路径。')
       });
       return { ok: false, success: false, error: '未检测到 ' + def.name };
+    }
     executionOptions.model = (targetModel && targetModel !== '__none__') ? targetModel : '';
     if (extraOpts && extraOpts.reasoning && targetModel) {
       executionOptions.reasoning = String(extraOpts.reasoning).trim();
