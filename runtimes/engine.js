@@ -100,16 +100,16 @@ function startAgentExecution({ def, resolvedBin, prompt, cwd, options = {}, hand
     if (hasErrored) {
       return;
     }
-    if (code !== 0 && !parser.hasEmittedContent()) {
+    const pending = (typeof parser.getPendingError === 'function') ? parser.getPendingError() : null;
+    const hasOutput = parser.hasEmittedContent();
+    const hasStderrErr = !hasOutput && Boolean(stderrBuffer && /(?:no output produced|permission.*denied|\berror\b)/i.test(stderrBuffer));
+    if ((code !== 0 && !hasOutput) || pending || hasStderrErr) {
       let errText = stderrBuffer;
-      if (typeof parser.getPendingError === 'function') {
-        const pending = parser.getPendingError();
-        if (pending) {
-          const msg = (pending.data && pending.data.message) || pending.message || (typeof pending === 'string' ? pending : JSON.stringify(pending));
-          errText = msg + (stderrBuffer ? '\n' + stderrBuffer : '');
-        }
+      if (pending) {
+        const msg = (pending.data && pending.data.message) || pending.message || (typeof pending === 'string' ? pending : JSON.stringify(pending));
+        errText = msg + (stderrBuffer ? '\n' + stderrBuffer : '');
       }
-      const diag = classifyExecutionError(errText, code, def);
+      const diag = classifyExecutionError(errText, code || 1, def);
       handlers.onError(diag);
     } else {
       handlers.onClose({ cancelled: false, code });

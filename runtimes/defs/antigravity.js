@@ -84,7 +84,7 @@ module.exports = {
     { id: 'low', label: '低强度 (Low)' }
   ],
   buildArgs: (prompt, _images, _extra, options = {}) => {
-    const args = [];
+    const args = ['--dangerously-skip-permissions'];
     if (options && options.model && options.model !== 'default') {
       try { writeAntigravityModelSelection(options.model); } catch (_) {}
       args.push('--model', options.model);
