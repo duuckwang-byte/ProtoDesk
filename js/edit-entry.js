@@ -167,20 +167,12 @@ var CTRL_PICK = {
         } else if (window.LinkBind) { LinkBind.openInspector(null); }
         return;
       }
-      /* 单选：先校验预览 iframe 作用域，再清空移交检查器 */
+      /* 单选：清空后移交检查器（同源/本地 DOM el，检查器自做作用域守卫） */
       var targetEl = CTRL_PICK.selected[0].el;
-      var _fd = null;
-      try { _fd = (typeof frame !== 'undefined' && frame && frame.contentDocument) ? frame.contentDocument : null; } catch (e) {}
-      if (!targetEl || !targetEl.ownerDocument || !_fd || targetEl.ownerDocument !== _fd) {
-        try {
-          if (typeof showToast === 'function') showToast('仅支持绑定原型内的元素，请点击预览区元素。');
-          else if (typeof libStatus === 'function') libStatus('仅支持绑定原型内的元素，请点击预览区元素。');
-        } catch (e2) {}
-        CTRL_PICK.clear();
-        return;
-      }
       CTRL_PICK.clear();
-      if (window.LinkBind) LinkBind.openInspector(targetEl);
+      if (window.LinkBind && typeof LinkBind.openInspector === 'function') {
+        LinkBind.openInspector(targetEl);
+      }
       return;
     }
     if (CTRL_PICK.selected.length > 1) {
@@ -1139,31 +1131,40 @@ if (tabIndivEl) tabIndivEl.onclick = function(){ switchMultiEditTab('individual'
 function bindCtrlInspectListeners(targetWindow) {
   if (!targetWindow) return;
   if (window.__EXPORT_BOOT__===true)return;
-  if (targetWindow.__ctrlPickBound) return;
-  targetWindow.__ctrlPickBound = true;
+  try {
+    if (targetWindow.__ctrlPickBound) return;
+    targetWindow.__ctrlPickBound = true;
+  } catch (e) {
+    return;
+  }
 
-  targetWindow.addEventListener('keydown', function(e) {
-    try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e2){}
-    if ((e.key === 'Control' || e.key === 'Meta') && !e.altKey && !e.shiftKey) {
-      /* 从目标窗口自身文档读取焦点元素（iframe 内部输入框同样生效） */
-      var targetDoc = targetWindow.document;
-      var ae = targetDoc ? targetDoc.activeElement : null;
-      var inForm = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' ||
-                          ae.tagName === 'SELECT' || ae.isContentEditable);
-      if (inForm) return;
-      if (!CTRL_PICK.holding) { CTRL_PICK.holding = true; CTRL_PICK.enter(); }
-    }
-    // Esc 统一由 MaskStack 单一监听接管，此处不再重复注册，仅保留 Ctrl 抬起逻辑，避免双 Esc
-  }, true);
+  try {
+    targetWindow.addEventListener('keydown', function(e) {
+      try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e2){}
+      if ((e.key === 'Control' || e.key === 'Meta') && !e.altKey && !e.shiftKey) {
+        /* 从目标窗口自身文档读取焦点元素（iframe 内部输入框同样生效） */
+        var targetDoc = null;
+        try { targetDoc = targetWindow.document; } catch(_d) {}
+        var ae = targetDoc ? targetDoc.activeElement : null;
+        var inForm = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' ||
+                            ae.tagName === 'SELECT' || ae.isContentEditable);
+        if (inForm) return;
+        if (!CTRL_PICK.holding) { CTRL_PICK.holding = true; CTRL_PICK.enter(); }
+      }
+      // Esc 统一由 MaskStack 单一监听接管，此处不再重复注册，仅保留 Ctrl 抬起逻辑，避免双 Esc
+    }, true);
 
-  targetWindow.addEventListener('keyup', function(e) {
-    if (e.key === 'Control' || e.key === 'Meta' || (!e.ctrlKey && !e.metaKey)) {
-      var had = CTRL_PICK.holding;
-      CTRL_PICK.holding = false;
-      CTRL_PICK.exit();
-      if (had && CTRL_PICK.selected.length > 0) CTRL_PICK.openPanel();
-    }
-  }, true);
+    targetWindow.addEventListener('keyup', function(e) {
+      if (e.key === 'Control' || e.key === 'Meta' || (!e.ctrlKey && !e.metaKey)) {
+        var had = CTRL_PICK.holding;
+        CTRL_PICK.holding = false;
+        CTRL_PICK.exit();
+        if (had && CTRL_PICK.selected.length > 0) CTRL_PICK.openPanel();
+      }
+    }, true);
+  } catch (e) {
+    return;
+  }
 }
 
 /* 沙箱跨域远端悬停：帧侧武装期间元素变化上报包围盒，宿主用既有 #editHover 绘制；
@@ -1304,7 +1305,9 @@ if (frame) {
     editAttach();
     var doc = null;
     try { doc = frame.contentDocument; } catch(e) {}
-    if (frame.contentWindow) bindCtrlInspectListeners(frame.contentWindow);
+    try {
+      if (frame.contentWindow) bindCtrlInspectListeners(frame.contentWindow);
+    } catch (e) {}
     if (doc && !doc.__ctrlScrollBound) {
       doc.__ctrlScrollBound = true;
       doc.addEventListener('scroll', function() {

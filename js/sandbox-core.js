@@ -1221,8 +1221,10 @@ function sandboxInjectBridge(wrappedHtml){
   try {
     var html = String(wrappedHtml || '');
     var tag = '<script data-sandbox-bridge>' + sandboxSafeScript(sandboxAgentSource()) + '</scr' + 'ipt>';
+    if(/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, function(m){ return m + tag; });
+    if(/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, function(m){ return m + '<head>' + tag + '</head>'; });
     if(/<\/body\s*>/i.test(html)) return html.replace(/<\/body\s*>/i, tag + '</body>');
-    return html + tag;
+    return tag + html;
   }catch(e){
     try { return String(wrappedHtml || ''); }catch(e2){ return ''; }
   }

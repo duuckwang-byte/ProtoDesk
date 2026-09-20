@@ -171,8 +171,10 @@ var LinkBind = (function () {
       from: String((opts && opts.from) || '')
     });
     var tag = '<script data-plrt>' + safeScript('(function(){window.__plrt=' + payload + ';try{' + RUNTIME_BODY + '}catch(e){}})();') + '<\/script>';
+    if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, function(m){ return m + tag; });
+    if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, function(m){ return m + '<head>' + tag + '</head>'; });
     if (/<\/body\s*>/i.test(html)) return html.replace(/<\/body\s*>/i, tag + '</body>');
-    return html + tag;
+    return tag + html;
   }
 
   /* ═══════ 外层消息处理 ═══════ */
