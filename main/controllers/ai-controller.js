@@ -37,11 +37,22 @@ function registerAIController() {
   ipcMain.handle('ai:ask', async (ev, prompt, sessionId, sandboxDir, model, extraOpts = {}) => {
     return aiProcess.aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts);
   });
+  ipcMain.handle('ai:open-terminal', async (ev, dir) => {
+    return aiProcess.aiOpenTerminalImpl(ev, dir);
+  });
   ipcMain.handle('ai:cancel', async () => {
     return aiProcess.aiCancelImpl();
   });
   ipcMain.handle('ai:is-busy', () => {
     return aiProcess.aiIsBusyImpl();
+  });
+  /* S5 范围确认回复：渲染层经 preload confirmScope 回复 {id, decision}。
+   * 刻意用 ipcMain.on（事件投递，无返回值）而不用 handle：回复不需要返回值，
+   * 且 handle 计数是 72 通道冻结门禁（lint-guard E-IPC-FROZEN）的统计口径，.on 不计入，冻结保持全绿。
+   * @param {Object} payload {id:string, decision:'allow-once'|'allow-always'|'deny'} 确认回复
+   * @returns {void} */
+  ipcMain.on('ai:scope-confirm', (ev, payload) => {
+    try { aiProcess.handleScopeConfirmResponse(payload); } catch (e) {}
   });
 }
 

@@ -111,6 +111,11 @@ contextBridge.exposeInMainWorld('protoAPI', {
     ask: (prompt, sessionId, sandboxDir, model, extra) => ipcRenderer.invoke('ai:ask', prompt, sessionId, sandboxDir, model, extra),
     cancel: () => ipcRenderer.invoke('ai:cancel'),
     isBusy: () => ipcRenderer.invoke('ai:is-busy'),
+    openTerminal: (dir) => ipcRenderer.invoke('ai:open-terminal', dir),
+    /* S5 范围确认回复：渲染层确认弹窗点选后经此回执主进程（事件投递，对应 ai-controller 的 ipcMain.on）。
+     * @param {Object} payload {id:string, decision:'allow-once'|'allow-always'|'deny'} 确认回复
+     * @returns {void} */
+    confirmScope: (payload) => ipcRenderer.send('ai:scope-confirm', payload),
     onEvent: (cb) => onAiEvent(cb)
   },
   links: {

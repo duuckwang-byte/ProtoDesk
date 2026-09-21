@@ -32,7 +32,10 @@ module.exports = {
     if (ctx.resumeSessionId && typeof ctx.resumeSessionId === 'string' && ctx.resumeSessionId) {
       args.push('--resume', ctx.resumeSessionId);
     }
-    args.push('--permission-mode', 'bypassPermissions');
+    // permissionMode 档位约定（缺省即现状）：仅当 options.permissionMode 为非空字符串时，
+    // 用其值替代默认 bypassPermissions（`--permission-mode <值>`，位置不变）；不配即逐字保持现状。
+    const _pmRaw = (options && typeof options.permissionMode === 'string') ? options.permissionMode.trim() : '';
+    args.push('--permission-mode', _pmRaw ? _pmRaw : 'bypassPermissions');
     return args;
   },
   promptViaStdin: true,

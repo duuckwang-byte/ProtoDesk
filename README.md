@@ -75,7 +75,7 @@ npm run build   # 或 npx electron-builder --win --x64
 | `runtimes/` | 26 Agent 适配器矩阵：顶层 7 js（`registry` 注册 / `detection + resolution` 探测 / `parsers` 解析 / `engine` 执行 + `needsProtocol` 降级 / `diagnostics` 诊断 / `types` 类型 / `byok-opencode` 桥接）+ `defs/26（15 直驱 + 11 发现型，qoder已直驱）` + `parsers/5` |
 | `main.js` / `preload.js` | Electron 主进程与预加载（沙箱/项目/快照/links/日志/版本/AI 等 IPC） |
 | `toolPrompt.md` | AI 工作提示词（原型与文档分离修改、工作目录约定），随包分发 |
-| `tests/` | 26 套门禁（`npm test`，纯 Node 可进 CI：24 套 verify + 打包完整性 `check-pack` + static-verify）+ CDP UI 回归（`npm run test:ui`，需 GUI）+ `cases/`，见下文 |
+| `tests/` | 27 套门禁（`npm test`，纯 Node 可进 CI：25 套 verify + 打包完整性 `check-pack` + static-verify）+ CDP UI 回归（`npm run test:ui`，需 GUI）+ `cases/`，见下文 |
 | `桌面端/` | 打包产物（NSIS 安装包 / win-unpacked），不入库 |
 | `.devdata/` | 开发隔离数据（不入库、可随时删除） |
 
@@ -94,7 +94,7 @@ npm run build   # 或 npx electron-builder --win --x64
 ```bash
 node --check main.js && node --check preload.js && node --check js/icons.js && node --check js/mask-manager.js && node --check js/core-docs.js && node --check js/nav-zoom.js && node --check js/sandbox-core.js && node --check js/project-ai-export.js && node --check js/edit-entry.js && node --check js/link-bind.js && node --check js/annotation-core.js
 npx electron . --remote-debugging-port=9333    # 开发启动（可配合 CDP 回归）
-npm test                                       # 统一门禁：26 套串行（pack 打包完整性 + static-verify + 24 套 verify），ALL_PASS 方可合入，可进 CI
+npm test                                       # 统一门禁：27 套串行（pack 打包完整性 + static-verify + 25 套 verify），ALL_PASS 方可合入，可进 CI
 npm run test:ui                                # UI 回归（需 GUI）：自动启动 electron 执行 11 用例并汇总 PASS/FAIL
 ```
 
@@ -106,7 +106,7 @@ npm run test:ui                                # UI 回归（需 GUI）：自动
 
 ## UI 回归测试（tests/）
 
-- `tests/run-all.js`（`npm test` / `test:all`）：26 套纯 Node 串行（pack 打包完整性 + static-verify / platform / runtimes / providers / ipc / model-management / ui-integration / session-healing / subpage-naming / stdout-error-closure / event-pipeline / model-fetch / send-guard / snapshot-restore / md-p1 / md-p2 / md-p3 / md-p4 / doc-edit / docwin / inline-edit / link-stamp / spec-uilib / ui-specs），任一失败 exit=1，可进 CI；`tests/cdp.js` 仅 UI 回归用
+- `tests/run-all.js`（`npm test` / `test:all`）：26 套纯 Node 串行（pack 打包完整性 + static-verify / platform / runtimes / providers / ipc / model-management / ui-integration / session-healing / subpage-naming / stdout-error-closure / event-pipeline / model-fetch / send-guard / snapshot-restore / md-p1 / md-p2 / md-p3 / md-p4 / doc-edit / docwin / inline-edit / link-stamp / spec-uilib / ui-specs / ctrl-release），任一失败 exit=1，可进 CI；`tests/cdp.js` 仅 UI 回归用
 - `tests/run.js`（`npm run test:ui`，需 GUI 本机）：直接启动 electron.exe（避免进程残留占用调试端口）→ 顺序执行 11 用例 → 结束进程树 → 汇总 PASS/FAIL
 - UI 用例清单（11项，与 `tests/run.js` 同步，首位为纳入的孤儿用例）：
   - `diag-first-screen`：首屏诊断（项目弹窗 / 标注引擎 / 遮罩栈 / 图标 / 设置入口存在性）

@@ -27,7 +27,7 @@ async function test1_RegistryContract() {
     assert.ok(ids.has(expected), `id集合应含 ${expected}，实际 [${[...ids].join(', ')}]`);
   }
 
-  const allowedFormats = new Set(['claude-stream-json', 'json-event-stream', 'plain', 'qoder-stream-json']);
+  const allowedFormats = new Set(['claude-stream-json', 'json-event-stream', 'plain', 'qoder-stream-json', 'agy-stream']);
   const allowedProtocols = new Set(['acp-json-rpc', 'copilot-stream-json', 'qoder-stream-json', 'pi-rpc']);
   for (const def of defs) {
     for (const field of ['id', 'name', 'bin', 'versionArgs', 'fallbackModels', 'buildArgs']) {

@@ -874,6 +874,422 @@ function diffFileSignatures(beforeMap, afterMap, beforeContents, afterContents) 
   return changes;
 }
 
+/* 沙箱根越界守卫：单目录文件数上限（性能有界，超限截断并标记 truncated） */
+const SANDBOX_GUARD_MAX_FILES_PER_DIR = 1000;
+
+/**
+ * 扫描沙箱根下现状并与任务前快照对比，仅返回落在 allowedDir 之外的变更。
+ * 纯助手函数：只读扫描，不写盘，永不抛错；复用白名单/200KB/二进制跳过与点目录/node_modules 跳过。
+ * @param {string} rootDir 沙箱根目录绝对路径（如 paths.SANDBOX_ROOT）
+ * @param {string} allowedDir 本次任务允许变动的原型目录（绝对路径，或相对沙箱根的顶层原型名；其下变更一律过滤）
+ * @param {Map|Object} beforeMap 任务开始前对沙箱根下各原型目录的签名快照（调用方传入）
+ * @returns {Array<{path:string,action:string}>} 落在 allowedDir 之外的变更列表，path 为相对沙箱根路径（/ 分隔，已按 path 排序）；数组附带 truncated:boolean，超限截断时为 true
+ *
+ * 快照侧配套用法（调用方负责，本文件不接线，不接到 aiAsk 调用链）：
+ * 任务前调一次：遍历沙箱根下各原型目录，逐目录调 getProtoFileSignature 取签名，
+ * 按“顶层目录名/目录内相对路径”拼成相对沙箱根路径，合并为一个 beforeMap 传入。
+ *   const beforeMap = new Map();
+ *   for (const d of fs.readdirSync(rootDir, { withFileTypes: true })) {
+ *     if (!d.isDirectory() || d.name.startsWith('.') || d.name === 'node_modules') continue;
+ *     const sig = getProtoFileSignature(path.join(rootDir, d.name));
+ *     for (const [rel, st] of sig) beforeMap.set(d.name + '/' + rel, st);
+ *   }
+ * 任务后调一次：diffSandboxRootAgainst(rootDir, allowedProtoDir, beforeMap)，
+ * allowedProtoDir 传本次任务的原型目录绝对路径（如 path.join(rootDir, '原型A')），
+ * 返回中凡 path 落在该目录内的一律已过滤，只剩隔壁原型越界变更。
+ * beforeMap 也兼容 { 顶层目录名: Map/对象 } 的分组形态，函数内自动拍平。
+ */
+function diffSandboxRootAgainst(rootDir, allowedDir, beforeMap) {
+  const changes = [];
+  changes.truncated = false;
+  try {
+    if (rootDir == null || (typeof rootDir !== 'string' && typeof rootDir !== 'object')) return changes;
+    const rawRoot = String(rootDir || '').trim();
+    if (!rawRoot || rawRoot.indexOf('\0') >= 0) return changes;
+    const rootNorm = path.normalize(rawRoot);
+    if (!rootNorm || !fs.existsSync(rootNorm)) return changes;
+    let rootStat = null;
+    try { rootStat = fs.statSync(rootNorm); } catch (e) { return changes; }
+    if (!rootStat || !rootStat.isDirectory()) return changes;
+    const toSlash = (s) => String(s || '').replace(/\\/g, '/');
+    const isSkippedRel = (rel) => {
+      try {
+        const segs = toSlash(rel).split('/');
+        for (const sg of segs) {
+          if (!sg) continue;
+          if (sg.startsWith('.') || sg === 'node_modules') return true;
+        }
+        return false;
+      } catch (e) { return false; }
+    };
+    let allowedRel = null;
+    try {
+      const raw = String(allowedDir == null ? '' : allowedDir).trim();
+      if (raw) {
+        if (path.isAbsolute(raw)) {
+          const aNorm = path.normalize(raw);
+          const rel = path.relative(rootNorm, aNorm);
+          if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+            allowedRel = toSlash(rel).replace(/\/+$/, '');
+          } else if (!rel) {
+            allowedRel = '';
+          } else {
+            allowedRel = null;
+          }
+        } else {
+          const cleaned = toSlash(raw).replace(/^\/+|\/+$/g, '').replace(/^\.\//, '');
+          if (cleaned && !cleaned.startsWith('..') && cleaned.indexOf('\0') < 0) {
+            allowedRel = cleaned;
+          }
+        }
+      }
+    } catch (e) { allowedRel = null; }
+    const isOutside = (rel) => {
+      try {
+        const r = toSlash(rel).replace(/^\/+/, '');
+        if (allowedRel == null) return true;
+        if (allowedRel === '') return false;
+        if (r === allowedRel) return false;
+        return !(r.startsWith(allowedRel + '/'));
+      } catch (e) { return true; }
+    };
+    const flatBefore = new Map();
+    try {
+      const putOne = (k, v) => {
+        try {
+          const key = toSlash(String(k || '')).replace(/^\/+/, '');
+          if (!key || isSkippedRel(key)) return;
+          if (!v || typeof v !== 'object') return;
+          const size = (typeof v.size === 'number') ? v.size : undefined;
+          if (!isDiffableTextFile(key, size)) return;
+          const mtimeMs = (typeof v.mtimeMs === 'number') ? v.mtimeMs : Number(v.mtimeMs) || 0;
+          flatBefore.set(key, { size: size, mtimeMs: mtimeMs });
+        } catch (e) {}
+      };
+      const expandGroup = (dirName, group) => {
+        try {
+          const prefix = toSlash(String(dirName || '')).replace(/^\/+|\/+$/g, '');
+          if (!prefix || isSkippedRel(prefix)) return;
+          if (group instanceof Map) {
+            for (const [rk, rv] of group.entries()) {
+              try {
+                const inner = toSlash(String(rk || '')).replace(/^\/+/, '');
+                if (!inner || isSkippedRel(inner)) continue;
+                putOne(prefix + '/' + inner, rv);
+              } catch (e) {}
+            }
+          } else if (group && typeof group === 'object') {
+            for (const rk of Object.keys(group)) {
+              try {
+                const inner = toSlash(String(rk || '')).replace(/^\/+/, '');
+                if (!inner || isSkippedRel(inner)) continue;
+                putOne(prefix + '/' + inner, group[rk]);
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+      };
+      if (beforeMap instanceof Map) {
+        for (const [k, v] of beforeMap.entries()) {
+          try {
+            if (v instanceof Map) expandGroup(k, v);
+            else if (v && typeof v === 'object' && typeof v.size !== 'number' && typeof v.mtimeMs !== 'number') {
+              const keys = Object.keys(v);
+              const looksGroup = keys.length && keys.every((kk) => v[kk] && typeof v[kk] === 'object');
+              if (looksGroup) expandGroup(k, v);
+              else putOne(k, v);
+            } else putOne(k, v);
+          } catch (e) {}
+        }
+      } else if (beforeMap && typeof beforeMap === 'object') {
+        for (const k of Object.keys(beforeMap)) {
+          try {
+            const v = beforeMap[k];
+            if (v instanceof Map) expandGroup(k, v);
+            else if (v && typeof v === 'object' && typeof v.size !== 'number' && typeof v.mtimeMs !== 'number') {
+              const keys = Object.keys(v);
+              const looksGroup = keys.length && keys.every((kk) => v[kk] && typeof v[kk] === 'object');
+              if (looksGroup) expandGroup(k, v);
+              else putOne(k, v);
+            } else putOne(k, v);
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+    const afterMap = new Map();
+    let truncated = false;
+    try {
+      let topEntries = null;
+      try { topEntries = fs.readdirSync(rootNorm, { withFileTypes: true }); } catch (e) { topEntries = null; }
+      if (topEntries) {
+        for (const top of topEntries) {
+          try {
+            if (!top || !top.name || top.name.startsWith('.') || top.name === 'node_modules') continue;
+            const topFull = path.join(rootNorm, top.name);
+            if (top.isDirectory()) {
+              let count = 0;
+              const stack = [{ cur: topFull, base: '' }];
+              let stopDir = false;
+              while (stack.length && !stopDir) {
+                let curItem = null;
+                try { curItem = stack.pop(); } catch (e) { break; }
+                if (!curItem) break;
+                let entries = null;
+                try { entries = fs.readdirSync(curItem.cur, { withFileTypes: true }); } catch (e) { continue; }
+                if (!entries) continue;
+                for (const entry of entries) {
+                  try {
+                    if (!entry || !entry.name || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+                    const full = path.join(curItem.cur, entry.name);
+                    const inner = curItem.base ? curItem.base + '/' + entry.name : entry.name;
+                    const rootRel = top.name + '/' + toSlash(inner);
+                    if (isSkippedRel(rootRel)) continue;
+                    if (entry.isDirectory()) {
+                      stack.push({ cur: full, base: toSlash(inner) });
+                      continue;
+                    }
+                    if (!entry.isFile()) continue;
+                    count++;
+                    if (count > SANDBOX_GUARD_MAX_FILES_PER_DIR) { truncated = true; stopDir = true; break; }
+                    let st = null;
+                    try { st = fs.statSync(full); } catch (e) { continue; }
+                    if (!st || !st.isFile()) continue;
+                    if (!isDiffableTextFile(rootRel, st.size)) continue;
+                    let buf = null;
+                    try { buf = fs.readFileSync(full); } catch (e) { continue; }
+                    if (!buf || buf.length > AI_DIFF_MAX_BYTES) continue;
+                    if (buf.indexOf(0) >= 0) continue;
+                    afterMap.set(rootRel, { size: st.size, mtimeMs: Math.round(st.mtimeMs) });
+                  } catch (e) {}
+                }
+              }
+            } else if (top.isFile()) {
+              try {
+                const rootRel = top.name;
+                if (isSkippedRel(rootRel)) continue;
+                let st = null;
+                try { st = fs.statSync(topFull); } catch (e) { continue; }
+                if (!st || !st.isFile()) continue;
+                if (!isDiffableTextFile(rootRel, st.size)) continue;
+                let buf = null;
+                try { buf = fs.readFileSync(topFull); } catch (e) { continue; }
+                if (!buf || buf.length > AI_DIFF_MAX_BYTES) continue;
+                if (buf.indexOf(0) >= 0) continue;
+                afterMap.set(toSlash(rootRel), { size: st.size, mtimeMs: Math.round(st.mtimeMs) });
+              } catch (e) {}
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+    try {
+      for (const [rel, b] of flatBefore.entries()) {
+        try {
+          if (!afterMap.has(rel)) {
+            if (isOutside(rel)) changes.push({ path: rel, action: 'deleted' });
+          } else {
+            const a = afterMap.get(rel);
+            const bs = (b && typeof b.size === 'number') ? b.size : -1;
+            const asz = (a && typeof a.size === 'number') ? a.size : -2;
+            const bm = (b && typeof b.mtimeMs === 'number') ? b.mtimeMs : 0;
+            const am = (a && typeof a.mtimeMs === 'number') ? a.mtimeMs : 0;
+            if (bs !== asz || Math.abs(bm - am) > 20) {
+              if (isOutside(rel)) changes.push({ path: rel, action: 'modified' });
+            }
+          }
+        } catch (e) {}
+      }
+      for (const [rel] of afterMap.entries()) {
+        try {
+          if (!flatBefore.has(rel)) {
+            if (isOutside(rel)) changes.push({ path: rel, action: 'created' });
+          }
+        } catch (e) {}
+      }
+      try {
+        changes.sort((a, b) => {
+          const pa = String((a && a.path) || '');
+          const pb = String((b && b.path) || '');
+          return pa < pb ? -1 : pa > pb ? 1 : 0;
+        });
+      } catch (e) {}
+    } catch (e) {}
+    changes.truncated = !!truncated;
+    return changes;
+  } catch (e) {
+    try { changes.truncated = false; } catch (e2) {}
+    return changes;
+  }
+}
+
+/* ═══════ 技能快照 stageSkillsToContext：agy 实测结论纯关键词不会自动读 skill，必须显式给地址 ═══════
+ * 把每个 skill 目录只读式拷贝到 <cwd>/.context/skills/<skill-id>/，返回 [{id, keywords, relPath}]。
+ * 映射关系写死在函数内（SKILL_KEYWORDS_MAP），未知 id 直接跳过；单个 skill 失败跳过不断链。
+ * @param {string} cwd 沙箱原型目录（工作目录，须存在）
+ * @param {Array<string|Object>} [skills] 可选覆盖：string 为 skill-id 走默认源查找；{id, src|srcDir} 可显式指定源目录/文件
+ * @returns {Array<{id:string,keywords:string,relPath:string}>} 已落盘技能清单（源缺失/拷贝失败即跳过该项） */
+const SKILL_KEYWORDS_MAP = {
+  'prototype-ui': '修改原型/页面/原型图/prototype-ui',
+  'prd-skill': '修改文档/功能说明/PRD/需求文档'
+};
+const SKILL_CONTEXT_SUBDIR = 'skills';
+function resolveSkillMainFile(dir) {
+  try {
+    if (!dir || !fs.existsSync(dir)) return null;
+    const entries = fs.readdirSync(dir);
+    if (!entries || !entries.length) return null;
+    let lower = null;
+    try {
+      for (let i = 0; i < entries.length; i++) {
+        const n = String(entries[i] || '');
+        if (n.toLowerCase() === 'skill.md') { lower = n; break; }
+      }
+    } catch (e) { lower = null; }
+    if (lower) return lower;
+    for (let i = 0; i < entries.length; i++) {
+      const n = String(entries[i] || '');
+      if (/\.md$/i.test(n)) return n;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+function findSkillSourceDir(skillId, explicitSrc) {
+  try {
+    const id = String(skillId || '').trim();
+    if (!id) return null;
+    if (explicitSrc) {
+      try {
+        let abs = String(explicitSrc).trim();
+        if (!abs) return null;
+        try { if (!path.isAbsolute(abs)) abs = path.resolve(abs); } catch (e) {}
+        let st = null;
+        try { st = fs.statSync(abs); } catch (e) { st = null; }
+        if (st && st.isFile()) { try { return path.dirname(abs); } catch (e) { return null; } }
+        if (st && st.isDirectory()) return abs;
+      } catch (e) {}
+    }
+    const cands = [];
+    try { cands.push(path.join(os.homedir(), '.agents', 'skills', id)); } catch (e) {}
+    try { if (process.env.USERPROFILE) cands.push(path.join(process.env.USERPROFILE, '.agents', 'skills', id)); } catch (e) {}
+    try { cands.push(path.join(__dirname, '..', '..', 'skills', id)); } catch (e) {}
+    try { cands.push(path.join(process.cwd(), 'skills', id)); } catch (e) {}
+    for (let i = 0; i < cands.length; i++) {
+      try {
+        const p = cands[i];
+        if (p && fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
+      } catch (e) {}
+    }
+    return null;
+  } catch (e) { return null; }
+}
+function copyDirRecursiveSafe(srcDir, dstDir) {
+  try {
+    const srcNorm = path.normalize(String(srcDir || ''));
+    const dstNorm = path.normalize(String(dstDir || ''));
+    if (!srcNorm || !dstNorm || srcNorm === dstNorm) return false;
+    if (dstNorm.startsWith(srcNorm + path.sep) || srcNorm.startsWith(dstNorm + path.sep)) return false;
+    let entries = null;
+    try { entries = fs.readdirSync(srcNorm, { withFileTypes: true }); } catch (e) { return false; }
+    try { fs.mkdirSync(dstNorm, { recursive: true }); } catch (e) {}
+    for (const entry of (entries || [])) {
+      try {
+        if (!entry || !entry.name) continue;
+        const n = String(entry.name);
+        if (n === '.git' || n === 'node_modules') continue;
+        const s = path.join(srcNorm, n);
+        const d = path.join(dstNorm, n);
+        if (entry.isDirectory()) {
+          copyDirRecursiveSafe(s, d);
+        } else if (entry.isFile()) {
+          try { fs.copyFileSync(s, d); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    return true;
+  } catch (e) { return false; }
+}
+function stageSkillsToContext(cwd, skills) {
+  const out = [];
+  try {
+    if (!cwd) return out;
+    let st0 = null;
+    try { st0 = fs.statSync(cwd); } catch (e) { return out; }
+    if (!st0 || !st0.isDirectory()) return out;
+    let list = null;
+    try {
+      if (Array.isArray(skills) && skills.length) {
+        list = skills;
+      } else if (skills && typeof skills === 'object') {
+        const ks = Object.keys(skills);
+        if (ks.length) list = ks.map((k) => ({ id: k, src: skills[k] }));
+        else list = [{ id: 'prototype-ui' }, { id: 'prd-skill' }];
+      } else {
+        list = [{ id: 'prototype-ui' }, { id: 'prd-skill' }];
+      }
+    } catch (e) { list = [{ id: 'prototype-ui' }, { id: 'prd-skill' }]; }
+    let destRoot = null;
+    try {
+      destRoot = path.join(String(cwd), '.context', SKILL_CONTEXT_SUBDIR);
+      fs.mkdirSync(destRoot, { recursive: true });
+    } catch (e) { return out; }
+    for (let i = 0; i < (list || []).length; i++) {
+      try {
+        const item = list[i];
+        let id = '';
+        let explicit = null;
+        if (typeof item === 'string') {
+          id = String(item).trim();
+        } else if (item && typeof item === 'object') {
+          id = String(item.id || item.skillId || item.name || '').trim();
+          explicit = item.src || item.srcDir || item.dir || item.path || item.source || null;
+        }
+        if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) continue;
+        const keywords = SKILL_KEYWORDS_MAP[id];
+        if (!keywords) continue;
+        let srcDir = null;
+        let srcFile = null;
+        if (explicit) {
+          try {
+            let abs = String(explicit).trim();
+            if (!abs) continue;
+            try { if (!path.isAbsolute(abs)) abs = path.resolve(abs); } catch (e2) {}
+            let st = null;
+            try { st = fs.statSync(abs); } catch (e2) { st = null; }
+            if (st && st.isFile()) { srcFile = abs; try { srcDir = path.dirname(abs); } catch (e2) { srcDir = null; } }
+            else if (st && st.isDirectory()) { srcDir = abs; }
+            else { continue; }
+          } catch (e2) { continue; }
+        } else {
+          try { srcDir = findSkillSourceDir(id, null); } catch (e2) {}
+        }
+        if (!srcFile && !srcDir) continue;
+        if (srcFile && !srcDir) {
+          try { srcDir = path.dirname(srcFile); } catch (e2) {}
+        }
+        if (!srcDir) continue;
+        const dstDir = path.join(destRoot, id);
+        try { fs.mkdirSync(dstDir, { recursive: true }); } catch (e2) { continue; }
+        try {
+          if (srcFile) {
+            const base = path.basename(srcFile);
+            if (!base || base.indexOf('\0') >= 0 || base.indexOf('..') >= 0) continue;
+            try { fs.copyFileSync(srcFile, path.join(dstDir, base)); } catch (e2) { continue; }
+          } else {
+            copyDirRecursiveSafe(srcDir, dstDir);
+          }
+        } catch (e2) { continue; }
+        let relPath = '.context/skills/' + id + '/';
+        try {
+          const main = resolveSkillMainFile(dstDir) || resolveSkillMainFile(srcDir);
+          if (main) relPath = '.context/skills/' + id + '/' + main;
+        } catch (e2) {}
+        out.push({ id: id, keywords: keywords, relPath: relPath });
+      } catch (e2) {}
+    }
+  } catch (e) {}
+  return out;
+}
+
 function handleAnnoRead(ev, arg1) {
   const dir = typeof arg1 === 'object' && arg1 !== null ? arg1.dir : arg1;
   const dn = validProtoDir(dir);
@@ -1994,6 +2410,10 @@ module.exports = {
   takeSnapshot,
   getProtoFileSignature,
   diffFileSignatures,
+  diffSandboxRootAgainst,
+  SANDBOX_GUARD_MAX_FILES_PER_DIR,
+  stageSkillsToContext,
+  SKILL_KEYWORDS_MAP,
   snapshotProtoFileContents,
   diffFileContents,
   diffTextLines,

@@ -1,4 +1,4 @@
-// T7 门禁总控：串行跑 25 套 verify（纯 Node，无 Electron），任一失败 exitCode=1
+// T7 门禁总控：串行跑全部 verify（纯 Node，无 Electron），任一失败 exitCode=1
 'use strict';
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
@@ -33,6 +33,16 @@ const SUITES = [
   ['link-stamp', 'verify-link-stamp.js'],
   ['spec-uilib', 'verify-spec-uilib.js'],
   ['ui-specs', 'verify-ui-specs.js'],
+  ['ctrl-release', 'verify-ctrl-release.js'],
+  ['history', 'verify-history.js'],
+  ['sandbox-guard', 'verify-sandbox-guard.js'],
+  ['antigravity-lock', 'verify-antigravity-lock.js'],
+  ['agy-stream', 'verify-agy-stream.js'],
+  ['task-wiring', 'verify-task-wiring.js'],
+  ['confirm-wiring', 'verify-confirm-wiring.js'],
+  ['answer-placement', 'verify-answer-placement.js'],
+  ['permission-modes', 'verify-permission-modes.js'],
+  ['terminal', 'verify-terminal.js'],
 ];
 
 function pad(s, n) {

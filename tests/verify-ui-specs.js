@@ -47,35 +47,50 @@ function extract(src, name) {
   console.log('[PASS] 预设声明完整');
 })();
 
-// ---- 3. 主进程注入点（aiDoSend 仍直通 t） ----
+// ---- 3. 主进程注入点（aiDoSend 仍直通 t；指针引用不断链） ----
 (function testWiring() {
   assert.ok(aiSrc.includes('function resolveUiSpecKind('), '缺 resolveUiSpecKind');
-  assert.ok(aiSrc.includes('function buildUiSpecSection('), '缺 buildUiSpecSection');
+  assert.ok(aiSrc.includes('function buildUiSpecSection('), '缺 buildUiSpecSection（指针组装）');
+  assert.ok(aiSrc.includes('function buildToolPromptPointer('), '缺 buildToolPromptPointer');
+  assert.ok(aiSrc.includes('function stageContextDir('), '缺 stageContextDir（.context/ 快照）');
+  assert.ok(aiSrc.includes('function buildHistoryPointer('), '缺 buildHistoryPointer');
+  assert.ok(aiSrc.includes('function appendHistoryRound('), '缺 appendHistoryRound');
   assert.ok(aiSrc.includes('readUiSpecForKind'), 'aiAsk 须经 readUiSpecForKind 取规范');
   assert.ok(aiSrc.includes('prompt: finalPrompt'), '下发须用注入后的 finalPrompt');
-  assert.ok(aiSrc.includes('UI_SPEC_PROMPT_MAX_BYTES'), '须有注入长度上限');
+  assert.ok(aiSrc.includes('UI_SPEC_PROMPT_MAX_BYTES'), '须有快照长度上限');
+  assert.ok(aiSrc.includes('.context'), '指针须指向沙箱内 .context/');
   assert.ok(paeSrc.includes('window.protoAPI.ai.ask(t,'), 'aiDoSend 须保持直通原文 t');
   assert.ok(paeSrc.includes('uiKind:'), 'aiDoSend 须携带原型端别 uiKind');
+  // diff 天然排除：签名与内容快照均跳过 `.` 开头目录（.context/ 自动不可见）
+  assert.ok(svcSrc.includes("entry.name.startsWith('.')"), '签名/diff 须跳过点目录（.context/ 排除）');
   console.log('[PASS] 注入链路完整');
 })();
 
-// ---- 4. 组装函数纯逻辑（提取仿真） ----
+// ---- 4. 组装函数纯逻辑（提取仿真；指针语义：只给地址不给正文） ----
 (function testBuilder() {
   const capM = aiSrc.match(/const UI_SPEC_PROMPT_MAX_BYTES\s*=\s*([^;]+);/);
-  assert.ok(capM, '须能提取注入上限');
+  assert.ok(capM, '须能提取快照上限');
+  const constM = aiSrc.match(/const CONTEXT_DIR_NAME\s*=\s*([^;]+);\s*const CONTEXT_SPEC_FILE\s*=\s*([^;]+);/);
+  assert.ok(constM, '须能提取 .context 常量');
   const helper = 'const UI_SPEC_PROMPT_MAX_BYTES = ' + capM[1] + ';\n'
-    + extract(aiSrc, 'resolveUiSpecKind') + '\n' + extract(aiSrc, 'buildUiSpecSection');
+    + 'const CONTEXT_DIR_NAME = ' + constM[1] + '; const CONTEXT_SPEC_FILE = ' + constM[2] + ';\n'
+    + extract(aiSrc, 'resolveUiSpecKind') + '\n'
+    + extract(aiSrc, 'contextHash') + '\n' + extract(aiSrc, 'buildUiSpecSection');
   const fn = new Function(helper + '\nreturn {resolveUiSpecKind: resolveUiSpecKind, buildUiSpecSection: buildUiSpecSection};')();
   assert.strictEqual(fn.resolveUiSpecKind({ uiKind: 'pc' }), 'pc', 'pc 映射');
   assert.strictEqual(fn.resolveUiSpecKind({ uiKind: 'mobile' }), 'mobile', 'mobile 映射');
   assert.strictEqual(fn.resolveUiSpecKind({}), 'mobile', '缺省回落 mobile');
   assert.strictEqual(fn.resolveUiSpecKind({ uiKind: 'PC' }), 'pc', '大小写兼容');
   const sec = fn.buildUiSpecSection('mobile', { name: '移动端UI规范', content: '# t\nabc' });
-  assert.ok(sec.includes('移动端UI规范') && sec.includes('# t\nabc'), '组装须含规范名与正文');
+  assert.ok(sec.includes('移动端UI规范'), '指针须含规范名');
+  assert.ok(sec.includes('.context/ui-spec.md'), '指针须含沙箱内相对路径');
+  assert.ok(sec.includes('完整读取'), '指针须含必读约束');
+  assert.ok(!sec.includes('# t\nabc'), '指针不得含规范正文');
   assert.ok(sec.includes('不约束代码实现方式'), '须声明 UI 规范非代码规范');
   assert.ok(sec.includes('以用户需求为准'), '冲突须以用户需求为准');
   const big = fn.buildUiSpecSection('pc', { name: 'X', content: 'z'.repeat(100 * 1024) });
-  assert.ok(big.length < 100 * 1024 && /截断/.test(big), '超限须截断并标记');
+  assert.ok(big.length < 2048, '百KB规范的指针仍须短小，实际 ' + big.length);
+  assert.ok(!/截断/.test(big), '指针模式不再截断正文');
   console.log('[PASS] 组装函数行为正确');
 })();
 
@@ -315,3 +330,55 @@ console.log('CHILD2_ALL_PASS');
 })();
 
 console.log('UISPEC_UI_PASS: 设计规范设置页全绿');
+
+// ---- 8. 子进程：.context/ 快照 + history 落盘 + agy 预算 ----
+(function testContextStaging() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'uictx-'));
+  const child = `
+const path=require('path'),fs=require('fs'),assert=require('assert');
+const ROOT=process.env.PLAND_ROOT;
+const svc=require(path.join(ROOT,'main/services/ai-process-service.js'));
+// 8a 快照：规范 + toolPrompt 落进 .context/
+const spec={id:'spec-ui-mobile',name:'移动端UI规范',content:'# 规范\\n'.repeat(2000)};
+const st=svc.stageContextDir(process.cwd(),spec);
+assert.ok(st.dir&&st.specVersion&&st.toolPromptBytes>0,'快照须写出规范与toolPrompt');
+assert.strictEqual(fs.readFileSync(path.join(process.cwd(),'.context','ui-spec.md'),'utf8'),spec.content,'规范快照须逐字节一致');
+assert.ok(fs.readFileSync(path.join(process.cwd(),'.context','toolPrompt.md'),'utf8').includes('原型工具'),'toolPrompt快照须有效');
+// 8b 指针短小且无正文
+const ptr=svc.buildUiSpecSection('mobile',spec);
+assert.ok(ptr.length<1024&&ptr.includes('.context/ui-spec.md')&&!ptr.includes('# 规范\\n# 规范'),'指针短小无正文');
+const tp=svc.buildToolPromptPointer();
+assert.ok(tp.length<512&&tp.includes('.context/toolPrompt.md'),'纪律指针短小');
+// 8c history：新盘空指针 → append两轮 → 规模行正确
+assert.ok(svc.buildHistoryPointer(process.cwd()).includes('暂无历史记录'),'新盘须空指针');
+svc.appendHistoryRound(process.cwd(),{user:'把按钮改红色',answer:'已改。',fileChanges:[{path:'index.html',action:'修改',added:12,deleted:5}]});
+svc.appendHistoryRound(process.cwd(),{user:'加大间距',answer:'间距8改16。',fileChanges:[]});
+const sc=svc.readHistoryScale(process.cwd());
+assert.strictEqual(sc.rounds,2,'应计2轮');
+const hp=svc.buildHistoryPointer(process.cwd());
+assert.ok(hp.includes('共2轮')&&hp.includes('间距8改16'), '规模行须含轮数与上次结论');
+// 8e 目标文件声明：沙箱内相对名给出绝对路径+禁令，越界/空不断链
+const tf1=svc.buildTargetFileSection(process.cwd(),{targetFile:'index.html'});
+assert.ok(tf1.includes('index.html')&&tf1.includes('只允许修改这一个文件')&&tf1.includes('同名'), '目标声明须含绝对路径与同名禁令，实际'+tf1.slice(0,120));
+assert.ok(svc.buildTargetFileSection(process.cwd(),{targetFile:'D:/out/q.html'})==='', '越界目标须返回空串不断链');
+assert.ok(svc.buildTargetFileSection(process.cwd(),{})==='', '无目标须返回空串');
+assert.ok(svc.buildTargetFileSection(process.cwd(),null)==='', '空参数须安全');
+assert.ok(svc.buildTargetFileSection(process.cwd(),{targetFile:'a\tb.html'})==='', '含控制字符须拒绝');
+// 8d agy 预算：指针组装任务须过 32KB 门禁
+const {createCommandInvocation}=require(path.join(ROOT,'platform/command.js'));
+const def=require(path.join(ROOT,'runtimes/defs/antigravity.js'));
+const finalPrompt=[ptr,tp,hp,'把首页按钮改成红色，调整间距，输出完整HTML。'].join('\\n\\n');
+assert.ok(finalPrompt.length<2048,'指针任务须短小，实际'+finalPrompt.length);
+createCommandInvocation({command:'C:\\\\agy\\\\agy.exe',args:def.buildArgs(finalPrompt,[],[],{model:'gemini-3.8-flash-high'})});
+console.log('CHILD3_ALL_PASS');
+`;
+  const r = spawnSync(process.execPath, ['-e', child], {
+    cwd: tmp, env: { ...process.env, PLAND_ROOT: rootDir }, encoding: 'utf8', timeout: 60000,
+  });
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
+  assert.strictEqual(r.status, 0, '子进程退出码\nSTDOUT:\n' + (r.stdout || '') + '\nSTDERR:\n' + (r.stderr || ''));
+  assert.ok((r.stdout || '').includes('CHILD3_ALL_PASS'), '子进程须全过\n' + (r.stdout || '') + (r.stderr || ''));
+  console.log('[PASS] .context快照/history/agy预算');
+})();
+
+console.log('UICTX_PASS: 上下文内收全绿');

@@ -2,6 +2,16 @@ function classifyExecutionError(errText, code, def) {
   const raw = String(errText || '').trim();
   const clean = raw.replace(/\u001b\[[0-9;]*m/g, '').trim();
 
+  // 任务超长：Windows 命令行 32KB 预算超限（argv 型 CLI 长任务，常见于 agy/aider/deepseek 携带 UI 规范时）
+  if (/AGENT_PROMPT_TOO_LARGE|命令行字符总数超出/i.test(clean)) {
+    return {
+      code: 'AGENT_PROMPT_TOO_LARGE',
+      title: '任务内容超长，当前 CLI 无法一次下发',
+      message: '本次任务（含注入的 UI 规范）超过 Windows 命令行 32KB 限制，而该 CLI 仅支持命令行传参。请精简修改描述、分多次下发，或切换到走 Stdin 管道的 CLI（如 OpenCode / Qwen）后重试。',
+      action: 'retry'
+    };
+  }
+
   // 会话不存在 / 会话失效 (OpenCode: Error: Session not found)
   if (/session not found/i.test(clean)) {
     return {

@@ -413,6 +413,24 @@ if (btnGitMenuEl) {
     toggleGitDropdown();
   };
 }
+/* 本地 CLI 终端：在当前沙箱目录打开当前使用的 CLI（独立控制台窗口，可交互） */
+var btnOpenCliEl = $('btnOpenCli');
+if (btnOpenCliEl) {
+  btnOpenCliEl.onclick = function() {
+    try { closeGitDropdown(); } catch (e) {}
+    var dir = '';
+    try { dir = (typeof aiSbxDir === 'function') ? aiSbxDir() : ''; } catch (e) { dir = ''; }
+    if (!dir) { try { showToast('请先选择一个原型'); } catch (e2) {} return; }
+    if (!(window.protoAPI && window.protoAPI.ai && window.protoAPI.ai.openTerminal)) {
+      try { showToast('当前环境不支持打开终端'); } catch (e3) {}
+      return;
+    }
+    window.protoAPI.ai.openTerminal(dir).then(function(r) {
+      if (r && r.ok) { try { showToast('已打开终端：' + (r.agent || 'CLI')); } catch (e4) {} }
+      else { try { showToast('打开终端失败：' + ((r && (r.error || r.message)) || '未知错误')); } catch (e5) {} }
+    }).catch(function(e6) { try { showToast('打开终端失败：' + ((e6 && e6.message) || e6)); } catch (e7) {} });
+  };
+}
 document.addEventListener('click', function(e) {
   if (gitDropdownMenuEl && gitDropdownMenuEl.style.display !== 'none') {
     if (!e.target.closest('#gitDropdownWrap')) {
@@ -3774,13 +3792,25 @@ function aiThinkTick(){
     try{ var tails2=tl.querySelectorAll('.i5-tail-silent'); for(var t2=0;t2<tails2.length;t2++){ try{ if(tails2[t2].parentNode) tails2[t2].parentNode.removeChild(tails2[t2]); }catch(e){} } }catch(e){}
    }
   }catch(e){}
-  var isToolWindow=(aiTlLastType==='tool_call');
-  if(silentSec>=I5_STALL_THRESHOLD&&!isToolWindow){
-   i5TlSetStalled(true, silentSec);
-  }else{
-   if(aiTlStalled) i5TlSetStalled(false, silentSec);
-  }
- }catch(e){}
+   var isToolWindow=(aiTlLastType==='tool_call');
+   if(silentSec>=I5_STALL_THRESHOLD&&!isToolWindow){
+    i5TlSetStalled(true, silentSec);
+   }else{
+    if(aiTlStalled) i5TlSetStalled(false, silentSec);
+   }
+   /* 无文本思考期占位：时间线尚无 think 段（等待行已撤、只有工具行）时显示“思考中(Ns)”；
+      有文本即由 i5ThinkAppendChunk 撤占位，不伪造思考文本、不入 aiStreamThink/历史。 */
+   try{
+    if(aiBusy&&aiStreaming){
+     var _idleSec=(typeof silentSec==='number'&&isFinite(silentSec))?silentSec:0;
+     var _tlIdle=null;
+     try{ _tlIdle=aiStreaming.querySelector('.i5-timeline'); }catch(e){ _tlIdle=null; }
+     if(_tlIdle&&!_tlIdle.querySelector('.think-p')&&!_tlIdle.querySelector('.i5-think-p')){
+      try{ i5EnsureThinkIdle(_idleSec); }catch(e){}
+     }
+    }
+   }catch(e){}
+  }catch(e){}
 }
 /* 用户落款行（对标原型：气泡外的独立行，右对齐；时间→复制钮） */
 function aiAppendUserFoot(container, text, ts){
@@ -3850,7 +3880,7 @@ function aiBubbleError(msg){
  if(aiStreaming){
   try{ i5HideWaiting(); }catch(e){}
   var _hasTl=false; try{ var _tlE=aiStreaming.querySelector('.i5-timeline'); if(_tlE&&_tlE.children&&_tlE.children.length>0) _hasTl=true; else if(aiStreaming.querySelector('.think-p')||aiStreaming.querySelector('.exp')||aiStreaming.querySelector('.edit-row')||aiStreaming.querySelector('.shell-row')||aiStreaming.querySelector('.answer')) _hasTl=true; }catch(e){ _hasTl=false; }
-   if(_hasTl){ try{ i5TlRemoveCursor(); }catch(e){} try{ var _tlF=null; try{ _tlF=aiStreaming.querySelector('.i5-timeline'); }catch(e){ _tlF=null; } if(_tlF){ try{ var _sb=_tlF.querySelectorAll('.silence'); for(var _sbi=0;_sbi<_sb.length;_sbi++){ try{ if(_sb[_sbi].parentNode) _sb[_sbi].parentNode.removeChild(_sb[_sbi]); }catch(e){} } }catch(e){} } }catch(e){} try{ i5TlSetStalled(false,0); }catch(e){} try{ i5ShellFinalizeAll(false); }catch(e){} try{ if(typeof i5EditMarkFailed==='function') i5EditMarkFailed(); }catch(e){} }
+   if(_hasTl){ try{ i5TlRemoveCursor(); }catch(e){} try{ var _tlF=null; try{ _tlF=aiStreaming.querySelector('.i5-timeline'); }catch(e){ _tlF=null; } if(_tlF){ try{ var _sb=_tlF.querySelectorAll('.silence'); for(var _sbi=0;_sbi<_sb.length;_sbi++){ try{ if(_sb[_sbi].parentNode) _sb[_sbi].parentNode.removeChild(_sb[_sbi]); }catch(e){} } }catch(e){} } }catch(e){} try{ i5TlSetStalled(false,0); }catch(e){} try{ i5ShellFinalizeAll(false); }catch(e){} try{ i5PairedFinalizeAll(false); }catch(e){} try{ if(typeof i5EditMarkFailed==='function') i5EditMarkFailed(); }catch(e){} }
    else{ aiStreaming.classList.add('err');
   aiStreaming.innerHTML='';
   var body=document.createElement('div');
@@ -3942,9 +3972,220 @@ function i5ToolParam(ev){
  if(ev.input){ try{ return typeof ev.input==='string'?ev.input:JSON.stringify(ev.input); }catch(e){} }
  return '';
 }
+/* S5b 配对纯逻辑（可单测提取）：有 id 事件判开始/完成；无 id 事件不经此函数（legacy 两行）。
+   done 仅当 phase done 系或 state/status DONE 系；其余一律 start（qoder/claude 单发 tool_use 无相位即 start）。 */
+function i5ToolPhaseOf(ev){
+ try{
+  var ph=String((ev&&(ev.phase||ev.toolPhase))||'').toLowerCase();
+  if(ph==='done'||ph==='complete'||ph==='completed'||ph==='success') return 'done';
+  if(ph==='start'||ph==='begin'||ph==='active'||ph==='running') return 'start';
+  var st=String((ev&&(ev.state||ev.status))||'').toUpperCase();
+  if(st==='DONE'||st==='COMPLETED'||st==='COMPLETE'||st==='SUCCESS') return 'done';
+  if(st==='ACTIVE'||st==='START'||st==='STARTED'||st==='RUNNING') return 'start';
+ }catch(e){}
+ return 'start';
+}
+/* DONE 行 title 追加本步 token 数（有就显示，没有回空串不打扰；蛇形/camel 双兼容）。 */
+function i5ToolUsageText(usage){
+ try{
+  var u=(usage&&typeof usage==='object')?usage:null;
+  if(!u) return '';
+  var num=function(v){ var n=Number(v); return (isFinite(n)&&n>0)?Math.floor(n):0; };
+  var i=num(u.input_tokens!=null?u.input_tokens:u.inputTokens);
+  var o=num(u.output_tokens!=null?u.output_tokens:u.outputTokens);
+  if(i<=0&&o<=0) return '';
+  return ' · tokens 输入'+i+'/输出'+o;
+ }catch(e){ return ''; }
+}
+/* 无文本思考期占位文案（只报已等待秒数，不伪造思考文本）。 */
+function i5ThinkIdleText(sec){
+ try{
+  var s=Math.max(0, Math.round(Number(sec)||0));
+  return '思考中('+s+'s)';
+ }catch(e){ return '思考中(0s)'; }
+}
+function i5EnsureThinkIdle(sec){
+ if(!aiStreaming) return null;
+ var tl=null;
+ try{ tl=i5TlEnsureTimeline(); }catch(e){ return null; }
+ if(!tl) return null;
+ var row=null;
+ try{ row=tl.querySelector('.i5-think-idle'); }catch(e){ row=null; }
+ if(!row){
+  try{
+   row=document.createElement('div'); row.className='i5-think-idle';
+   tl.appendChild(row);
+  }catch(e){ return null; }
+ }
+ try{ row.textContent=i5ThinkIdleText(sec); }catch(e){}
+ return row;
+}
+function i5HideThinkIdle(){
+ try{
+  if(!aiStreaming) return;
+  var rows=aiStreaming.querySelectorAll('.i5-think-idle');
+  for(var i=0;i<rows.length;i++){ try{ if(rows[i].parentNode) rows[i].parentNode.removeChild(rows[i]); }catch(e){} }
+ }catch(e){}
+}
+/* 收尾：未配对的开始行按成功/失败翻牌（单发 id 工具不断流：成功补一条 TOOL trace，避免日志缺口）。 */
+function i5PairedFinalizeAll(ok){
+ try{
+  for(var k in i5PendingTools){
+   (function(key){
+    var rec=null;
+    try{ rec=i5PendingTools[key]||null; }catch(e){ rec=null; }
+    try{ delete i5PendingTools[key]; }catch(e){}
+    if(!rec||!rec.el) return;
+    try{
+     if(ok===false){ rec.tag.className='tag fail i5-tag-fail'; rec.tag.textContent='失败'; return; }
+     var sec=0;
+     try{ sec=Math.max(0, Math.round((Date.now()-(rec.t0||Date.now()))/1000)); }catch(e){ sec=0; }
+     rec.tag.className='tag done i5-tag-done'; rec.tag.textContent='完成·'+sec+'s';
+     var tok='';
+     try{ tok=i5ToolUsageText(rec.ev&&rec.ev.usage); }catch(e){ tok=''; }
+     try{ if(tok&&rec.code) rec.code.title=String(rec.code.title||'')+tok; }catch(e){}
+     try{ aiAppendTrace({ tag:'TOOL', level:'info', text:i5ToolName(rec.ev)+' '+i5ToolRawParam(rec.ev) }); }catch(e){}
+    }catch(e){}
+   })(k);
+  }
+ }catch(e){}
+}
+/* S5 范围确认弹窗（动态建 DOM，不碰 HTML/CSS 文件；任一按钮只回一次；无应答靠主进程 120 秒超时兜底）。 */
+function i5ShowScopeConfirm(req){
+ try{
+  if(!req||!req.id) return;
+  try{
+   var olds=document.querySelectorAll('.i5-scope-mask');
+   for(var oi=0;oi<olds.length;oi++){ try{ if(olds[oi].parentNode) olds[oi].parentNode.removeChild(olds[oi]); }catch(e){} }
+  }catch(e){}
+   var id=String(req.id);
+   var hits=Array.isArray(req.hits)?req.hits:[];
+   var mask=document.createElement('div'); mask.className='i5-scope-mask';
+   try{ mask.setAttribute('data-scope-id', id); }catch(e){}
+   mask.style.cssText='position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(15,23,42,.45);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  var card=document.createElement('div');
+  card.style.cssText='background:#fff;border-radius:10px;max-width:520px;width:92%;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,.25);font-size:13px;line-height:1.7;color:#0f172a;';
+  var title=document.createElement('div'); title.textContent='检测到沙箱外引用，请确认范围';
+  title.style.cssText='font-weight:700;font-size:14px;margin-bottom:8px;';
+  card.appendChild(title);
+  var desc=document.createElement('div');
+  var cwdLine=String(req.cwd||'');
+  var listText=hits.length?hits.slice(0,20).join('\n'):'（未知）';
+  desc.textContent='以下引用超出本次工作目录'+(cwdLine?('（'+cwdLine+'）'):'')+'，是否允许本次任务涉及？\n'+listText+'\n120 秒内未选择将按“仅沙箱内放行”继续。';
+  desc.style.cssText='white-space:pre-wrap;word-break:break-all;background:#f1f5f9;border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;margin-bottom:12px;';
+  card.appendChild(desc);
+  var row=document.createElement('div'); row.style.cssText='display:flex;gap:8px;justify-content:flex-end;';
+  var replied=false;
+  var reply=function(decision){
+   if(replied) return; replied=true;
+   try{ if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.confirmScope) window.protoAPI.ai.confirmScope({ id:id, decision:decision }); }catch(e){}
+   try{ if(mask.parentNode) mask.parentNode.removeChild(mask); }catch(e){}
+  };
+  var mkBtn=function(label, decision, primary){
+   var b=document.createElement('button'); b.type='button'; b.textContent=label;
+   b.style.cssText=primary?'background:#2563eb;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;':'background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;cursor:pointer;';
+   b.onclick=function(){ reply(decision); };
+   return b;
+  };
+  row.appendChild(mkBtn('拒绝', 'deny', false));
+  row.appendChild(mkBtn('总是允许这类', 'allow-always', false));
+  row.appendChild(mkBtn('允许本次', 'allow-once', true));
+  card.appendChild(row);
+   mask.appendChild(card);
+   try{ document.body.appendChild(mask); }catch(e){ return; }
+   /* 保险：130 秒后框还在就自撤（主进程超时 120 秒 + dismiss 万一丢失，不让遮罩永久挡输入） */
+   try{
+    setTimeout(function(){
+     try{ if(mask.parentNode) mask.parentNode.removeChild(mask); }catch(e){}
+    }, 130000);
+   }catch(e){}
+  }catch(e){}
+}
+/* 确认框撤除（主进程超时/取消/已解决时下发；按 id 精确移除，不在即 no-op） */
+function i5DismissScopeConfirm(id){
+ try{
+  var sid=String(id||'').trim(); if(!sid) return;
+  var all=null; try{ all=document.querySelectorAll('.i5-scope-mask'); }catch(e){ return; }
+  for(var i=0;i<all.length;i++){
+   try{
+    var m=all[i]; if(!m) continue;
+    var mid=''; try{ mid=String(m.getAttribute&&m.getAttribute('data-scope-id')||''); }catch(e){}
+    if(mid===sid&&m.parentNode){ m.parentNode.removeChild(m); }
+   }catch(e){}
+  }
+ }catch(e){}
+}
 function i5AppendToolCall(ev){
- /* 时间线模型：严格按到达顺序逐条落子，不再按类型分区；聚合/编辑/Shell三类分发 */
+ /* 时间线模型：严格按到达顺序逐条落子，不再按类型分区；聚合/编辑/Shell三类分发。
+    S5b TOOL 双行合并：有 ev.id（agy 同一步号 ACTIVE/DONE 同 id）按 id 配对——开始建行
+    （tag 执行中，不记 trace），完成翻牌为完成+耗时并记一条 trace；无 id 走 legacy 两行兼容其它 CLI。 */
  try{ i5ThinkFlushPending(false); }catch(e){}
+ var _pairId='';
+ try{ _pairId=String((ev&&(ev.id||ev.tool_use_id||ev.toolUseId))||'').trim(); }catch(e){ _pairId=''; }
+ if(_pairId){
+  var _phase='start';
+  try{ _phase=i5ToolPhaseOf(ev); }catch(e){ _phase='start'; }
+  if(_phase!=='done'){
+   try{
+    var _tl0=i5TlEnsureTimeline();
+    if(_tl0){
+     var _row=document.createElement('div'); _row.className='shell-row i5-shell-row i5-paired';
+     var _verb=document.createElement('b'); _verb.className='i5-verb'; _verb.textContent=String(i5ToolName(ev)||'工具调用');
+     var _code=document.createElement('code'); _code.className='i5-cmd';
+     var _raw0=i5ToolRawParam(ev)||'';
+     _code.textContent=String(_raw0).length>120?String(_raw0).slice(0,120)+'…':String(_raw0||'(调用)');
+     _code.title=String(_raw0||'');
+     var _tag0=document.createElement('span'); _tag0.className='tag run i5-tag-run'; _tag0.textContent='执行中';
+     _row.appendChild(_verb); _row.appendChild(_code); _row.appendChild(_tag0);
+     _tl0.appendChild(_row);
+     try{ i5PendingTools[_pairId]={ el:_row, tag:_tag0, code:_code, t0:Date.now(), ev:ev }; }catch(e){}
+     i5TlMoveCursorTo(_row);
+    }
+   }catch(e){}
+  }else{
+   var _rec=null;
+   try{ _rec=i5PendingTools[_pairId]||null; }catch(e){ _rec=null; }
+   var _now=0;
+   try{ _now=Date.now(); }catch(e){ _now=0; }
+   var _isFail=false;
+   try{ _isFail=/fail|error/.test(String((ev&&(ev.status||ev.state))||'').toLowerCase()); }catch(e){ _isFail=false; }
+   var _tok='';
+   try{ _tok=i5ToolUsageText(ev&&ev.usage); }catch(e){ _tok=''; }
+   if(_rec&&_rec.el){
+    try{
+     var _sec=0;
+     try{ _sec=Math.max(0, Math.round(((_now||Date.now())-(_rec.t0||_now))/1000)); }catch(e){ _sec=0; }
+     if(_isFail){ _rec.tag.className='tag fail i5-tag-fail'; _rec.tag.textContent='失败'; }
+     else{ _rec.tag.className='tag done i5-tag-done'; _rec.tag.textContent='完成·'+_sec+'s'; }
+     try{ if(_tok&&_rec.code) _rec.code.title=String(_rec.code.title||'')+_tok; }catch(e){}
+     try{ delete i5PendingTools[_pairId]; }catch(e){}
+     i5TlMoveCursorTo(_rec.el);
+    }catch(e){}
+   }else{
+    try{
+     var _tl1=i5TlEnsureTimeline();
+     if(_tl1){
+      var _row2=document.createElement('div'); _row2.className='shell-row i5-shell-row i5-paired';
+      var _verb2=document.createElement('b'); _verb2.className='i5-verb'; _verb2.textContent=String(i5ToolName(ev)||'工具调用');
+      var _code2=document.createElement('code'); _code2.className='i5-cmd';
+      var _raw2=i5ToolRawParam(ev)||'';
+      _code2.textContent=String(_raw2).length>120?String(_raw2).slice(0,120)+'…':String(_raw2||'(调用)');
+      _code2.title=String(_raw2||'')+_tok;
+      var _tag2=document.createElement('span');
+      if(_isFail){ _tag2.className='tag fail i5-tag-fail'; _tag2.textContent='失败'; }
+      else{ _tag2.className='tag done i5-tag-done'; _tag2.textContent='完成'; }
+      _row2.appendChild(_verb2); _row2.appendChild(_code2); _row2.appendChild(_tag2);
+      _tl1.appendChild(_row2);
+      i5TlMoveCursorTo(_row2);
+     }
+    }catch(e){}
+   }
+   try{ aiAppendTrace({ tag:'TOOL', level:'info', text:i5ToolName(ev)+' '+i5ToolRawParam(ev) }); }catch(e){}
+  }
+  try{ aiTlLastPacket=Date.now(); aiTlLastType='tool_call'; i5TlSetStalled(false,0); }catch(e){}
+  i5TlScroll();
+  return;
+ }
  var rawName=i5ToolName(ev);
  var kind=i5VerbKind(rawName);
  try{
@@ -4001,6 +4242,8 @@ var aiTlExploreRow=null, aiTlExploreCountEl=null, aiTlExploreChipsEl=null;
 var aiTlEditRows=[], aiTlShellRows=[];
 var aiTlAnswerText='', aiTlAnswerEl=null, aiTlAnswerBodyEl=null, aiTlPendingEl=null;
 var aiTlLastPacket=0, aiTlLastType='', aiTlStalled=false;
+/* S5b 配对表：id → {el,tag,code,t0,ev}（开始行待完成翻牌；收尾/切任务时清理） */
+var i5PendingTools={};
 function i5FmtMsgTime(ts){
  try{
   var d=new Date(ts||Date.now()); if(isNaN(d.getTime())) d=new Date();
@@ -4114,6 +4357,7 @@ function i5IsDirPath(p, toolName){
 }
 function i5TlReset(){
  aiTlBuf=''; aiTlFull=''; aiTlReadCount=0; aiTlDirCount=0; aiTlReadFiles=[];
+ try{ for(var _pk in i5PendingTools){ try{ delete i5PendingTools[_pk]; }catch(e){} } }catch(e){}
  aiTlExploreRow=null; aiTlExploreCountEl=null; aiTlExploreChipsEl=null;
  aiTlEditRows=[]; aiTlShellRows=[];
  aiTlAnswerText=''; aiTlAnswerEl=null; aiTlAnswerBodyEl=null; aiTlPendingEl=null;
@@ -4318,6 +4562,7 @@ function i5TlAppendThinkPara(text){
 }
 function i5ThinkAppendChunk(t){
  var s=String(t==null?'':t); if(!s) return;
+ try{ i5HideThinkIdle(); }catch(e){}
  aiTlFull+=s; try{ aiStreamThink+=s; }catch(e){ aiStreamThink=aiTlFull; }
  try{ var g0=aiCurGroup(); if(g0) g0.think=aiStreamThink; }catch(e){}
  aiTlBuf+=s;
@@ -4552,15 +4797,20 @@ function i5AnswerFinalize(ts){
    tl.appendChild(aiTlAnswerEl);
   }
   i5TlRemoveCursor();
-  if(tl&&(aiTlAnswerText||aiStreamText)){
-   var sign=document.createElement('div'); sign.className='msg-foot';
-   var bodyForCopy=aiTlAnswerBodyEl;
-   sign.appendChild(i5CreateCopyIconBtn(function(){ try{ return bodyForCopy?bodyForCopy.innerText:(aiTlAnswerText||''); }catch(e){ return aiTlAnswerText||''; } }));
-   var tm=document.createElement('time'); tm.textContent=i5FmtMsgTime(ts||Date.now());
-   sign.appendChild(tm);
-   tl.appendChild(sign);
-  }
- }catch(e){}
+   if(tl&&(aiTlAnswerText||aiStreamText)){
+    var sign=document.createElement('div'); sign.className='msg-foot';
+    var bodyForCopy=aiTlAnswerBodyEl;
+    sign.appendChild(i5CreateCopyIconBtn(function(){ try{ return bodyForCopy?bodyForCopy.innerText:(aiTlAnswerText||''); }catch(e){ return aiTlAnswerText||''; } }));
+    var tm=document.createElement('time'); tm.textContent=i5FmtMsgTime(ts||Date.now());
+    sign.appendChild(tm);
+    tl.appendChild(sign);
+   }
+   /* 回答归位：首个 chunk 来得早时回答元素卡在时间线中部（后面还有工具行），定稿时搬到末尾，保证回答永远在底部 */
+   try{
+    if(tl&&aiTlAnswerEl){ tl.appendChild(aiTlAnswerEl); }
+    if(tl&&(typeof sign!=='undefined')&&sign){ tl.appendChild(sign); }
+   }catch(e){}
+  }catch(e){}
 }
 function i5TlSetStalled(on, silentSec){
  try{
@@ -4942,6 +5192,7 @@ function finishAiStream(isCancel){
   var _doneTs=0; try{ _doneTs=(typeof aiSessNow==='function')?aiSessNow():Date.now(); }catch(e){ try{ _doneTs=Date.now(); }catch(e2){ _doneTs=0; } }
    if(aiStreaming){
     try{ i5HideWaiting(); }catch(e){}
+    try{ i5HideThinkIdle(); }catch(e){}
     try{ i5ThinkFlushPending(true); }catch(e){}
     try{ var _tl0=null; try{ _tl0=aiStreaming.querySelector('.i5-timeline'); }catch(e){ _tl0=null; } if(_tl0){ try{ var _sils=_tl0.querySelectorAll('.silence'); for(var _si=0;_si<_sils.length;_si++){ try{ var _sp=_sils[_si]; if(_sp&&_sp.parentNode) _sp.parentNode.removeChild(_sp); }catch(e){} } }catch(e){} try{ var _sils2=_tl0.querySelectorAll('.i5-silent'); for(var _si2=0;_si2<_sils2.length;_si2++){ try{ var _sp2=_sils2[_si2]; if(_sp2&&_sp2.parentNode) _sp2.parentNode.removeChild(_sp2); }catch(e){} } }catch(e){} } }catch(e){}
    try{
@@ -4963,12 +5214,14 @@ function finishAiStream(isCancel){
      }
     }catch(e){}
     try{ i5ShellFinalizeAll(true); }catch(e){}
+    try{ i5PairedFinalizeAll(true); }catch(e){}
    }else{
     try{
      var _fc=[]; try{ _fc=Array.isArray(aiCurFileChanges)?aiCurFileChanges:((typeof window!=='undefined'&&window.aiCurFileChanges)||[]); }catch(e){ _fc=[]; }
      i5EditFinalize(_fc);
     }catch(e){}
     try{ i5ShellFinalizeAll(true); }catch(e){}
+    try{ i5PairedFinalizeAll(true); }catch(e){}
     try{ i5AnswerFinalize(_doneTs); }catch(e){}
     try{ i5TlRemoveCursor(); }catch(e){}
     try{
@@ -5662,9 +5915,15 @@ if(HAS_AI){
     else if(ev.type==='tool_call'){
       try{ i5AppendToolCall(ev); }catch(e){}
       try{ if(typeof aiToolEventFrom==='function'){ var _te=aiToolEventFrom(ev); if(_te&&typeof aiCurTaskEvents!=='undefined'&&aiCurTaskEvents) aiCurTaskEvents.push(_te); } }catch(e){}
-      try{ aiUpdateOpCur(); }catch(e){}
-    }
-    else if(ev.type==='thinking'){
+       try{ aiUpdateOpCur(); }catch(e){}
+     }
+      else if(ev.type==='scope_confirm'){
+       try{ i5ShowScopeConfirm(ev); }catch(e){}
+      }
+      else if(ev.type==='scope_confirm_dismiss'){
+       try{ i5DismissScopeConfirm(ev&&ev.id); }catch(e){}
+      }
+     else if(ev.type==='thinking'){
       try{ if(typeof aiCurTaskEvents!=='undefined'&&aiCurTaskEvents){ var _tt0=String((ev&&ev.text)||''); if(_tt0.trim()&&typeof aiSessNow==='function') aiCurTaskEvents.push({t:'thinking', text:_tt0, ts:aiSessNow()}); } }catch(e){}
       var g0=aiCurGroup(); if(!g0)return;
       try{ i5ThinkAppendChunk(String((ev&&ev.text)||'')); }catch(e){ try{ aiStreamThink+=String((ev&&ev.text)||''); }catch(e2){} }

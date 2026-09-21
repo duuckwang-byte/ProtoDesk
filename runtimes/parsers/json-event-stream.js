@@ -53,8 +53,16 @@ function createJsonEventStreamParser(eventParser) {
       return;
     }
 
-    // reasoning / thinking
-    if (rawType.includes('reason') || rawType.includes('think')) {
+    // tool_use / tool_call / function_call（opencode 实测：{type:"tool_use", part:{type:"tool", tool, state:{input}}}）
+    const _part = (obj.part && typeof obj.part === 'object') ? obj.part : null;
+    const _isPartTool = _part && String(_part.type || '').toLowerCase() === 'tool';
+    // reasoning / thinking（含嵌套 part/message/delta.type：opencode 把思考放在 part.type === 'reasoning' 里，顶层 type 仍是 message/text，不看嵌套就会漏进回答）
+    const _nestedType = String(
+      ((_part && _part.type) || '') + ' '
+      + ((obj.message && typeof obj.message === 'object' && obj.message.type) || '') + ' '
+      + ((obj.delta && typeof obj.delta === 'object' && obj.delta.type) || '')
+    ).toLowerCase();
+    if (rawType.includes('reason') || rawType.includes('think') || _nestedType.includes('reason') || _nestedType.includes('think')) {
       const text = getText(obj);
       if (text) {
         emitted = true;
@@ -64,10 +72,6 @@ function createJsonEventStreamParser(eventParser) {
       }
       return;
     }
-
-    // tool_use / tool_call / function_call（opencode 实测：{type:"tool_use", part:{type:"tool", tool, state:{input}}}）
-    const _part = (obj.part && typeof obj.part === 'object') ? obj.part : null;
-    const _isPartTool = _part && String(_part.type || '').toLowerCase() === 'tool';
     if (rawType.includes('tool') || rawType.includes('function_call') || obj.tool_use || obj.tool_call || _isPartTool) {
       emitted = true;
       try {
