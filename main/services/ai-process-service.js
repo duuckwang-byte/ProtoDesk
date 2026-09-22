@@ -236,7 +236,15 @@ function findScopeRefs(text, cwd) {
     try {
       if (!cwdNorm || !p) return false;
       const nn = path.normalize(stripUncPrefix(String(p).replace(/\//g, '\\'))).replace(/\\+$/, '').toLowerCase();
-      return nn === cwdNorm || nn.indexOf(cwdNorm + '\\') === 0;
+      if (nn === cwdNorm || nn.indexOf(cwdNorm + '\\') === 0) return true;
+      /* 截断的自身路径：候选是 cwd 的字符串前缀、但断点不在分隔符上
+       *（如历史规模行“上次结论”取 120 字，把 \sandbox 切成 \s）。
+       * 真父目录（断点正在分隔符上）仍判外面，不被本规则放行。 */
+      if (nn && cwdNorm.indexOf(nn) === 0) {
+        const nx = cwdNorm.charAt(nn.length);
+        if (nx && nx !== '\\' && nx !== '/') return true;
+      }
+      return false;
     } catch (e) { return false; }
   }
   /* 预处理：先把 file:// 与正斜杠盘符路径整体判定（沙箱内直接放行，沙箱外记一条），
@@ -600,10 +608,26 @@ function readHistoryScale(cwd) {
     out.rounds = rounds ? rounds.length : 0;
     const conclusions = text.match(/^\*\*结论\*\*：([^\n]*)/mg);
     if (conclusions && conclusions.length) {
-      out.lastConclusion = String(conclusions[conclusions.length - 1]).replace(/^\*\*结论\*\*：/, '').trim().slice(0, 120);
+      out.lastConclusion = cutSummaryLine(String(conclusions[conclusions.length - 1]).replace(/^\*\*结论\*\*：/, ''));
     }
   } catch (e) {}
   return out;
+}
+/* 摘要不断句：目标长度 SUMMARY_SOFT，允许向后波动到 SUMMARY_HARD，在句末标点处收尾；
+ * 找不到句末则在目标处硬切。无依赖纯函数（句末：。！？!?；与换行）。 */
+const SUMMARY_SOFT_LEN = 120;
+const SUMMARY_HARD_LEN = 170;
+function cutSummaryLine(s) {
+  try {
+    const t = String(s || '').trim().replace(/\s+/g, ' ');
+    if (t.length <= SUMMARY_SOFT_LEN) return t;
+    const win = t.slice(SUMMARY_SOFT_LEN, SUMMARY_HARD_LEN);
+    const m = win.match(/[。！？!?\n；]/);
+    if (m && typeof m.index === 'number') return t.slice(0, SUMMARY_SOFT_LEN + m.index + 1).trim();
+    return t.slice(0, SUMMARY_SOFT_LEN).trim();
+  } catch (e) {
+    try { return String(s || '').trim().slice(0, SUMMARY_SOFT_LEN); } catch (_) { return ''; }
+  }
 }
 function buildHistoryPointer(cwd) {
   try {
@@ -1372,8 +1396,28 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
   return { ok: true, success: true, pid: shared.activeExecution ? shared.activeExecution.pid : null };
 
 }
+/* 独立窗代发（ai:remote-send 实现）：主窗待提交列表委托独立窗发送时，
+ * 把文本投给独立窗，由其走自己的 aiDoSend 全程落窗。独立窗不存在/已销毁/发送失败即回 false，调用方回落本地发送。
+ * @param {Object} ev IPC 事件（未使用，签名对齐）
+ * @param {Object} o {text:string, display?:string} 待发送全文与对话框展示简版
+ * @returns {Promise<{ok:boolean, success:boolean, error?}>} */
+async function aiRemoteSendImpl(ev, o) {
+  try {
+    const p = (o && typeof o === 'object') ? o : {};
+    const text = String(p.text || '').trim();
+    if (!text) return { ok: false, success: false, error: 'empty' };
+    let win = null;
+    try { win = (shared.aiWin && !shared.aiWin.isDestroyed()) ? shared.aiWin : null; } catch (e) { win = null; }
+    if (!win) return { ok: false, success: false, error: 'no-window' };
+    try {
+      win.webContents.send('ai:event', { type: 'remote-send', text, display: String(p.display || '') });
+    } catch (e) { return { ok: false, success: false, error: String((e && e.message) || e) }; }
+    try { if (!win.isFocused()) win.focus(); } catch (e) {}
+    return { ok: true, success: true };
+  } catch (e) { return { ok: false, success: false, error: String((e && e.message) || e) }; }
+}
 async function aiCancelImpl() {
-  /* 确认等待中的范围确认按拒绝解决（aiAskImpl 走 scope-denied 中止，不悬挂 120 秒） */
+/* 确认等待中的范围确认按拒绝解决（aiAskImpl 走 scope-denied 中止，不悬挂 120 秒） */
   try {
     for (const w of scopeConfirmWaiters.values()) { try { w.resolve('deny'); } catch (e) {} }
     scopeConfirmWaiters.clear();
@@ -1395,21 +1439,54 @@ function aiIsBusyImpl() { return !!shared.activeExecution;
 /* 本地 CLI 终端：纯组装（可单测），Windows 走 cmd start 开独立控制台窗口
  * @param {string} resolvedBin CLI 可执行文件（绝对路径或 PATH 名）
  * @param {string} cwd 沙箱工作目录
+ * @param {string[]} [extraArgs] 终端启动附加参数（缺省无）
  * @returns {{ok:boolean, command?:string, args?:string[], error?:string}} */
-function buildTerminalLaunch(resolvedBin, cwd) {
+function buildTerminalLaunch(resolvedBin, cwd, extraArgs) {
   try {
     if (process.platform !== 'win32') return { ok: false, error: '仅支持 Windows' };
     const bin = String(resolvedBin || '').trim();
     const dir = String(cwd || '').trim();
     if (!bin || !dir) return { ok: false, error: '缺少可执行文件或目录' };
-    const line = ['start', 'Proto CLI', '/D', dir, bin].map((s) => quoteWindowsCommandArg(s)).join(' ');
-    return { ok: true, command: 'cmd.exe', args: ['/d', '/s', '/c', line] };
+    const tail = Array.isArray(extraArgs) ? extraArgs.map((s) => String(s || '')).filter((s) => s) : [];
+    const line = ['start', 'Proto CLI', '/D', dir, bin].concat(tail).map((s) => quoteWindowsCommandArg(s)).join(' ');
+    /* 整行已按 cmd 语法转义完毕，须 verbatim 投递：否则 Node 会给含空格参数再包引号、
+     * 内部引号被反斜杠转义后 cmd 不认，start 会把标题 "Proto CLI" 当成要执行的文件 */
+    return { ok: true, command: 'cmd.exe', args: ['/d', '/s', '/c', line], windowsVerbatimArguments: true };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+/* 解析某 CLI 的终端启动目标（每家独立启动命令表）：
+ * def.terminal = {cmd?: string|string[], args?: string[], unsupported?: string}，缺省用解析到的 bin、无附加参数。
+ * @param {Object} def Agent 定义
+ * @param {string} customPath 用户指定的自定义路径
+ * @returns {Promise<{ok:boolean, bin?:string, args?:string[], display?:string, error?:string, tried?:string[]}>} */
+async function resolveTerminalTarget(def, customPath) {
+  try {
+    if (!def) return { ok: false, error: '未找到 Agent 适配器' };
+    const term = (def.terminal && typeof def.terminal === 'object') ? def.terminal : null;
+    if (term && term.unsupported) {
+      return { ok: false, error: String(term.unsupported) };
+    }
+    let bin = null;
+    try { bin = await resolveAgentExecutable(def, customPath); } catch (e) { bin = null; }
+    if (term && term.cmd != null) {
+      const override = Array.isArray(term.cmd) ? term.cmd.map((s) => String(s || '')).filter((s) => s) : [String(term.cmd || '').trim()].filter((s) => s);
+      if (!override.length) return { ok: false, error: '该 CLI 的终端启动命令为空' };
+      const args = Array.isArray(term.args) ? term.args.map((s) => String(s || '')).filter((s) => s) : [];
+      return { ok: true, bin: override[0], args: override.slice(1).concat(args), display: override.concat(args).join(' ') };
+    }
+    if (!bin) {
+      const tried = [def.bin].concat(def.fallbackBins || []).filter(Boolean).map((s) => String(s));
+      return { ok: false, error: '未找到 ' + (def.name || def.id) + '（已尝试：' + (tried.join('、') || '无') + '），请确认已安装或在设置中心指定路径', tried };
+    }
+    const args = (term && Array.isArray(term.args)) ? term.args.map((s) => String(s || '')).filter((s) => s) : [];
+    const disp = ([bin].concat(args)).join(' ');
+    return { ok: true, bin, args, display: disp };
   } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 }
 /* 在当前沙箱目录打开当前 CLI 的可交互终端（ai:open-terminal 实现）
  * @param {Object} ev IPC 事件
  * @param {string} dir 沙箱目录（渲染层 aiSbxDir）
- * @returns {Promise<{ok:boolean, success:boolean, pid?, agent?, error?}>} */
+ * @returns {Promise<{ok:boolean, success:boolean, pid?, agent?, cmd?, error?}>} */
 async function aiOpenTerminalImpl(ev, dir) {
   try {
     const cwd = aiWorkDir(dir);
@@ -1424,14 +1501,13 @@ async function aiOpenTerminalImpl(ev, dir) {
     try {
       if (aiCfg.cliPaths && aiCfg.cliPaths[def.id]) customPath = aiCfg.cliPaths[def.id];
     } catch (e) {}
-    let bin = null;
-    try { bin = await resolveAgentExecutable(def, customPath); } catch (e) { bin = null; }
-    if (!bin) bin = def.bin;
-    const launch = buildTerminalLaunch(bin, cwd);
+    const target = await resolveTerminalTarget(def, customPath);
+    if (!target.ok) return { ok: false, success: false, error: target.error };
+    const launch = buildTerminalLaunch(target.bin, cwd, target.args);
     if (!launch.ok) return { ok: false, success: false, error: launch.error };
-    const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', windowsHide: false });
+    const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', windowsHide: false, windowsVerbatimArguments: !!launch.windowsVerbatimArguments });
     try { if (child && typeof child.unref === 'function') child.unref(); } catch (e) {}
-    return { ok: true, success: true, pid: (child && child.pid) || null, agent: def.name || def.id };
+    return { ok: true, success: true, pid: (child && child.pid) || null, agent: def.name || def.id, cmd: target.display };
   } catch (e) { return { ok: false, success: false, error: String((e && e.message) || e) }; }
 }
 module.exports = {
@@ -1447,6 +1523,7 @@ module.exports = {
   aiPickImpl,
   aiAskImpl,
   aiCancelImpl,
+  aiRemoteSendImpl,
   aiIsBusyImpl,
   resolveUiSpecKind,
   buildUiSpecSection,
@@ -1491,4 +1568,8 @@ module.exports = {
   SCOPE_HITS_MAX,
   aiOpenTerminalImpl,
   buildTerminalLaunch,
+  resolveTerminalTarget,
+  cutSummaryLine,
+  SUMMARY_SOFT_LEN,
+  SUMMARY_HARD_LEN,
 };

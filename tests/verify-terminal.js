@@ -40,6 +40,7 @@ const svc = require(path.join(rootDir, 'main', 'services', 'ai-process-service.j
   const r = svc.buildTerminalLaunch('C:\\Tools\\agy\\agy.exe', 'C:\\sbx\\proj');
   assert.ok(r.ok, '正常须 ok');
   assert.strictEqual(r.command, 'cmd.exe', '须走 cmd');
+  assert.strictEqual(r.windowsVerbatimArguments, true, '须 verbatim 投递（否则 Node 二次转义吃掉 start 标题）');
   const line = r.args[r.args.length - 1];
   assert.ok(/start\s/i.test(line), '须用 start 开独立窗口');
   assert.ok(line.includes('/D'), '须带 /D 工作目录');
@@ -54,7 +55,42 @@ const svc = require(path.join(rootDir, 'main', 'services', 'ai-process-service.j
   assert.ok(!bad1.ok, '空 bin 须拒绝');
   const bad2 = svc.buildTerminalLaunch('agy', '');
   assert.ok(!bad2.ok, '空目录须拒绝');
+  const withArgs = svc.buildTerminalLaunch('agy', 'C:\\sbx', ['--foo', 'bar']);
+  assert.ok(withArgs.ok && withArgs.args[withArgs.args.length - 1].includes('--foo'), '附加参数须透传');
   console.log('[PASS] 启动组装');
 })();
 
-console.log('TERMINAL_PASS: 本地 CLI 终端按钮全绿');
+// ---- 4. 每家独立启动命令表 ----
+async function testTerminalTable() {
+  assert.strictEqual(typeof svc.resolveTerminalTarget, 'function', '缺 resolveTerminalTarget');
+  // 缺省：用解析到的 bin（agy 本机可解出）
+  const reg = require(path.join(rootDir, 'runtimes', 'registry.js'));
+  const agy = reg.getAgentDef('antigravity');
+  const t1 = await svc.resolveTerminalTarget(agy, '');
+  assert.ok(t1.ok && t1.bin && t1.display, 'agy 应解析出启动目标，实际' + JSON.stringify(t1).slice(0, 160));
+  // 缺失：报错须列出试过的名字
+  const ghost = { id: 'ghost-x', name: 'GhostX', bin: 'ghost-no-such-bin-xyz', fallbackBins: ['ghost-fb'] };
+  const t2 = await svc.resolveTerminalTarget(ghost, '');
+  assert.ok(!t2.ok && t2.error.includes('ghost-no-such-bin-xyz') && t2.error.includes('ghost-fb'), '报错须列出试过的名字，实际' + t2.error);
+  assert.ok(t2.error.includes('设置'), '报错须指引去设置指定路径');
+  // cmd 覆盖 + args
+  const t3 = await svc.resolveTerminalTarget({ id: 'd', name: 'D', bin: 'agy', terminal: { cmd: ['agy', '--sand'], args: ['--x'] } }, '');
+  assert.ok(t3.ok && t3.bin === 'agy' && t3.args.join(' ').includes('--sand') && t3.args.join(' ').includes('--x'), '覆盖+args 须合并');
+  // unsupported（vibe 走 factory + manifest）
+  const vibe = reg.getAgentDef('vibe');
+  assert.ok(vibe && vibe.terminal && vibe.terminal.unsupported, 'vibe 须带 unsupported（manifest 透传）');
+  const t4 = await svc.resolveTerminalTarget(vibe, '');
+  assert.ok(!t4.ok && t4.error.includes('ACP'), 'vibe 须拒绝并说明原因');
+  // 无 def 安全
+  const t5 = await svc.resolveTerminalTarget(null, '');
+  assert.ok(!t5.ok, '空 def 须拒绝');
+  console.log('[PASS] 独立启动命令表');
+}
+
+testTerminalTable().then(() => {
+  console.log('TERMINAL_PASS: 本地 CLI 终端按钮全绿');
+}).catch((e) => {
+  console.error('[FAIL] 独立启动命令表');
+  console.error((e && e.stack) || String(e));
+  process.exitCode = 1;
+});

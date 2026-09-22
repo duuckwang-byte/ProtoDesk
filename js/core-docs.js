@@ -3655,11 +3655,14 @@ function getDocReqState(){
   var isPc=false;
   try{ isPc=(typeof pcMode==='function'&&pcMode()); }catch(e){}
   try{ if(!isPc&&document.body&&document.body.classList.contains('kind-pc')) isPc=true; }catch(e){}
-  if(isPc){
-   try{ if(typeof reqOpen!=='undefined'&&reqOpen) return true; }catch(e){}
-   try{ if(document.body&&document.body.classList.contains('req-open')) return true; }catch(e){}
-   return false;
-  }
+   if(isPc){
+    try{ if(typeof reqOpen!=='undefined'&&reqOpen) return true; }catch(e){}
+    try{ if(document.body&&document.body.classList.contains('req-open')) return true; }catch(e){}
+    /* PC 合一：面板内 tab 态同样以 reqMode 为准（与移动端一致） */
+    try{ if(typeof reqMode!=='undefined'&&reqMode) return true; }catch(e){}
+    try{ if(window.reqMode) return true; }catch(e){}
+    return false;
+   }
   try{ if(typeof reqMode!=='undefined') return !!reqMode; }catch(e){}
   try{ if(window.reqMode) return true; }catch(e){}
   return false;
@@ -3813,16 +3816,21 @@ function switchDocTab(toReq){
   var isPc=false;
   try{ isPc=(typeof pcMode==='function'&&pcMode()); }catch(e){}
   try{ if(!isPc&&document.body&&document.body.classList.contains('kind-pc')) isPc=true; }catch(e){}
-  if(isPc){
-   try{
-    if(want){
-     if(typeof setDocsOpen==='function') setDocsOpen(false);
-     if(typeof setReqOpen==='function') setReqOpen(true);
-    }else{
-     if(typeof setReqOpen==='function') setReqOpen(false);
-     if(typeof setDocsOpen==='function') setDocsOpen(true);
-    }
-   }catch(e){}
+   if(isPc){
+    /* PC 合一：最新需求直接渲染进统一 docs 面板 body，tab 切换内容，不再弹独立裸弹窗 */
+    try{
+     if(want){
+      if(typeof setReqOpen==='function') setReqOpen(false);
+      if(typeof setDocsOpen==='function') setDocsOpen(true);
+      try{ if(typeof reqMode!=='undefined') reqMode=true; else if(window) window.reqMode=true; }catch(e){}
+      if(typeof renderReqIntoDocs==='function') renderReqIntoDocs();
+     }else{
+      if(typeof setReqOpen==='function') setReqOpen(false);
+      try{ if(typeof reqMode!=='undefined') reqMode=false; else if(window) window.reqMode=false; }catch(e){}
+      if(typeof loadDesc==='function') loadDesc();
+      else if(typeof setDocsOpen==='function') setDocsOpen(true);
+     }
+    }catch(e){}
    try{ syncDocModeTabs(); }catch(e){}
    try{ syncDocWinBtn(); }catch(e){}
    try{
@@ -4476,10 +4484,10 @@ function openDocsForSwitchBack(){
    var inReq=false;
    try{ inReq=getDocReqState(); }catch(e){}
    if(isPc){
-    if(inReq){ if(typeof setReqOpen==='function')setReqOpen(true); }
-    else if(typeof setDocsOpen==='function')setDocsOpen(true);
-    else if(document.body&&document.body.classList)document.body.classList.add('docs-open');
-   }else{
+     if(inReq){ if(typeof switchDocTab==='function')switchDocTab(true); }
+     else if(typeof setDocsOpen==='function')setDocsOpen(true);
+     else if(document.body&&document.body.classList)document.body.classList.add('docs-open');
+    }else{
     if(typeof setDocsOpen==='function')setDocsOpen(true);
     else if(document.body&&document.body.classList)document.body.classList.add('docs-open');
    }
@@ -5093,12 +5101,12 @@ function applyDocWinPanelMode(dwMode){
    if(docsOpen||reqUiOpen) return;
    __docMirrorApplying=true;
    try{
-    if(isPc){
-     try{
-      if(inReq){ if(typeof setReqOpen==='function') setReqOpen(true); }
-      else if(typeof setDocsOpen==='function') setDocsOpen(true);
-      else if(document.body&&document.body.classList) document.body.classList.add('docs-open');
-     }catch(e){}
+     if(isPc){
+      try{
+       if(inReq){ if(typeof switchDocTab==='function')switchDocTab(true); }
+       else if(typeof setDocsOpen==='function')setDocsOpen(true);
+       else if(document.body&&document.body.classList)document.body.classList.add('docs-open');
+      }catch(e){}
     }else{
      try{
       if(typeof setDocsOpen==='function') setDocsOpen(true);

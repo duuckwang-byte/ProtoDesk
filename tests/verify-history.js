@@ -134,6 +134,25 @@ console.log('CHILD_ALL_PASS');
   } finally { rmDir(cwd); }
 })();
 
+// ---- 3c. 摘要不断句：120 目标、波动到句末、上限 170 ----
+(function testSummaryCut() {
+  assert.strictEqual(typeof svc.cutSummaryLine, 'function', '缺 cutSummaryLine');
+  assert.strictEqual(svc.SUMMARY_SOFT_LEN, 120, '目标须 120');
+  assert.strictEqual(svc.SUMMARY_HARD_LEN, 170, '上限须 170');
+  assert.strictEqual(svc.cutSummaryLine('短句。'), '短句。', '短文本原样');
+  const longNoPunct = 'x'.repeat(200);
+  assert.strictEqual(svc.cutSummaryLine(longNoPunct).length, 120, '无标点超长在目标处硬切');
+  // 句末在波动窗内：收到句末含标点
+  const s = '前'.repeat(120) + '中。' + '后'.repeat(60);
+  const cut = svc.cutSummaryLine(s);
+  assert.ok(cut.endsWith('中。'), '须收到波动窗内句末，实际尾部' + cut.slice(-8));
+  assert.ok(cut.length > 120 && cut.length <= 170, '长度须在波动窗内，实际' + cut.length);
+  // 句末超出上限：回落硬切
+  const far = '前'.repeat(120) + '无标点' + 'x'.repeat(80) + '。尾';
+  assert.strictEqual(svc.cutSummaryLine(far).length, 120, '窗外无句末回落硬切');
+  console.log('[PASS] 摘要不断句');
+})();
+
 // ---- 3b. 告警接线静态：消费 alarm、复用 trace、无新通道、一次性 ----
 (function testAlarmWiring() {
   assert.ok(aiSrc.includes('maybeArchiveHistoryOnTabSwitch(cwd, extraOpts && extraOpts.uiSessionId)'), 'aiAskImpl 须在下发前调归档（uiSessionId）');

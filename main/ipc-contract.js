@@ -1,8 +1,8 @@
 'use strict';
 /**
- * main/ipc-contract.js — Wave-E 73 IPC 通道冻结契约 (JSDoc 单一真相源, 零运行时副作用)
+ * main/ipc-contract.js — Wave-E 74 IPC 通道冻结契约 (JSDoc 单一真相源, 零运行时副作用)
  *
- * 来源: preload.js (77 invoke, 去重后 73) + main/controllers 下各控制器 (ipcMain.handle 73, 已验证一致).
+ * 来源: preload.js (78 invoke, 去重后 74) + main/controllers 下各控制器 (ipcMain.handle 74, 已验证一致).
  * 约束: 通道名与出入参契约冻结, 新增通道必须同步更新本表 + preload + controller + tests/verify-ipc.js,
  *   否则 tests/lint-guard.js [E-IPC-FROZEN] 与 static-verify 将红灯.
  * 本文件仅导出冻结表与 JSDoc 类型, 不注册任何 handler, 不产生副作用, 可被测试 require.
@@ -42,9 +42,9 @@
  */
 
 /**
- * 73 通道冻结表 (排序后唯一).
+ * 74 通道冻结表 (排序后唯一).
  * 分组: app/log/snapshot(4) + doc(8) + docwin/aiwin(6+2 mirror复用) + sandbox/project(17)
- *   + ai(10) + links/annotations(4) + spec/uilib/binding(12) + git(11) = 73.
+ *   + ai(11) + links/annotations(4) + spec/uilib/binding(12) + git(11) = 74.
  * @type {string[]}
  */
 const IPC_CHANNELS = [
@@ -56,6 +56,7 @@ const IPC_CHANNELS = [
   'ai:models',
   'ai:open-terminal',
   'ai:pick',
+  'ai:remote-send',
   'ai:save-config',
   'ai:test-connection',
   'aiwin:close',

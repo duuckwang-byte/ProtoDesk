@@ -207,11 +207,11 @@ if (!/\.sb-head,\.sb-list,\.sb-foot\{width:220px/.test(css)) fails.push('sb: 侧
     try { src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); } catch (e) { src = ''; }
     if (!/@typedef/.test(src)) fails.push('E-jsdoc: 缺 @typedef ' + rel);
   }
-  // E3: 73 通道冻结（controllers handle 去重 73 且与 contract 一致，含 ai:open-terminal）
+  // E3: 74 通道冻结（controllers handle 去重 74 且与 contract 一致，含 ai:open-terminal）
   try {
     const contract = require(path.join(__dirname, '..', 'main', 'ipc-contract.js'));
     const want = (contract && contract.IPC_CHANNELS) || [];
-    if (!Array.isArray(want) || want.length !== 73) fails.push('E-ipc: contract 非 73（实际 ' + (want && want.length) + '）');
+    if (!Array.isArray(want) || want.length !== 74) fails.push('E-ipc: contract 非 74（实际 ' + (want && want.length) + '）');
     else {
       const got = new Set();
       const cdir = path.join(__dirname, '..', 'main', 'controllers');
@@ -222,7 +222,7 @@ if (!/\.sb-head,\.sb-list,\.sb-foot\{width:220px/.test(css)) fails.push('sb: 侧
         const re = /handle\('([^']+)'/g;
         while ((m = re.exec(src))) got.add(m[1]);
       }
-      if (got.size !== 73) fails.push('E-ipc: controllers 非 73（实际 ' + got.size + '）');
+      if (got.size !== 74) fails.push('E-ipc: controllers 非 74（实际 ' + got.size + '）');
       else {
         const diff = contract.diffChannels(Array.from(got));
         if (!diff.ok) fails.push('E-ipc: 冻结不一致 缺失:' + diff.missing.join(',') + ' 多余:' + diff.extra.join(','));

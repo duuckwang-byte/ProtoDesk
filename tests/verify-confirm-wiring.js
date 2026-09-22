@@ -82,6 +82,24 @@ try { svc.resetScopeConfirmForTest(); } catch (e) {}
   console.log('[PASS] 中文枚举零误报');
 })();
 
+// ---- 1d. 快检：被截断的自身路径（历史规模行 120 字切断）不得误报 ----
+(function testScannerTruncatedSelf() {
+  const cwd = 'C:\\Users\\allow\\AppData\\Roaming\\原型工具\\sandbox\\PC端系统\\企业务-PC端';
+  assert.deepStrictEqual(
+    svc.findScopeRefs('上次结论：已完成，仅针对 C:\\Users\\allow\\AppData\\Roaming\\原型工具\\s', cwd),
+    [], '截断的自身前缀须放行'
+  );
+  assert.deepStrictEqual(
+    svc.findScopeRefs('上次结论：见 C:\\Users\\allow\\AppData\\Roaming\\原型工具\\sandbox\\PC端系统\\企业务-PC端\\x.html', cwd),
+    [], '完整的自身路径须放行'
+  );
+  assert.ok(
+    svc.findScopeRefs('备份到 C:\\Users\\allow\\AppData\\Roaming\\原型工具', cwd).length >= 1,
+    '真父目录（断点在分隔符上）照旧命中'
+  );
+  console.log('[PASS] 截断自身零误报');
+})();
+
 // ---- 2. 快检：越界命中 + 去重 + 上限 ----
 (function testScannerHits() {
   const cwd = 'C:\\sbx\\proj';
@@ -206,9 +224,9 @@ try { svc.resetScopeConfirmForTest(); } catch (e) {}
   assert.ok(paeSrc.includes('完成·'), '完成须翻牌+耗时');
   assert.ok(paeSrc.includes('i5ThinkIdleText'), '思考占位须接计时器文案');
   assert.ok(paeSrc.includes('i5EnsureThinkIdle'), 'aiThinkTick 须确保占位行');
-  // 73 冻结 intact（与 lint-guard 同口径复算）
+  // 74 冻结 intact（与 lint-guard 同口径复算）
   const contract = require(path.join(rootDir, 'main', 'ipc-contract.js'));
-  assert.strictEqual(contract.IPC_CHANNELS.length, 73, 'contract 须 73（含 ai:open-terminal）');
+  assert.strictEqual(contract.IPC_CHANNELS.length, 74, 'contract 须 74（含 ai:open-terminal）');
   const got = new Set();
   for (const cf of fs.readdirSync(path.join(rootDir, 'main', 'controllers'))) {
     if (!cf.endsWith('.js')) continue;
@@ -217,9 +235,9 @@ try { svc.resetScopeConfirmForTest(); } catch (e) {}
     const re = /handle\('([^']+)'/g;
     while ((m = re.exec(src))) got.add(m[1]);
   }
-  assert.strictEqual(got.size, 73, 'controllers handle 须 73，实际' + got.size);
+  assert.strictEqual(got.size, 74, 'controllers handle 须 74，实际' + got.size);
   assert.ok(contract.diffChannels(Array.from(got)).ok, '冻结一致性');
-  console.log('[PASS] 确认/IPC/渲染接线（73 冻结 intact）');
+  console.log('[PASS] 确认/IPC/渲染接线（74 冻结 intact）');
 })();
 
 // ---- 9. 超时与回复（行为，短超时不卡死） ----

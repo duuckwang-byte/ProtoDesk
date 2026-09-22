@@ -91,6 +91,8 @@ function createAgentDef(entryOrId, overrides) {
   if (entry.eventParser) def.eventParser = entry.eventParser;
   if (entry.needsProtocol) def.needsProtocol = entry.needsProtocol;
   if (entry.listModels) def.listModels = entry.listModels;
+  /* 终端启动命令：{cmd?: string|string[], args?: string[], unsupported?: string}，缺省走解析到的 bin */
+  if (entry.terminal && typeof entry.terminal === 'object') def.terminal = JSON.parse(JSON.stringify(entry.terminal));
   for (const k of Object.keys(ov)) { def[k] = ov[k]; }
   return def;
 }

@@ -412,7 +412,8 @@
       "buildArgs": { "kind": "static", "args": [] },
       "promptViaStdin": false,
       "streamFormat": "plain",
-      "needsProtocol": "acp-json-rpc"
+      "needsProtocol": "acp-json-rpc",
+      "terminal": { "unsupported": "该 CLI 为 ACP 专属通道，无交互式终端；请用对话模式使用" }
     }
   ]
 }

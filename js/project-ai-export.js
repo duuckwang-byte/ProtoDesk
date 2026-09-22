@@ -106,8 +106,23 @@ function setDocsOpen(open){
  bodyB.classList.toggle('docs-open',!!open);
  if(docsMaskEl)docsMaskEl.style.display=open?'block':'none';
  if(open){ if(window.MaskStack) window.MaskStack.push('docsMask', function(){ setDocsOpen(false); }); }else{ if(window.MaskStack) window.MaskStack.pop('docsMask'); }
- if(open&&reqOpen)setReqOpen(false); /* 与「最新需求」面板互斥 */
- if(!open){ closeToc(); return; } /* 功能说明收起时同步收起目录浮窗 */
+  if(open&&reqOpen)setReqOpen(false); /* 与「最新需求」面板互斥 */
+  if(!open){
+    closeToc();
+    /* 合一：关面板时若停在最新需求 tab 且不在编辑中，回落功能说明，下次打开默认 desc */
+    try{
+      var _inReqTab=false;
+      try{ _inReqTab=(typeof getDocReqState==='function')?!!getDocReqState():!!(typeof reqMode!=='undefined'&&reqMode); }catch(e){}
+      var _editing=false;
+      try{ _editing=!!(typeof editOn!=='undefined'&&editOn)||!!(typeof reqEditing!=='undefined'&&reqEditing); }catch(e){}
+      if(_inReqTab&&!_editing){
+        try{ if(typeof reqMode!=='undefined')reqMode=false; else if(window)window.reqMode=false; }catch(e){}
+        try{ if(typeof loadDesc==='function')loadDesc(); }catch(e){}
+        try{ if(typeof syncDocModeTabs==='function')syncDocModeTabs(); }catch(e){}
+      }
+    }catch(e){}
+    return;
+  } /* 功能说明收起时同步收起目录浮窗 */
 }
 function toggleSbPane(){
  setSbOpen(!bodyB.classList.contains('sb-open'));
@@ -172,7 +187,7 @@ function setReqOpen(open){
   }else{ exitReqEdit(true); }
  }
 function toggleReqPane(){
-  if(pcMode()){ reqMode=false; setReqOpen(!reqOpen); return; } /* PC：悬浮弹窗 */
+  if(pcMode()){ try{ if(typeof switchDocTab==='function'){ switchDocTab(true); return; } }catch(e){} } /* PC 合一：进统一面板切最新需求 tab，不弹裸弹窗 */
   /* 移动端：右侧面板切换为「最新需求」内容（与功能说明互斥显示） */
   setReqModeMobile(!reqMode);
 }
@@ -426,7 +441,7 @@ if (btnOpenCliEl) {
       return;
     }
     window.protoAPI.ai.openTerminal(dir).then(function(r) {
-      if (r && r.ok) { try { showToast('已打开终端：' + (r.agent || 'CLI')); } catch (e4) {} }
+      if (r && r.ok) { try { showToast('已打开终端：' + ((r.cmd) || r.agent || 'CLI')); } catch (e4) {} }
       else { try { showToast('打开终端失败：' + ((r && (r.error || r.message)) || '未知错误')); } catch (e5) {} }
     }).catch(function(e6) { try { showToast('打开终端失败：' + ((e6 && e6.message) || e6)); } catch (e7) {} });
   };
@@ -5922,6 +5937,18 @@ if(HAS_AI){
       }
       else if(ev.type==='scope_confirm_dismiss'){
        try{ i5DismissScopeConfirm(ev&&ev.id); }catch(e){}
+      }
+      else if(ev.type==='remote-send'){
+       /* 独立窗代发：主窗待提交列表委托本窗发送，填输入框后走本窗 aiDoSend，全程落本窗 */
+       try{
+        var _rs=(ev&&typeof ev==='object')?ev:null;
+        var _rt=_rs?String(_rs.text||'').trim():'';
+        if(_rt){
+         try{ if(aiInputEl) aiInputEl.value=_rt; }catch(e){}
+         try{ window.__aiUserMsgDisplay=String((_rs&&_rs.display)||'')||null; }catch(e){}
+         try{ if(typeof aiDoSend==='function') aiDoSend(); }catch(e){}
+        }
+       }catch(e){}
       }
      else if(ev.type==='thinking'){
       try{ if(typeof aiCurTaskEvents!=='undefined'&&aiCurTaskEvents){ var _tt0=String((ev&&ev.text)||''); if(_tt0.trim()&&typeof aiSessNow==='function') aiCurTaskEvents.push({t:'thinking', text:_tt0, ts:aiSessNow()}); } }catch(e){}

@@ -6,8 +6,8 @@
 //   E-EVAL: no-eval/no-implied-eval/no-new-func (P0 安全红线, 扫描全部自研 JS, 忽略 node_modules/桌面端/.devdata)
 //   E-GRAMMAR: 括号/引号基础完整性 (缺失即红, 防截断提交)
 //   E-PRETTIER: 行宽<=140 / 禁止行尾空白 / 禁止 Tab 缩进 (与 .prettierrc.json 同源, 仅 warn 计入提醒不红? 此处记为 FAIL 以固化风格)
-//   E-JSDOC: 契约文件必须含 @param/@returns/@typedef (73通道+Store/EventBus/Bridge/postMessage)
-//   E-IPC-FROZEN: controllers handle 73 == main/ipc-contract.js IPC_CHANNELS 73 且一致
+//   E-JSDOC: 契约文件必须含 @param/@returns/@typedef (74通道+Store/EventBus/Bridge/postMessage)
+//   E-IPC-FROZEN: controllers handle 74 == main/ipc-contract.js IPC_CHANNELS 74 且一致
 //   E-CONFIG: eslint.config.js + .prettierrc.json 存在且含关键规则
 // 设计: 纯 Node 无依赖, 失败 exit 1, 输出 LINT_PASS/LINT_FAIL. 只读扫描, 不改业务.
 const fs = require('node:fs');
@@ -166,11 +166,11 @@ for (const rel of JSDOC_FILES) {
   if ((rel === 'main/ipc-contract.js' || rel === 'preload.js') && !hasTypedef) ok(false, `E-JSDOC 缺 @typedef: ${rel}`);
 }
 
-// 6. E-IPC-FROZEN: controllers 73 == contract 73 且一致
+// 6. E-IPC-FROZEN: controllers 74 == contract 74 且一致
 try {
   const contract = require(path.join(ROOT, 'main', 'ipc-contract.js'));
   const want = contract.IPC_CHANNELS || [];
-  ok(Array.isArray(want) && want.length === 73, `E-IPC-FROZEN contract 73, 实际 ${want.length}`);
+  ok(Array.isArray(want) && want.length === 74, `E-IPC-FROZEN contract 74, 实际 ${want.length}`);
   const got = new Set();
   for (const cf of fs.readdirSync(path.join(ROOT, 'main', 'controllers'))) {
     if (!cf.endsWith('.js')) continue;
@@ -179,7 +179,7 @@ try {
     const re = /handle\('([^']+)'/g;
     while ((m = re.exec(src))) got.add(m[1]);
   }
-  ok(got.size === 73, `E-IPC-FROZEN controllers handle 73, 实际 ${got.size}`);
+  ok(got.size === 74, `E-IPC-FROZEN controllers handle 74, 实际 ${got.size}`);
   const diff = contract.diffChannels(Array.from(got));
   ok(diff.ok, `E-IPC-FROZEN 一致性 ${diff.ok ? '一致' : ('缺失:' + diff.missing.join(',') + ' 多余:' + diff.extra.join(','))}`);
 } catch (e) {

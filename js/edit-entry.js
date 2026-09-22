@@ -1051,6 +1051,32 @@ function editQueueSubmit(){
   persistEditQueue();
   updateEditBadge(); renderEditDrawer();
   EDIT_PENDING_SUBMIT=true;
+  /* 独立窗委托：对话框在独立窗口时，发送必须由独立窗执行自己的 aiDoSend，
+   * 否则气泡与流式事件全进本窗隐藏面板，独立窗什么也看不到。 */
+  var _detachedRemote=false;
+  try{ _detachedRemote = !!window.__aiWinOpen && !!(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.remoteSend&&window.protoAPI.ai.isBusy); }catch(e){ _detachedRemote=false; }
+  if(_detachedRemote){
+    (function(){
+      var _go=function(){
+        EDIT_QUEUE=[];
+        persistEditQueue();
+        updateEditBadge(); renderEditDrawer();
+        EDIT_PENDING_SUBMIT=true;
+        window.protoAPI.ai.remoteSend({text:t, display:td}).then(function(r){
+          if(r&&r.ok){ libStatus('已将 '+count+' 条修改需求提交给大模型，生成完成后自动刷新原型。'); }
+          else { editQueueRollback('独立窗提交失败：'+((r&&(r.error||r.message))||'未知错误')); }
+        }).catch(function(e2){ editQueueRollback('发送失败：'+(e2&&e2.message||e2)); });
+      };
+      try{
+        window.protoAPI.ai.isBusy().then(function(b){
+          if(b){ try{ libStatus('上一个任务仍在运行，请先停止后再发送。'); }catch(e3){} return; }
+          _go();
+        }).catch(function(){ _go(); });
+      }catch(e4){ _go(); }
+    })();
+    return;
+  }
+  if(typeof aiBusy!=='undefined'&&aiBusy){ try{ libStatus('上一个任务仍在运行，请先停止后再发送。'); }catch(e5){} return; }
   try{
     openAiDesign();
     if(aiInputEl){ aiInputEl.value=t; }
@@ -1058,15 +1084,19 @@ function editQueueSubmit(){
     aiDoSend();
     libStatus('已将 '+count+' 条修改需求提交给大模型，生成完成后自动刷新原型。');
   }catch(e){
-    // P1-3 fix: catch(busy) 失败回滚备份
-    var backup=null; try{ backup=localStorage.getItem('edit_queue_backup'); }catch(_e){} // P1-3 fix
-    if(backup){ try{ EDIT_QUEUE=JSON.parse(backup); }catch(_e){ EDIT_QUEUE=_editQueueBackup; } } else { EDIT_QUEUE=_editQueueBackup; } // P1-3 fix
-    EDIT_PENDING_SUBMIT=false;
-    updateEditBadge(); renderEditDrawer();
-    try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(_e){}
-    persistEditQueue(); // P1-3 fix
-    alert('提交失败，已恢复待提交列表：'+(e&&e.message||e));
+    editQueueRollback((e&&e.message||e));
   }
+}
+/* 提交失败回滚（抽取共用：独立窗远端失败与本地异常走同一恢复） */
+function editQueueRollback(msg){
+  var backup=null; try{ backup=localStorage.getItem('edit_queue_backup'); }catch(_e){}
+  var fb=null; try{ fb=(typeof _editQueueBackup!=='undefined')?_editQueueBackup:null; }catch(_e2){}
+  if(backup){ try{ EDIT_QUEUE=JSON.parse(backup); }catch(_e){ if(fb)EDIT_QUEUE=fb; } } else if(fb){ EDIT_QUEUE=fb; }
+  EDIT_PENDING_SUBMIT=false;
+  updateEditBadge(); renderEditDrawer();
+  try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(_e){}
+  persistEditQueue();
+  try{ alert('提交失败，已恢复待提交列表：'+msg); }catch(e){}
 }
 /* Wave-B: setEditMode 已删除（旧编辑模式存根零调用，统一走 CTRL_PICK；删除前全仓grep仅定义+导出零调用） */
 if(btnSubmitEditEl)btnSubmitEditEl.onclick=function(){ openEditDrawer(); };

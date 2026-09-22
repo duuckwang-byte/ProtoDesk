@@ -43,6 +43,9 @@ function registerAIController() {
   ipcMain.handle('ai:cancel', async () => {
     return aiProcess.aiCancelImpl();
   });
+  ipcMain.handle('ai:remote-send', async (ev, o) => {
+    return aiProcess.aiRemoteSendImpl(ev, o);
+  });
   ipcMain.handle('ai:is-busy', () => {
     return aiProcess.aiIsBusyImpl();
   });

@@ -43,6 +43,7 @@ const SUITES = [
   ['answer-placement', 'verify-answer-placement.js'],
   ['permission-modes', 'verify-permission-modes.js'],
   ['terminal', 'verify-terminal.js'],
+  ['remote-send', 'verify-remote-send.js'],
 ];
 
 function pad(s, n) {

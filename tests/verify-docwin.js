@@ -199,11 +199,28 @@ function testA10_DualTabs() {
   assert.ok(coreSrc.includes('function syncDocModeTabs('), '缺 syncDocModeTabs');
   const sw = extractFn(coreSrc, 'switchDocTab');
   assert.ok(/setReqModeMobile/.test(sw), '移动端须走 setReqModeMobile');
-  assert.ok(/setReqOpen/.test(sw) && /setDocsOpen/.test(sw), 'PC 端须走 setReqOpen/setDocsOpen');
+  assert.ok(/setDocsOpen/.test(sw) && /renderReqIntoDocs/.test(sw), 'PC 端须面板内切换（setDocsOpen+renderReqIntoDocs），不再弹裸弹窗');
+  assert.ok(!/setReqOpen\([^)]*true/.test(sw), 'PC 端不得再 setReqOpen(true) 弹裸弹窗');
   assert.ok(/mirrorPush\('mode'/.test(sw) && /mirrorBack\('mode'/.test(sw), '切换后须 mirrorPush/mirrorBack mode');
   const sync = extractFn(coreSrc, 'syncDocModeTabs');
   assert.ok(/btnDocTabDesc/.test(sync) && /btnDocTabReq/.test(sync), 'sync 须同步双 Tab');
   assert.ok(/classList.*'on'/.test(sync), 'sync 须切换 on 类');
+}
+
+// ── A10b 合一：PC 入口与状态收敛（单壳 tab 切换） ──
+function testA10b_UnifiedReqTab() {
+  // reqFab 入口：PC 直接进统一面板切 tab，不弹裸弹窗
+  const tg = extractFn(exportSrc, 'toggleReqPane');
+  assert.ok(tg, '缺 toggleReqPane');
+  assert.ok(/switchDocTab\(true\)/.test(tg), 'PC 入口须 switchDocTab(true)');
+  assert.ok(!/setReqOpen\([^)]*true/.test(tg), 'PC 入口不得 setReqOpen(true)');
+  // PC 状态：reqMode 同样代表最新需求 tab
+  const gs = extractFn(coreSrc, 'getDocReqState');
+  assert.ok(/reqMode/.test(gs), 'PC 状态须感知 reqMode');
+  // 关面板回落 desc（非编辑态）
+  const sd = extractFn(exportSrc, 'setDocsOpen');
+  assert.ok(/loadDesc/.test(sd), '关面板须回落 loadDesc');
+  console.log('[PASS] A10b');
 }
 
 // ── A11 切换按钮文案互换 ──
@@ -1434,6 +1451,7 @@ function runAll() {
     ['A8 handleDocMirror四kind', testA8_HandleFourKinds],
     ['A9 mirrorPush防环', testA9_MirrorLoopGuard],
     ['A10 双Tab与reqMode切换', testA10_DualTabs],
+    ['A10b 合一单壳tab', testA10b_UnifiedReqTab],
     ['A11 切换按钮文案互换', testA11_ToggleBtnText],
     ['A12 apply源码语义', testA12_ApplySrc],
     ['S1 窗口判别+按钮文案真执行', testS1_IsModeAndBtnRuntime],
