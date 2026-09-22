@@ -66,11 +66,11 @@ function extractFrameLine(fileSrc, substr) {
   assert.strictEqual(norm(c3[0]), norm(t3[0]), 'keydown 监听行必须逐行一致');
   console.log('[PASS] (d3) keydown监听行逐行一致');
 
-  // 语义门：keydown 无 force（保持守卫），keyup 有 force=true（跳过守卫）
-  assert.ok(/sendCtrlState\(ev\)/.test(t3[0]), 'keydown 必须保持 sendCtrlState(ev) 无force');
-  assert.ok(!/sendCtrlState\(ev,\s*true\)/.test(t3[0]), 'keydown 不得带 force');
+  // 语义门：keydown 带 force=true（输入框聚焦同样上报，方可拾取输入框/下拉框）；
+  // keyup 保持 force=true。函数内 !force&&inFormFocus 守卫保留（直调无 force 仍抑制）。
+  assert.ok(/sendCtrlState\(ev,\s*true\)/.test(t3[0]), 'keydown 须为 sendCtrlState(ev,true)');
   assert.ok(/sendCtrlState\(ev,\s*true\)/.test(t2[0]), 'keyup 必须为 sendCtrlState(ev,true)');
-  console.log('[PASS] (d4) keydown保持守卫 / keyup跳过守卫（force=true）');
+  console.log('[PASS] (d4) keydown/keyup 均 force 上报（表单聚焦可拾取）');
 
   // sendCtrlState 必须含 !force&&inFormFocus 守卫
   assert.ok(/if\(!force&&inFormFocus\(\)\)/.test(t1[0]), 'sendCtrlState 必须含 if(!force&&inFormFocus()) 守卫');
@@ -113,13 +113,19 @@ function mkKey(key, down) {
   return { key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
 }
 
-// ---------- (a) 焦点在INPUT内按下Ctrl → keydown不上报 ----------
+// ---------- (a) 焦点在INPUT内按下Ctrl → keydown 带 force 上报（方可拾取输入框） ----------
 {
   const { api, posted } = buildFrameRuntime('INPUT');
   assert.strictEqual(api.inFormFocus(), true, 'INPUT 焦点下 inFormFocus 应为 true');
-  api.sendCtrlState(mkKey('Control', true)); // keydown 路径：无 force
-  assert.strictEqual(posted.length, 0, 'INPUT内 keydown 不得上报（打字保护）');
-  console.log('[PASS] (a) INPUT内按下Ctrl→keydown不上报（posted=0，打字保护仍在）');
+  api.sendCtrlState(mkKey('Control', true), true); // keydown 路径：模板现传 force=true
+  assert.strictEqual(posted.length, 1, 'INPUT内 keydown 须上报（表单元素可拾取）');
+  assert.strictEqual(posted[0].mm.type, 'CTRL_STATE', '上报类型须为 CTRL_STATE');
+  console.log('[PASS] (a) INPUT内按下Ctrl→keydown上报（posted=1）');
+  // 函数级守卫仍在：直调无 force 在表单焦点下抑制（防误报）
+  const r0 = buildFrameRuntime('INPUT');
+  r0.api.sendCtrlState(mkKey('Control', true));
+  assert.strictEqual(r0.posted.length, 0, '无 force 直调在表单焦点下仍抑制');
+  console.log('[PASS] (a-守卫) 无 force 直调仍抑制');
   // 反例：非表单焦点按下应上报（证明守卫仅拦表单）
   const r2 = buildFrameRuntime('DIV');
   r2.api.sendCtrlState(mkKey('Control', true));

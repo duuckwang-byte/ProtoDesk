@@ -349,6 +349,28 @@ function testS2_InterceptPayloadSim() {
   assert.ok(src.includes('if (d && d.restamp) restampLive(d.restamp);'), '外层须先消费 restamp（restampLive）再跳转');
 }
 
+// ---- A11 当前原型主页首位 + 行内子页面展开（替换目标页面下拉） ----
+function testA11_CurrentProtoSubExpand() {
+  const sel = extractFn(src, 'renderSelectTarget');
+  assert.ok(sel, '缺 renderSelectTarget');
+  assert.ok(/entries\.push\(currentSource\)/.test(sel) || /currentSource.*entries/.test(sel), '目标列表须含当前原型');
+  assert.ok(/li-sub-list/.test(sel), '须行内展开子页面');
+  assert.ok(/li-sub-item/.test(sel), '须有子页面行');
+  assert.ok(!/liPageSelect/.test(sel), '须删除目标页面下拉框');
+  assert.ok(/inspectorSelectSubPage/.test(sel), '须用子页面变量记录目标');
+  assert.ok(/本原型/.test(sel), '当前原型须打标');
+  // 管理抽屉更换目标同构
+  assert.ok(/li-sub-list/.test(src), '管理抽屉更换目标须同构行内展开');
+  assert.ok(!/lmPageSel_/.test(src), '管理抽屉不得再用页面下拉');
+  // 执行侧子页面直达
+  const perf = extractFn(src, 'performLink');
+  assert.ok(perf && /isSubPageTarget/.test(perf), 'performLink 须子页面直达分支');
+  assert.ok(/function isSubPageTarget\(/.test(src), '缺 isSubPageTarget');
+  const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
+  assert.ok(/\.li-sub-item\s*\{/.test(css), '缺子页面行样式');
+  assert.ok(/\.li-target-kind\.cur/.test(css), '缺本原型徽标样式');
+  console.log('[PASS] A11 当前原型主页首位+行内子页面');
+}
 function runAll() {
   const tests = [
     ['A1 plid生成与入库schema', testA1_PlidSchema],
@@ -363,6 +385,7 @@ function runAll() {
     ['A10 validateLinks查戳+孤儿静默清理', testA10_ValidateStampFirst],
     ['S1 三段回退仿真', testS1_FallbackSim],
     ['S2 静默自清载荷仿真', testS2_InterceptPayloadSim],
+    ['A11 当前原型主页首位+行内子页面', testA11_CurrentProtoSubExpand],
   ];
   let passed = 0, failed = 0;
   for (const [title, fn] of tests) {
@@ -370,7 +393,7 @@ function runAll() {
     catch (err) { console.error(`[FAIL] ${title}`); console.error(err && err.stack || String(err)); failed++; }
   }
   console.log(`SUMMARY passed=${passed} failed=${failed}`);
-  console.log(failed ? 'LINK_STAMP_FAIL' : 'LINK_STAMP_PASS: 全部12项打戳断言通过');
+  console.log(failed ? 'LINK_STAMP_FAIL' : 'LINK_STAMP_PASS: 全部13项打戳断言通过');
   process.exitCode = failed ? 1 : 0;
 }
 runAll();

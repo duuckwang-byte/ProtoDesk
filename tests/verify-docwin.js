@@ -239,7 +239,7 @@ function testA10c_TocSideColumn() {
   assert.ok(panelIdx >= 0 && tocIdx > panelIdx && mainIdx > tocIdx, '目录须在面板内文档列左侧');
   assert.ok(/body\.kind-pc:not\(\.docwin-mode\) \.docs-panel\s*\{[^}]*flex-direction\s*:\s*row/.test(cssSrc), 'PC 面板须横向排布');
   assert.ok(/body\.kind-pc:not\(\.docwin-mode\) \.doc-toc\s*\{[^}]*position\s*:\s*static/.test(cssSrc), 'PC 目录须静态列（非悬浮）');
-  assert.ok(/body\.kind-pc:not\(\.docwin-mode\) \.docs-main/.test(cssSrc), 'PC 须有文档主列');
+  assert.ok(/\.docs-main\s*\{[^}]*flex-direction\s*:\s*column/.test(cssSrc), '文档主列须纵向（全模式通用）');
   const pos = extractFn(coreSrc, 'positionToc');
   assert.ok(/isTocPinMode/.test(pos), 'positionToc 须识别常驻模式清行内定位');
   // 点击定位后常驻不收 + 开目录弹窗加宽不挤文档
@@ -247,6 +247,8 @@ function testA10c_TocSideColumn() {
   assert.ok(/isTocPinMode/.test(clickSeg), '目录项点击定位后常驻模式不得 closeToc');
   assert.ok(/toc-open/.test(coreSrc), '开/关目录须同步 toc-open 标记');
   assert.ok(/\.toc-open \.docs-panel\s*\{[^}]*calc\(66vw \+ 224px\)/.test(cssSrc), '开目录时弹窗须加宽一列不挤文档');
+  assert.ok(/\.docs-main\s*\{[^}]*flex-direction\s*:\s*column/.test(cssSrc), '文档主列须纵向布局（移动端滚动与独立窗内容靠它）');
+  assert.ok(/\.docs-main\s*\{[^}]*min-height\s*:\s*0/.test(cssSrc), '文档主列须 min-height:0 不撑破滚动链');
   console.log('[PASS] A10c');
 }
 

@@ -75,6 +75,16 @@ function collect(lines) {
   console.log('[PASS] 回答归位逻辑存在');
 }
 
+// ---- 5. 吸底防卡死：底部附近抖动不得锁死暂停，吸底时自愈 ----
+(function testStickBottom() {
+  const src = fs.readFileSync(path.join(rootDir, 'js', 'project-ai-export.js'), 'utf8');
+  assert.ok(/deltaY < 0 && !aiShouldAutoScroll\(cv,80\)/.test(src), '滚轮仅脱离底部才暂停');
+  assert.ok(/touchmove.*aiShouldAutoScroll\(cv,80\)/.test(src), '触摸仅脱离底部才暂停');
+  const m = src.match(/function i5TlScroll\(\)\{[\s\S]*?\n\}/);
+  assert.ok(m && /aiUserScrolledPause=false/.test(m[0]), '吸底时须清陈旧暂停再置底');
+  console.log('[PASS] 吸底防卡死存在');
+})();
+
 // ---- 4. 发送前加固：组装启动抛错直接报错复位 ----
 (function testPreSendGuard() {
   const src = fs.readFileSync(path.join(rootDir, 'js', 'project-ai-export.js'), 'utf8');

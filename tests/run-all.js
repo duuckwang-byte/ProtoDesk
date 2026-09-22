@@ -45,6 +45,7 @@ const SUITES = [
   ['terminal', 'verify-terminal.js'],
   ['remote-send', 'verify-remote-send.js'],
   ['edit-select', 'verify-edit-select.js'],
+  ['import-subpage', 'verify-import-subpage.js'],
 ];
 
 function pad(s, n) {

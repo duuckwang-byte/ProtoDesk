@@ -4404,7 +4404,10 @@ function i5TlEnsureTimeline(){
  return tl;
 }
 function i5TlScroll(){
- try{ if(aiChatView&&!aiUserScrolledPause&&aiShouldAutoScroll(aiChatView,80)) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
+ try{
+  /* 自愈：仍在底部附近时清掉陈旧暂停标记再吸底（滚轮抖动等置位后不再卡死） */
+  if(aiChatView&&aiShouldAutoScroll(aiChatView,80)){ try{ aiUserScrolledPause=false; }catch(e){} aiChatView.scrollTop=aiChatView.scrollHeight; }
+ }catch(e){}
  try{ if(typeof aiUpdateJumpBtn==='function') aiUpdateJumpBtn(); }catch(e){}
  try{ if(typeof scrubAiChatView==='function') scrubAiChatView(); }catch(e){}
 }
@@ -5268,10 +5271,10 @@ function finishAiStream(isCancel){
      if(_tl3&&_tl3.lastChild) { /* 光标已移除，尾部即最终态 */ }
     }catch(e){}
    }
-   try{ if(aiChatView && !aiUserScrolledPause && aiShouldAutoScroll(aiChatView,80)) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
-   try{ scrubAiChatView(); }catch(e){}
+    try{ if(aiChatView && aiShouldAutoScroll(aiChatView,80)){ try{ aiUserScrolledPause=false; }catch(e){} aiChatView.scrollTop=aiChatView.scrollHeight; } }catch(e){}
+    try{ scrubAiChatView(); }catch(e){}
   }
-   aiStreaming=null; aiStreamText=''; aiStreamThink='';
+    aiStreaming=null; aiStreamText=''; aiStreamThink='';
    /* v2事件流落盘（后端在位时）：回答全文存一条 answer；done.fileChanges 存为 edit 事件；后端缺位时仅落 m */
    var _ansTs=0; try{ _ansTs=(typeof aiSessNow==='function')?aiSessNow():Date.now(); }catch(e){ try{ _ansTs=Date.now(); }catch(e2){ _ansTs=0; } }
    var _extraEvts=[];
@@ -7073,12 +7076,12 @@ function aiBindScrollGuard(){
     aiUpdateJumpBtn();
   };
   var onWheel=function(e){
-    // 向上滚立即暂停，即使仍在 80px 内也允许用户脱离底部
-    if(e.deltaY < 0) { aiUserScrolledPause=true; aiUpdateJumpBtn(); }
+    // 向上滚仅在已脱离底部（80px 外）时暂停：在底部附近的触板抖动不得锁死吸底，否则大段回复到来也吸不回去
+    if(e.deltaY < 0 && !aiShouldAutoScroll(cv,80)) { aiUserScrolledPause=true; aiUpdateJumpBtn(); }
   };
   cv.addEventListener('scroll', onScroll, {passive:true});
   cv.addEventListener('wheel', onWheel, {passive:true});
-  cv.addEventListener('touchmove', function(){ aiUserScrolledPause=true; aiUpdateJumpBtn(); }, {passive:true});
+  cv.addEventListener('touchmove', function(){ if(!aiShouldAutoScroll(cv,80)){ aiUserScrolledPause=true; aiUpdateJumpBtn(); } }, {passive:true});
 }
 function aiBindOpScrollGuard(){
   // harn fix: op-scroll 已 visible 仅外层可滚，无需内层守卫

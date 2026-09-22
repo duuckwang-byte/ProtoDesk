@@ -332,6 +332,59 @@ function createSubPagePrompt(s){
   });
 }
 
+/* 批量导入子页面：多选 HTML，经去重改名写入当前原型沙箱（子页面由目录 listing 自动识别） */
+function importSubPages(s){
+  if(!s||!s.sandboxDir){ showToast('仅沙箱中的原型可导入子页面。'); return; }
+  if(!(window.protoAPI&&window.protoAPI.pickTextFile&&window.protoAPI.sandbox&&window.protoAPI.sandbox.write&&window.protoAPI.sandbox.readFile)){ showToast('当前环境不支持导入本地文件。'); return; }
+  var dir=String(s.sandboxDir);
+  var title='导入子页面到「'+(s.displayName||s.name||'')+'」（可多选）';
+  window.protoAPI.pickTextFile({title:title, multi:true, filters:[{name:'HTML 页面',extensions:['html','htm']}]}).then(function(r){
+    var files=[];
+    try{
+      if(r&&Array.isArray(r.files)) files=r.files;
+      else if(r&&(r.path||r.name)) files=[r];
+    }catch(e){ files=[]; }
+    files=(files||[]).filter(function(f){ return f&&(f.path||f.name||f.content!=null); });
+    if(!files.length) return; /* 取消或空选静默返回 */
+    var okNames=[], skipped=[];
+    function resolveFreeName(name, n, cb){
+      if(n>99){ cb(null); return; }
+      var cand=(n===0)?name:String(name).replace(/\.html?$/i,'')+'('+(n+1)+').html';
+      window.protoAPI.sandbox.readFile({dir:dir, file:cand}).then(function(rr){
+        if(rr&&rr.ok){ resolveFreeName(name, n+1, cb); }
+        else{ cb(cand); }
+      }).catch(function(){ cb(cand); });
+    }
+    function handleOne(f, done){
+      var raw=String(f.name||'').split(/[\\/]/).pop();
+      var content=(typeof f.content==='string')?f.content:null;
+      if(!/\.html?$/i.test(raw)){ skipped.push((raw||'未命名')+'（非 HTML，已跳过）'); done(); return; }
+      if(content==null){ skipped.push(raw+'（读取失败'+(f.error?':'+f.error:'')+'，已跳过）'); done(); return; }
+      if(content.length>5*1024*1024){ skipped.push(raw+'（超过 5MB，已跳过）'); done(); return; }
+      resolveFreeName(raw, 0, function(finalName){
+        if(!finalName){ skipped.push(raw+'（重名过多，已跳过）'); done(); return; }
+        window.protoAPI.sandbox.write({dir:dir, file:finalName, content:content}).then(function(wr){
+          if(wr&&wr.ok){ okNames.push(finalName+(finalName!==raw?('（由'+raw+'改名）'):'')); }
+          else{ skipped.push(raw+'（写入失败：'+((wr&&wr.error)||'未知错误')+'）'); }
+          done();
+        }).catch(function(e){ skipped.push(raw+'（写入失败：'+((e&&e.message)||e)+'）'); done(); });
+      });
+    }
+    function next(i){
+      if(i>=files.length){ finish(); return; }
+      try{ handleOne(files[i], function(){ next(i+1); }); }catch(e){ next(i+1); }
+    }
+    function finish(){
+      try{ delete protoTreeFold[dir]; }catch(e){}
+      if(typeof loadSandboxSources==='function'){ try{ loadSandboxSources(s.displayName, true); }catch(e){} }
+      var msg='已导入 '+okNames.length+' 个子页面到「'+(s.displayName||s.name||'')+'」';
+      if(skipped.length) msg+='；跳过 '+skipped.length+' 个（'+skipped.slice(0,3).join('；')+(skipped.length>3?'…':'')+'）';
+      showToast(msg);
+    }
+    next(0);
+  }).catch(function(e){ showToast('导入失败：'+((e&&e.message)||e)); });
+}
+
 function renameSubPagePrompt(s, oldFile){
   if(!s||!s.sandboxDir){ return; }
   var oldName = String(oldFile||'').replace(/\.html$/i, '');
@@ -525,6 +578,7 @@ function makeSourceItem(s){
     ev.preventDefault();
     var items = [
       { ico: sIco('plus'), label: '新建子页面…', onClick: function(){ createSubPagePrompt(s); } },
+      { ico: sIco('plus'), label: '导入子页面…', onClick: function(){ importSubPages(s); } },
       { ico: sIco('plus'), label: '新建同级原型…', onClick: function(){ if(typeof newPrototype==='function') newPrototype(s.kind||'pc'); else if(typeof openKindModal==='function') openKindModal(); } },
       'sep',
       { ico: sIco('folder'), label: '移入文件夹…', onClick: function(ev2){ showGroupPop(null, s, { x: ev2.clientX, y: ev2.clientY }); } },
@@ -1174,7 +1228,7 @@ function sandboxAgentSource(){
     '      else if(dd.type==="STAMP_SET"){ var qp=(dd.payload&&typeof dd.payload==="object")?dd.payload:dd; if(qp && typeof qp.plid==="string" && typeof qp.selector==="string"){ var pid=String(qp.plid).slice(0,128).split(String.fromCharCode(34)).join(""); var ss=String(qp.selector).slice(0,2000); if(pid && ss){ try{ var all=document.querySelectorAll(ss); if(all && all.length===1){ try{ all[0].setAttribute("data-plink", pid); }catch(e3){} } }catch(e4){} try{ window.parent.postMessage({type:"STAMP_SET", nonce:dd.nonce, plid:pid, ok:true, source:"frame"}, "*"); }catch(e5){} } } }',
     '    }catch(e){}',
     '  });',
-    '  document.addEventListener("keydown", function(ev){ try{ sendCtrlState(ev); }catch(e){} try{ sendEscape(ev); }catch(e2){} }, true);',
+    '  document.addEventListener("keydown", function(ev){ try{ sendCtrlState(ev,true); }catch(e){} try{ sendEscape(ev); }catch(e2){} }, true);',
     '  document.addEventListener("keyup", function(ev){ try{ sendCtrlState(ev,true); }catch(e){} }, true);',
     '  document.addEventListener("mousemove", function(ev){ try{ if(!armedPick) return; var tt=ev.target; if(!tt||tt.nodeType!==1) return; var tg=""; try{ tg=String(tt.tagName||"").toLowerCase(); }catch(e){} if(tg==="html"||tg==="body"||tg==="script"||tg==="style") return; var hk=hoverKey(tt); if(hk===lastHoverKey) return; lastHoverKey=hk; var rr=null; try{ var b=tt.getBoundingClientRect(); rr={left:b.left,top:b.top,width:b.width,height:b.height}; }catch(e2){} sendHover(rr); }catch(e3){} }, true);',
     '  document.addEventListener("mouseleave", function(ev){ try{ lastHoverKey="@@"; if(!armedPick) return; sendHover(null); }catch(e){} }, true);',

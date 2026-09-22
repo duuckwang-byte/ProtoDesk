@@ -52,7 +52,16 @@ const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
   console.log('[PASS] 选中提交与保留');
 })();
 
-// ---- 4. P1.4 刷新三态 ----
+// ---- 3b. 提交即移除已选项（不等 done） ----
+(function testDropOnSubmit() {
+  const eeSrc = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
+  assert.ok(/function editQueueDropSubmitted\(\)/.test(eeSrc), '缺 editQueueDropSubmitted');
+  const calls = eeSrc.match(/editQueueDropSubmitted\(\)/g) || [];
+  assert.ok(calls.length >= 3, '两条提交路径均须调用移除（定义+2处调用），实际' + calls.length);
+  console.log('[PASS] 提交即移除');
+})();
+
+// ---- 5. P1.4 刷新三态 ----
 (function testRefreshStates() {
   assert.ok(/window\._refreshManual=true/.test(pae), '按钮须置手动标记');
   assert.ok(/function setRefreshBusy\(/.test(pae), '缺按钮忙态函数');
@@ -75,6 +84,15 @@ const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
   assert.ok(/min-height\s*:\s*3\.2em/.test(rule), '文字区最小两行');
   assert.ok(!/max-height/.test(rule), '文字区高度须随内容走（无上限）');
   console.log('[PASS] 条目展示');
+})();
+
+// ---- 6. 条目标题字号 11px ----
+(function testItemTitleSize() {
+  const css2 = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
+  const m = css2.match(/\.ed-item \.ei-proto,\.ed-item \.ei-file\s*\{([^}]*)\}/);
+  assert.ok(m, '缺标题字号规则');
+  assert.ok(/font-size\s*:\s*11px/.test(m[1]), '标题须 11px');
+  console.log('[PASS] 条目标题字号');
 })();
 
 console.log('EDITSEL_PASS: 选中提交与刷新三态全绿');

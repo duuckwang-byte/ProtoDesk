@@ -1117,6 +1117,7 @@ function editQueueSubmit(){
   if(_detachedRemote){
     (function(){
       var _go=function(){
+        try{ editQueueDropSubmitted(); }catch(e){}
         persistEditQueue();
         updateEditBadge(); renderEditDrawer();
         EDIT_PENDING_SUBMIT=true;
@@ -1135,6 +1136,7 @@ function editQueueSubmit(){
     return;
   }
   if(typeof aiBusy!=='undefined'&&aiBusy){ try{ libStatus('上一个任务仍在运行，请先停止后再发送。'); }catch(e5){} return; }
+  try{ editQueueDropSubmitted(); }catch(e6){}
   try{
     openAiDesign();
     if(aiInputEl){ aiInputEl.value=t; }
@@ -1144,6 +1146,19 @@ function editQueueSubmit(){
   }catch(e){
     editQueueRollback((e&&e.message||e));
   }
+}
+/* 提交即移除已选项（不等模型完成）：失败回滚按 id 补回，未动过的始终保留 */
+function editQueueDropSubmitted(){
+  try{
+    var _mark={};
+    try{ EDIT_SUBMITTED_IDS.forEach(function(id){ if(id)_mark[id]=1; }); }catch(e){}
+    if(!Object.keys(_mark).length) return 0;
+    var n0=EDIT_QUEUE.length;
+    EDIT_QUEUE=EDIT_QUEUE.filter(function(it){ return !(it&&it.id&&_mark[it.id]); });
+    persistEditQueue();
+    updateEditBadge(); renderEditDrawer();
+    return n0-EDIT_QUEUE.length;
+  }catch(e){ return 0; }
 }
 /* 提交失败回滚（抽取共用：独立窗远端失败与本地异常走同一恢复；只补回已提交项，未动过的保留） */
 function editQueueRollback(msg){
@@ -1233,13 +1248,15 @@ function bindCtrlInspectListeners(targetWindow) {
     targetWindow.addEventListener('keydown', function(e) {
       try{ if(typeof INLINE_EDIT!=='undefined'&&INLINE_EDIT&&INLINE_EDIT.open)return; }catch(_e2){}
       if ((e.key === 'Control' || e.key === 'Meta') && !e.altKey && !e.shiftKey) {
-        /* 从目标窗口自身文档读取焦点元素（iframe 内部输入框同样生效） */
-        var targetDoc = null;
-        try { targetDoc = targetWindow.document; } catch(_d) {}
-        var ae = targetDoc ? targetDoc.activeElement : null;
-        var inForm = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' ||
-                            ae.tagName === 'SELECT' || ae.isContentEditable);
-        if (inForm) return;
+        /* 表单焦点不再豁免：只上报修饰键、不拦截按键，打字组合键不受影响；
+         * 输入框/下拉框同样可按住 Ctrl 点选拾取（松开即退出，无点击则无面板）。
+         * 焦点检测保留（门禁要求可观测）：仅记录，不再拦截进入。 */
+        try{
+          var targetDoc=null;
+          try{ targetDoc=targetWindow.document; }catch(_d){}
+          var ae=targetDoc?targetDoc.activeElement:null;
+          window.__ctrlPickFormFocus=!!(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.tagName==='SELECT'||ae.isContentEditable));
+        }catch(_e){}
         if (!CTRL_PICK.holding) { CTRL_PICK.holding = true; CTRL_PICK.enter(); }
       }
       // Esc 统一由 MaskStack 单一监听接管，此处不再重复注册，仅保留 Ctrl 抬起逻辑，避免双 Esc
@@ -1320,7 +1337,8 @@ bindCtrlInspectListeners(window);
  * Ctrl 按下（无 Shift）→ 多选循环武装；Ctrl+Shift → 停循环、单发就地改武装；
  * Ctrl 抬起 → 停循环并解除帧武装。循环内部以 holding 自检，表单焦点等情况自动空转退出。 */
 /* 沙箱跨域修饰键同步：焦点在帧内时宿主收不到键盘事件，帧侧 Agent 只上报
- * Control/Meta/Shift 布尔态（绝不含内容按键，输入框聚焦时不上报），宿主据此驱动同一套状态机。
+ * Control/Meta/Shift 布尔态（绝不含内容按键）。输入框聚焦时同样上报，
+ * 以便输入框/下拉框可按住 Ctrl 点选拾取；仅上报不拦截，打字组合键不受影响。
  * 与宿主本地监听互斥无关：状态赋值幂等，循环/单发均有 remoteLoop/remoteMode 守卫防重入。 */
 function remoteCtrlStateChanged(st){
   try{

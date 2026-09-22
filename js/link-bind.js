@@ -246,6 +246,21 @@ var LinkBind = (function () {
       }
     });
   }
+  /* 子页面直达判定：targetPage 为 .html 子页面文件时直接打开该子页，否则走锚点透传 */
+  function isSubPageTarget(dest, targetPage) {
+    try {
+      var tp = String(targetPage || '');
+      if (!/\.html?$/i.test(tp)) return false;
+      if (!dest) return false;
+      if (String(dest.mainHtmlFile || '') === tp) return true;
+      var subs = dest.subPages || [];
+      for (var i = 0; i < subs.length; i++) {
+        var f = subs[i] && (subs[i].file || subs[i].name || subs[i]);
+        if (String(f || '') === tp) return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  }
   function handleProtoLink(d) {
     try { if (d && d.restamp) restampLive(d.restamp); } catch (e) {}
     var target = (d && d.target) || {};
@@ -259,6 +274,7 @@ var LinkBind = (function () {
       libStatus('跳转失败：目标原型「' + protoName + '」不存在，可能已被删除或重命名。');
       return;
     }
+    if (isSubPageTarget(dest, targetPage)) { closeAllDrawers(); loadSubPage(dest, targetPage); return; }
     pendingGoto = targetPage;
     closeAllDrawers();
     loadSource(dest);
@@ -277,6 +293,7 @@ var LinkBind = (function () {
       libStatus('跳转失败：目标原型「' + protoName + '」不存在，可能已被删除或重命名。');
       return;
     }
+    if (isSubPageTarget(dest, targetPage)) { closeAllDrawers(); loadSubPage(dest, targetPage); return; }
     pendingGoto = targetPage;
     closeAllDrawers();
     loadSource(dest);
@@ -316,6 +333,7 @@ var LinkBind = (function () {
   var inspectorLink = null;  /* 当前元素的绑定 */
   var inspectorMode = '';    /* 'view' | 'select' | 'bound' */
   var inspectorSelectTarget = null; /* 选择态预选的目标源 */
+  var inspectorSelectSubPage = ''; /* 选择态预选的目标子页面（空=打开主页） */
 
   function openInspector(el) {
     if (!el) return;
@@ -449,76 +467,100 @@ var LinkBind = (function () {
     bodyEl.innerHTML = '<div class="li-hint">该元素尚未设置跳转。</div>'
       + '<div class="li-actions"><button class="docs-btn primary" id="liSetJump">＋ 设置跳转目标</button></div>';
     var btn = $('liSetJump');
-    if (btn) btn.onclick = function () { inspectorMode = 'select'; inspectorSelectTarget = null; renderJumpSection(sel, pg, chipEl, bodyEl); };
+    if (btn) btn.onclick = function () { inspectorMode = 'select'; inspectorSelectTarget = null; inspectorSelectSubPage = ''; renderJumpSection(sel, pg, chipEl, bodyEl); };
   }
 
   function renderSelectTarget(sel, pg, chipEl, bodyEl) {
     if (chipEl) { chipEl.className = 'state-dot active'; chipEl.textContent = ''; chipEl.title = '选择中'; }
-    /* 获取其他源 */
-    var others = [];
+    /* 目标列表：当前原型主页排首位（可展开子页面），其后为其他原型 */
+    var entries = [];
+    if (currentSource) entries.push(currentSource);
     for (var i = 0; i < sources.length; i++) {
-      if (sources[i] !== currentSource) others.push(sources[i]);
+      if (sources[i] !== currentSource) entries.push(sources[i]);
     }
-    if (!others.length) {
-      bodyEl.innerHTML = '<div class="li-hint">项目内暂无其他原型可跳转。</div>'
+    if (!entries.length) {
+      bodyEl.innerHTML = '<div class="li-hint">项目内暂无可选原型。</div>'
         + '<div class="li-actions"><button class="docs-btn" id="liSelBack">返回</button></div>';
       var backBtn = $('liSelBack');
-      if (backBtn) backBtn.onclick = function () { inspectorMode = 'view'; renderJumpSection(sel, pg, chipEl, bodyEl); };
+      if (backBtn) backBtn.onclick = function () { inspectorMode = 'view'; inspectorSelectTarget = null; inspectorSelectSubPage = ''; renderJumpSection(sel, pg, chipEl, bodyEl); };
       return;
     }
+    var expandedKey = (inspectorSelectTarget && (inspectorSelectTarget.sandboxDir || inspectorSelectTarget.name)) || null;
     var html = '<div class="li-targets">';
-    for (var j = 0; j < others.length; j++) {
-      var s = others[j];
+    for (var j = 0; j < entries.length; j++) {
+      var s = entries[j];
       var kindCls = s.kind === 'pc' ? 'pc' : 'mobile';
       var kindLabel = s.kind === 'pc' ? 'PC' : '移动';
+      var isCur = (s === currentSource);
       var selCls = (inspectorSelectTarget === s) ? ' selected' : '';
       html += '<div class="li-target-item' + selCls + '" data-idx="' + j + '">'
         + '<span class="li-target-name">' + escHtml(s.displayName) + '</span>'
+        + (isCur ? '<span class="li-target-kind cur">本原型</span>' : '')
         + '<span class="li-target-kind ' + kindCls + '">' + kindLabel + '</span>'
         + '</div>';
+      /* 选中项下方直接展开子页面（替换原来的目标页面下拉框） */
+      if (inspectorSelectTarget === s) {
+        var subs = (s.subPages && s.subPages.slice()) || [];
+        var mainF = s.mainHtmlFile || s.name || '';
+        html += '<div class="li-sub-list" data-for="' + j + '">'
+          + '<div class="li-sub-item' + (inspectorSelectSubPage ? '' : ' selected') + '" data-sub="">打开主页' + (mainF ? '（' + escHtml(mainF) + '）' : '') + '</div>';
+        for (var q = 0; q < subs.length; q++) {
+          var sf = subs[q] && (subs[q].file || subs[q].name || subs[q]);
+          var sn = (subs[q] && (subs[q].name || subs[q].file)) || sf;
+          if (!sf) continue;
+          html += '<div class="li-sub-item' + ((inspectorSelectSubPage || '') === String(sf) ? ' selected' : '') + '" data-sub="' + escAttr(String(sf)) + '">' + escHtml(String(sn)) + '</div>';
+        }
+        html += '</div>';
+      }
     }
     html += '</div>';
-    /* 页面选择（预选时展开） */
-    html += '<div class="li-page-row" id="liPageRow" style="display:none"><label>目标页面：</label><select id="liPageSelect"><option value="">打开首页</option></select></div>';
     html += '<div class="li-actions" id="liSelectActions" style="display:none"><button class="docs-btn" id="liSelBack">返回</button><button class="docs-btn primary" id="liSaveJump">保存绑定</button></div>';
     bodyEl.innerHTML = html;
-    /* 绑定事件 */
+    /* 绑定事件：点原型行选中并在其下方展开子页面；点子页面行定目标 */
     var items = bodyEl.querySelectorAll('.li-target-item');
     for (var k = 0; k < items.length; k++) {
       (function (item) {
         item.onclick = function () {
           var idx = parseInt(item.getAttribute('data-idx'), 10);
-          inspectorSelectTarget = others[idx];
-          /* 更新选中态 */
-          var allItems = bodyEl.querySelectorAll('.li-target-item');
-          for (var m = 0; m < allItems.length; m++) allItems[m].classList.remove('selected');
-          item.classList.add('selected');
-          /* 展开页面选择 */
-          var pageRow = $('liPageRow');
-          var pageSelect = $('liPageSelect');
-          var actions = $('liSelectActions');
-          if (pageRow) pageRow.style.display = '';
-          if (actions) actions.style.display = '';
-          if (pageSelect) {
-            pageSelect.innerHTML = '<option value="">打开首页</option>';
-            var pages = extractPages(inspectorSelectTarget.content || '');
-            for (var p = 0; p < pages.length; p++) {
-              var opt = document.createElement('option');
-              opt.value = pages[p];
-              opt.textContent = pages[p];
-              pageSelect.appendChild(opt);
-            }
-          }
+          inspectorSelectTarget = entries[idx];
+          inspectorSelectSubPage = '';
+          renderJumpSection(sel, pg, chipEl, bodyEl);
+          try{
+            var acts = $('liSelectActions');
+            if (acts) acts.style.display = '';
+          }catch(e){}
         };
       })(items[k]);
     }
+    var subs = bodyEl.querySelectorAll('.li-sub-item');
+    for (var w = 0; w < subs.length; w++) {
+      (function (sub) {
+        sub.onclick = function (ev) {
+          try{ if (ev && ev.stopPropagation) ev.stopPropagation(); }catch(e){}
+          inspectorSelectSubPage = String(sub.getAttribute('data-sub') || '');
+          var allSubs = bodyEl.querySelectorAll('.li-sub-item');
+          for (var m = 0; m < allSubs.length; m++) allSubs[m].classList.remove('selected');
+          sub.classList.add('selected');
+          try{
+            var acts2 = $('liSelectActions');
+            if (acts2) acts2.style.display = '';
+          }catch(e2){}
+        };
+      })(subs[w]);
+    }
+    /* 已有选中目标（返场/预选）直接露出操作区 */
+    try{
+      if (inspectorSelectTarget) {
+        var acts0 = $('liSelectActions');
+        if (acts0) acts0.style.display = '';
+      }
+    }catch(e3){}
     var backBtn2 = $('liSelBack');
-    if (backBtn2) backBtn2.onclick = function () { inspectorMode = 'view'; inspectorSelectTarget = null; renderJumpSection(sel, pg, chipEl, bodyEl); };
+    if (backBtn2) backBtn2.onclick = function () { inspectorMode = 'view'; inspectorSelectTarget = null; inspectorSelectSubPage = ''; renderJumpSection(sel, pg, chipEl, bodyEl); };
     var saveBtn = $('liSaveJump');
     if (saveBtn) saveBtn.onclick = function () {
-      var pageSelect = $('liPageSelect');
-      var targetPage = pageSelect ? pageSelect.value : '';
-      saveJumpBinding(sel, pg, inspectorSelectTarget.displayName, targetPage);
+      if (!inspectorSelectTarget) { lbToast('请先选择跳转目标原型。'); return; }
+      saveJumpBinding(sel, pg, inspectorSelectTarget.displayName, inspectorSelectSubPage || '');
     };
   }
 
@@ -546,10 +588,12 @@ var LinkBind = (function () {
     if (changeBtn) changeBtn.onclick = function () {
       inspectorMode = 'select';
       inspectorSelectTarget = null;
-      /* 预选现目标 */
+      inspectorSelectSubPage = '';
+      /* 预选现目标（含子页面） */
       for (var i = 0; i < sources.length; i++) {
         if (sources[i].displayName === link.target) { inspectorSelectTarget = sources[i]; break; }
       }
+      if (inspectorSelectTarget && link.targetPage) inspectorSelectSubPage = String(link.targetPage);
       renderJumpSection(sel, pg, chipEl, bodyEl);
     };
     var removeBtn = $('liRemoveJump');
@@ -914,62 +958,80 @@ var LinkBind = (function () {
       replaceDiv.innerHTML = '';
       return;
     }
-    /* 获取其他源 */
-    var others = [];
+    /* 目标列表：当前原型主页排首位（可展开子页面），其后为其他原型 */
+    var entries = [];
+    if (currentSource) entries.push(currentSource);
     for (var i = 0; i < sources.length; i++) {
-      if (sources[i] !== currentSource) others.push(sources[i]);
+      if (sources[i] !== currentSource) entries.push(sources[i]);
     }
-    if (!others.length) {
-      replaceDiv.innerHTML = '<div class="li-hint">项目内暂无其他原型可跳转。</div>';
+    if (!entries.length) {
+      replaceDiv.innerHTML = '<div class="li-hint">项目内暂无可选原型。</div>';
       replaceDiv.style.display = '';
       return;
     }
+    var selSub = (link.targetPage && /\.html?$/i.test(String(link.targetPage))) ? String(link.targetPage) : '';
     var html = '<div class="li-targets">';
-    for (var j = 0; j < others.length; j++) {
-      var s = others[j];
+    for (var j = 0; j < entries.length; j++) {
+      var s = entries[j];
       var kindCls = s.kind === 'pc' ? 'pc' : 'mobile';
       var kindLabel = s.kind === 'pc' ? 'PC' : '移动';
+      var isCur = (s === currentSource);
       var selCls = (s.displayName === link.target) ? ' selected' : '';
       html += '<div class="li-target-item' + selCls + '" data-tidx="' + j + '">'
         + '<span class="li-target-name">' + escHtml(s.displayName) + '</span>'
+        + (isCur ? '<span class="li-target-kind cur">本原型</span>' : '')
         + '<span class="li-target-kind ' + kindCls + '">' + kindLabel + '</span>'
         + '</div>';
+      if (s.displayName === link.target) {
+        var subs = (s.subPages && s.subPages.slice()) || [];
+        var mainF = s.mainHtmlFile || s.name || '';
+        html += '<div class="li-sub-list" data-for="' + j + '">'
+          + '<div class="li-sub-item' + (selSub ? '' : ' selected') + '" data-sub="">打开主页' + (mainF ? '（' + escHtml(mainF) + '）' : '') + '</div>';
+        for (var q = 0; q < subs.length; q++) {
+          var sf = subs[q] && (subs[q].file || subs[q].name || subs[q]);
+          var sn = (subs[q] && (subs[q].name || subs[q].file)) || sf;
+          if (!sf) continue;
+          html += '<div class="li-sub-item' + (selSub === String(sf) ? ' selected' : '') + '" data-sub="' + escAttr(String(sf)) + '">' + escHtml(String(sn)) + '</div>';
+        }
+        html += '</div>';
+      }
     }
     html += '</div>';
-    html += '<div class="li-page-row"><label>目标页面：</label><select id="lmPageSel_' + idx + '"><option value="">打开首页</option></select></div>';
     html += '<div class="li-actions"><button class="docs-btn primary" id="lmSaveReplace_' + idx + '">保存</button></div>';
     replaceDiv.innerHTML = html;
     replaceDiv.style.display = '';
-    /* 页面下拉 */
+    /* 页面选择：行内子页面直选（替换原来的目标页面下拉框） */
     var selTarget = null;
-    var pageSel = $('lmPageSel_' + idx);
+    for (var t = 0; t < entries.length; t++) { if (entries[t].displayName === link.target) { selTarget = entries[t]; break; } }
     var items = replaceDiv.querySelectorAll('.li-target-item');
     for (var k = 0; k < items.length; k++) {
       (function (item) {
         item.onclick = function () {
           var ti = parseInt(item.getAttribute('data-tidx'), 10);
-          selTarget = others[ti];
-          var allItems = replaceDiv.querySelectorAll('.li-target-item');
-          for (var m = 0; m < allItems.length; m++) allItems[m].classList.remove('selected');
-          item.classList.add('selected');
-          if (pageSel) {
-            pageSel.innerHTML = '<option value="">打开首页</option>';
-            var pages = extractPages(selTarget.content || '');
-            for (var p = 0; p < pages.length; p++) {
-              var opt = document.createElement('option');
-              opt.value = pages[p];
-              opt.textContent = pages[p];
-              pageSel.appendChild(opt);
-            }
-          }
+          selTarget = entries[ti];
+          selSub = '';
+          link.target = selTarget.displayName;
+          renderLinkMgrReplace(idx, link);
         };
       })(items[k]);
+    }
+    var subRows = replaceDiv.querySelectorAll('.li-sub-item');
+    for (var w = 0; w < subRows.length; w++) {
+      (function (sub) {
+        sub.onclick = function (ev) {
+          try { if (ev && ev.stopPropagation) ev.stopPropagation(); } catch (e) {}
+          selSub = String(sub.getAttribute('data-sub') || '');
+          var allSubs = replaceDiv.querySelectorAll('.li-sub-item');
+          for (var m = 0; m < allSubs.length; m++) allSubs[m].classList.remove('selected');
+          sub.classList.add('selected');
+        };
+      })(subRows[w]);
     }
     var saveBtn = $('lmSaveReplace_' + idx);
     if (saveBtn) {
       saveBtn.onclick = function () {
         if (!selTarget) { alert('请先选择一个目标原型。'); return; }
-        var tp = pageSel ? pageSel.value : '';
+        var tp = selSub;
         link.target = selTarget.displayName;
         link.targetPage = tp;
         link.ts = Date.now();

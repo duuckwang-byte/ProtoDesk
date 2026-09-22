@@ -2066,20 +2066,35 @@ function projectSetBindingImpl(ev, o) {
 async function pickTextFileImpl(event, opts) {
   const win = BrowserWindow.getFocusedWindow();
   const o = opts || {};
+  const multi = !!(o.multi || o.multiple);
   const r = await dialog.showOpenDialog(win, {
     defaultPath: paths.pkgDir,
     title: o.title || '选择文件',
     filters: o.filters || [{ name: 'HTML 原型', extensions: ['html', 'htm'] }],
-    properties: ['openFile']
+    properties: multi ? ['openFile', 'multiSelections'] : ['openFile']
   });
   if (r.canceled || !r.filePaths.length) return null;
-  const p = r.filePaths[0];
-  const name = path.basename(p);
-  try {
-    return { path: p, name, content: fs.readFileSync(p, 'utf8') };
-  } catch (err) {
-    return { path: p, name, content: null, error: String(err && err.message || err) };
+  if (!multi) {
+    const p = r.filePaths[0];
+    const name = path.basename(p);
+    try {
+      return { path: p, name, content: fs.readFileSync(p, 'utf8') };
+    } catch (err) {
+      return { path: p, name, content: null, error: String(err && err.message || err) };
+    }
   }
+  const files = [];
+  for (const p of r.filePaths) {
+    const name = path.basename(p);
+    try {
+      const st = fs.statSync(p);
+      if (st && st.size > 8 * 1024 * 1024) { files.push({ path: p, name, content: null, error: '文件超过 8MB，已跳过读取' }); continue; }
+      files.push({ path: p, name, content: fs.readFileSync(p, 'utf8') });
+    } catch (err) {
+      files.push({ path: p, name, content: null, error: String(err && err.message || err) });
+    }
+  }
+  return { files };
 
 }
 function docListImpl(ev, o) {

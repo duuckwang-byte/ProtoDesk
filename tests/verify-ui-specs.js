@@ -201,6 +201,7 @@ console.log('UISPEC_PASS: UI规范种子与注入全绿');
   for (const [nm, src] of [['sandbox-core', sbSrc], ['sandbox-agent', agentSrc]]) {
     assert.ok(src.includes('function sendCtrlState(ev)') || src.includes('function sendCtrlState('), nm + '帧模板缺修饰键上报');
     assert.ok(src.includes('inFormFocus'), nm + '帧模板缺输入框抑制');
+    assert.ok(src.includes('sendCtrlState(ev,true)'), nm + '帧keydown须直传上报（输入框/下拉框可拾取）');
     assert.ok((src.match(/document\.addEventListener\("keydown"/g) || []).length >= 1, nm + '帧模板缺keydown监听');
     assert.ok(src.includes('CTRL_STATE'), nm + '帧模板缺CTRL_STATE类型');
     assert.ok(src.includes('sendEscape'), nm + '帧模板缺Esc转发');
@@ -216,6 +217,7 @@ console.log('UISPEC_PASS: UI规范种子与注入全绿');
   assert.ok(sbSrc.includes('__onRemoteCtrlState'), '宿主须分发CTRL_STATE到注册表');
   assert.ok(sbSrc.includes("t === 'PICK_MISS'") && agentSrc.includes('PICK_MISS'), '未武装补偿须双端实现');
   const eeSrc = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
+  assert.ok(!/if\s*\(inForm\)\s*return/.test(eeSrc), '宿主进入拾取不得再被表单焦点拦截');
   assert.ok(eeSrc.includes('function remoteCtrlStateChanged('), '缺远端按键状态机');
   assert.ok(eeSrc.includes('__onRemoteCtrlState'), '须注册远端按键回调');
   assert.ok(eeSrc.includes('function remotePickMiss(') && eeSrc.includes('__onRemotePickMiss'), '未武装命中须收编');
