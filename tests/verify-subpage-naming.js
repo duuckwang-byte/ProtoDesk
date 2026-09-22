@@ -52,7 +52,7 @@ function test5_CondenseSubmit() {
   const seg = ee.match(/function editQueueSubmit[\s\S]*?var t=parts\.join/);
   assert.ok(seg, '缺editQueueSubmit拼装');
   const code = seg[0];
-  assert.ok(/改「/.test(code) && /共'\+EDIT_QUEUE\.length\+'条/.test(code), '缺精简头改「/共N条');
+  assert.ok(/改「/.test(code) && /共'\+_selList\.length\+'条/.test(code), '缺精简头改「/选中计数N条');
   assert.ok(/chips\.join\('、'\)/.test(code), '缺同需求合并选择器并列');
   assert.ok(/showPage/.test(code), '缺单页省略页面行');
   assert.ok(/层级：/.test(code), '缺层级链');

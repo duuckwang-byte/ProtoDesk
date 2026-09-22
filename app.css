@@ -546,6 +546,8 @@ body .sb-foot{padding-bottom:58px}
 .ed-body{flex:1;min-height:0;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .ed-item{flex:none;border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:var(--panel) /* P1-6 fix */;display:flex;flex-direction:column;gap:5px}
 .ed-item:hover{border-color:#D8B4FE}
+.ed-item.sel{border:2px solid var(--pri);padding:8px 9px;cursor:pointer}
+.ed-foot .docs-btn.ed-foot-left{margin-right:auto}
 .ed-item .ei-top{display:flex;align-items:center;gap:6px}
 .ed-item .ei-no{flex:none;width:18px;height:18px;border-radius:99px;background:#F59E0B;color:var(--panel);font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center} /* P1-6 fix */
 .ed-item .ei-page{font-size:10.5px;color:var(--sub);background:var(--bg-subtle) /* P1-6 fix */;border-radius:99px;padding:1px 7px;max-width:55%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -553,8 +555,7 @@ body .sb-foot{padding-bottom:58px}
 .ed-item .ei-x:hover{background:var(--err-soft);color:var(--err)}
 .ed-item .ei-edit{margin-left:auto;flex:none;width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--faint);cursor:pointer}
 .ed-item .ei-edit:hover{background:var(--pri-soft) /* P1-6 fix */;color:var(--pri)}
-.ed-item .ei-sel{font-size:10.5px;color:var(--pri);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.6;cursor:help}
-.ed-item .ei-text{font-size:12px;color:#7A5B22;line-height:1.6;white-space:pre-wrap;word-break:break-word;background:#FFF8EC;border:1px solid #FDE6C4;border-radius:8px;padding:8px 10px;margin-top:2px}
+.ed-item .ei-text{font-size:12px;color:var(--ink);font-weight:700;line-height:1.6;white-space:pre-wrap;word-break:break-word;background:#F3F5F7;border:1px solid #E2E8F0;border-radius:8px;padding:8px 10px;margin-top:2px;min-height:3.2em;box-sizing:border-box}
 .ed-item .ei-editbox{display:flex;flex-direction:column;gap:6px}
 .ed-item .ei-editta{width:100%;box-sizing:border-box;min-height:64px;border:1px solid #FDE6C4;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.6;font-family:inherit;color:var(--ink);background:#FFFDF7;resize:vertical;outline:none}
 .ed-item .ei-editta:focus{border-color:var(--line)}
@@ -631,22 +632,22 @@ body .sb-foot{padding-bottom:58px}
 .li-card-bd{padding:12px;display:none;background:var(--panel) /* P1-6 fix */}
 .li-card.open .li-card-bd{display:block}
 
-/* ═══════ 跳转交互卡片（蓝色系高亮） ═══════ */
-.li-card.jump-card{border-color:#C7D7FE;background:#F8FAFF}
-.li-card.jump-card .li-card-hd{background:#EEF4FF;border-bottom:1px solid #D8E4FE;color:#1E40AF}
-.li-card.jump-card .li-card-name{color:#1E40AF}
-.li-card.jump-card .li-card-bd{background:#FAFCFF}
+/* ═══════ 跳转交互卡片（浅绿色系） ═══════ */
+.li-card.jump-card{border-color:#BBF7D0;background:#F7FEF9}
+.li-card.jump-card .li-card-hd{background:#F0FDF4;border-bottom:1px solid #BBF7D0;color:#15803D}
+.li-card.jump-card .li-card-name{color:#15803D}
+.li-card.jump-card .li-card-bd{background:#F7FEF9}
 
 /* ═══════ 视觉分割指示 ═══════ */
 .li-divider{flex:none;display:flex;align-items:center;gap:8px;margin:2px 0}
 .li-divider-line{flex:1;height:1px;background:#E2E8F0}
 .li-divider-badge{font-size:10.5px;color:#94A3B8;background:var(--bg-subtle) /* P1-6 fix */;border:1px solid #E2E8F0;border-radius:99px;padding:1px 8px;font-weight:500}
 
-/* ═══════ 修改需求卡片（紫色/琥珀色系高亮） ═══════ */
-.li-card.req-card{border-color:#E9D5FF;background:#FCFAFF}
-.li-card.req-card .li-card-hd{background:#F5EEFD;border-bottom:1px solid #EDDCFF;color:#6B21A8}
-.li-card.req-card .li-card-name{color:#6B21A8}
-.li-card.req-card .li-card-bd{background:#FDFBFF}
+/* ═══════ 修改需求卡片（浅橙色系） ═══════ */
+.li-card.req-card{border-color:#FED7AA;background:#FFFBF5}
+.li-card.req-card .li-card-hd{background:#FFF7ED;border-bottom:1px solid #FED7AA;color:#C2410C}
+.li-card.req-card .li-card-name{color:#C2410C}
+.li-card.req-card .li-card-bd{background:#FFFBF5}
 .li-req-btn{width:100%;margin-top:8px;height:34px;font-weight:600}
 
 /* ═══════ 检查器：跳转目标选择 ═══════ */
@@ -770,11 +771,11 @@ body.ctrl-inspecting #ctrlPickTip { display: flex; }
 .anno-popover-title{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:6px}
 .anno-popover-content{font-size:12px;line-height:1.6;color:var(--ink-2);max-height:240px;overflow-y:auto}
 
-/* ═══════ 需求标注卡片（粉红玫瑰色系高亮） ═══════ */
-.li-card.anno-card{border-color:#FECDD3;background:#FFF1F2}
-.li-card.anno-card .li-card-hd{background:#FFE4E6;border-bottom:1px solid #FECDD3;color:#9F1239}
-.li-card.anno-card .li-card-name{color:#9F1239}
-.li-card.anno-card .li-card-bd{background:#FFF5F6}
+/* ═══════ 需求标注卡片（浅蓝色系） ═══════ */
+.li-card.anno-card{border-color:#BAE6FD;background:#F5FBFF}
+.li-card.anno-card .li-card-hd{background:#F0F9FF;border-bottom:1px solid #BAE6FD;color:#0369A1}
+.li-card.anno-card .li-card-name{color:#0369A1}
+.li-card.anno-card .li-card-bd{background:#F5FBFF}
 .li-field-label{display:block;font-size:11.5px;font-weight:600;color:var(--sub);margin-bottom:4px}
 /* Wave-B: dead rule removed (zero refs, grep confirmed) */
 /* Wave-B: dead rule removed (zero refs, grep confirmed) */

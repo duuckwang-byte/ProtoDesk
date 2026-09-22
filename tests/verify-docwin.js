@@ -220,6 +220,12 @@ function testA10b_UnifiedReqTab() {
   // 关面板回落 desc（非编辑态）
   const sd = extractFn(exportSrc, 'setDocsOpen');
   assert.ok(/loadDesc/.test(sd), '关面板须回落 loadDesc');
+  // PC 目录常驻：切 tab 刷新目录、随面板同显隐、外部点击不收
+  const sw2 = extractFn(coreSrc, 'switchDocTab');
+  assert.ok(/syncTocForTab/.test(sw2), '切 tab 须同步目录');
+  assert.ok(/function syncTocForTab\(/.test(coreSrc), '缺 syncTocForTab');
+  assert.ok(/function isTocPinMode\(/.test(coreSrc), '缺 isTocPinMode（移动端/独立窗除外）');
+  assert.ok(/syncTocForTab/.test(sd) && /closeToc/.test(sd), '开面板须同步目录、关面板须一并隐藏目录');
   console.log('[PASS] A10b');
 }
 

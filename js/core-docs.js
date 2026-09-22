@@ -1413,9 +1413,10 @@ function openToc(){
 if(btnTocEl)btnTocEl.onclick=function(){
  if(tocOpen())closeToc(); else openToc();
 };
-/* 点击目录外部任意位置 → 自动收起（含移动端）；点击目录内部或按钮本身不触发；独立窗口内为常驻侧栏不自动收起 */
+/* 点击目录外部任意位置 → 自动收起（PC 常驻模式除外；移动端保持；点击目录内部或按钮本身不触发；独立窗口内为常驻侧栏不自动收起） */
 document.addEventListener('pointerdown',function(e){
  if(!tocOpen())return;
+ try{ if(typeof isTocPinMode==='function'&&isTocPinMode()) return; }catch(err){}
  try{ if(typeof isDocWinMode==='function'&&isDocWinMode()) return; }catch(err){}
  if(docTocEl&&docTocEl.contains(e.target))return;
  if(btnTocEl&&btnTocEl.contains(e.target))return;
@@ -3870,6 +3871,30 @@ function switchDocTab(toReq){
     }catch(e){}
    }
   }
+  /* PC 目录常驻：tab 切换直接刷新目录内容并保持可见，不隐藏 */
+  try{ if(typeof syncTocForTab==='function') syncTocForTab(); }catch(e){}
+ }catch(e){}
+}
+/* PC 目录常驻（与文档弹窗同显隐）：开面板则目录重建并保持可见；
+ * 切 tab 只刷新内容不隐藏；仅关面板时一并隐藏。移动端/独立窗保持原行为。 */
+function isTocPinMode(){
+ try{
+  if(typeof isDocWinMode==='function'&&isDocWinMode()) return false;
+  if(typeof isAiWinMode==='function'&&isAiWinMode()) return false;
+  if(typeof pcMode==='function'&&pcMode()) return true;
+ }catch(e){}
+ try{ if(document.body&&document.body.classList.contains('kind-pc')) return true; }catch(e){}
+ return false;
+}
+function syncTocForTab(){
+ try{
+  if(!isTocPinMode()){ try{ if(typeof refreshToc==='function') refreshToc(); }catch(e){} return; }
+  try{ if(typeof buildToc==='function') buildToc(); }catch(e){}
+  try{
+   var open=false;
+   try{ open=(typeof tocOpen==='function')?!!tocOpen():false; }catch(e){}
+   if(!open&&typeof openToc==='function') openToc();
+  }catch(e){}
  }catch(e){}
 }
 /* iter25: AI任务守卫+输入草稿镜像（纯色，无渐变）：toggle双向拒绝忙时切换，ai-draft两端收发，失败不抛错 */

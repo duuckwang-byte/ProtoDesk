@@ -103,10 +103,15 @@ function setDocsOpen(open){
   closeToc();
   return;
  }
- bodyB.classList.toggle('docs-open',!!open);
- if(docsMaskEl)docsMaskEl.style.display=open?'block':'none';
- if(open){ if(window.MaskStack) window.MaskStack.push('docsMask', function(){ setDocsOpen(false); }); }else{ if(window.MaskStack) window.MaskStack.pop('docsMask'); }
+  bodyB.classList.toggle('docs-open',!!open);
+  if(docsMaskEl)docsMaskEl.style.display=open?'block':'none';
+  if(open){ if(window.MaskStack) window.MaskStack.push('docsMask', function(){ setDocsOpen(false); }); }else{ if(window.MaskStack) window.MaskStack.pop('docsMask'); }
   if(open&&reqOpen)setReqOpen(false); /* 与「最新需求」面板互斥 */
+  /* PC 目录常驻：随文档弹窗同显隐 */
+  try{
+   if(open){ if(typeof syncTocForTab==='function')syncTocForTab(); }
+   else{ if(typeof closeToc==='function')closeToc(); }
+  }catch(e){}
   if(!open){
     closeToc();
     /* 合一：关面板时若停在最新需求 tab 且不在编辑中，回落功能说明，下次打开默认 desc */
@@ -6053,11 +6058,28 @@ if(HAS_AI){
  if(snapOkEl)snapOkEl.onclick=closeSnapPanel;
 /* ═══════ 手动刷新：重新读取沙箱本地最新的原型 html 与文档 md（当前项目） ═══════ */
 var btnRefreshEl=$('btnRefresh');
+var _btnRefreshLabel=null;
+function setRefreshBusy(on){
+  /* 刷新三态之一：按钮转圈（禁用+文案），与状态栏/toast 配合 */
+  try{
+    if(!btnRefreshEl)return;
+    if(on){
+      if(_btnRefreshLabel==null)_btnRefreshLabel=btnRefreshEl.textContent;
+      btnRefreshEl.disabled=true;
+      btnRefreshEl.textContent='刷新中…';
+    }else{
+      btnRefreshEl.disabled=false;
+      if(_btnRefreshLabel!=null)btnRefreshEl.textContent=_btnRefreshLabel;
+    }
+  }catch(e){}
+}
 if(btnRefreshEl)btnRefreshEl.onclick=function(){
   if(!(window.protoAPI&&window.protoAPI.sandbox)){ showToast('浏览器模式无沙箱数据，无需刷新。'); return; }
   if(!currentProject){ showToast('尚未进入任何项目，请先选择项目。'); return; }
   try{ if(typeof libStatus==='function')libStatus('正在刷新沙箱…'); }catch(e){}
-  try{ showToast('正在刷新沙箱…'); }catch(e){} /* 可见反馈：libStatus 在设置区不易察觉，toast 确保点击有回音 */
+  try{ showToast('正在刷新沙箱…'); }catch(e){}
+  window._refreshManual=true; /* 手动刷新标记：完成后按钮复位+toast，与 AI 后台静默刷新区分 */
+  setRefreshBusy(true); /* 可见反馈：libStatus 在设置区不易察觉，toast 确保点击有回音 */
   // fix refresh preserve: snapshot subpage+hash before async reload
  var _savedSub = currentSource && currentSource.activeSubFile;
  var _savedHash = '';
@@ -6754,16 +6776,27 @@ if(projCloseEl)projCloseEl.onclick=closeProjectPicker;
    一个项目一个文件夹，项目内一个原型一个子文件夹（html 原型 + md 文档同放）；
    文件夹也是该原型的大模型沙箱（AI 生成 html/md 写入其中） */
 function loadSandboxSources(selName, quiet){
- // fix refresh preserve: extend selName to support subpage restore; snapshot from globals/param
- // quiet=true 时为后台自动刷新（AI done 同步/导入/恢复/拉取后），无项目则静默返回不 toast；
- // 仅用户手动刷新且真没项目时才提示（刷新按钮处已自带提示）。
+  // fix refresh preserve: extend selName to support subpage restore; snapshot from globals/param
+  // quiet=true 时为后台自动刷新（AI done 同步/导入/恢复/拉取后），无项目则静默返回不 toast；
+  // 仅用户手动刷新且真没项目时才提示（刷新按钮处已自带提示）。
+  /* 手动刷新三态之三：完成/失败统一复位按钮 + toast（AI 后台路径 _refreshManual 为空，不打扰） */
+  var _manualRefresh=false;
+  try{ _manualRefresh=!!window._refreshManual; window._refreshManual=false; }catch(e){ _manualRefresh=false; }
+  function _refreshDone(ok, msg){
+    try{ setRefreshBusy(false); }catch(e){}
+    if(!_manualRefresh)return;
+    try{
+      if(msg)showToast(msg);
+      else if(ok===false)showToast('刷新失败，请重试。');
+    }catch(e){}
+  }
  var _paramIsSub = !!(selName && /\.html$/i.test(String(selName)));
  var _pendingRefreshSub = (typeof window._refreshSavedSub !== 'undefined' && window._refreshSavedSub) ? window._refreshSavedSub : (_paramIsSub ? selName : null);
  var _pendingRefreshHash = (typeof window._refreshSavedHash !== 'undefined' && window._refreshSavedHash) ? window._refreshSavedHash : '';
  var _selNameForProto = _paramIsSub ? null : selName;
  try{ if(_pendingRefreshSub || _pendingRefreshHash) { window._refreshSavedSub = null; window._refreshSavedHash = ''; } }catch(e){}
-  if(!(window.protoAPI&&window.protoAPI.sandbox))return;
-  if(!currentProject){ if(!quiet){ try{ showToast('尚未进入任何项目，请先选择项目。'); }catch(e){} } return; }
+   if(!(window.protoAPI&&window.protoAPI.sandbox)){ _refreshDone(false); return; }
+   if(!currentProject){ if(!quiet){ try{ showToast('尚未进入任何项目，请先选择项目。'); }catch(e){} } _refreshDone(); return; }
  window.protoAPI.sandbox.list(currentProject).then(function(r){
   var folders=(r&&r.folders)||[];
   /* 默认打开顺序：项目内按名称排序，打开第一个原型 */
@@ -6812,7 +6845,7 @@ function loadSandboxSources(selName, quiet){
     });
     /* 删除沙箱中已移除的预设源 */
     for(var i=sources.length-1;i>=0;i--){ var s=sources[i]; if(s&&s.isPreset&&s.sandboxDir&&!keep[s.name]){ sources.splice(i,1); } }
-    if(!sources.length){ renderSourceList(); libStatus('项目「'+currentProject+'」暂无原型：先点左下角「新建设计」创建，或通过「导入原型」导入 html 文件。'); return; }
+    if(!sources.length){ renderSourceList(); libStatus('项目「'+currentProject+'」暂无原型：先点左下角「新建设计」创建，或通过「导入原型」导入 html 文件。'); _refreshDone(); return; }
     if(_selNameForProto){ /* 新建原型后：按文件夹名选中（fix refresh preserve: subFile param不触发此分支） */
       for(var j=0;j<sources.length;j++){ var so=sources[j]; if(so&&(so.displayName===_selNameForProto||so.name===_selNameForProto+'.html')){ currentSource=so; break; } }
     }
@@ -6841,8 +6874,9 @@ function loadSandboxSources(selName, quiet){
     if (window.LinkBind) window.LinkBind.updateLinkBadge();
     libStatus(_selNameForProto?('已切换到新原型沙箱：'+_selNameForProto+'（AI 生成的文件写入该文件夹）')
       :('项目「'+currentProject+'」：共 '+folders.length+' 个原型文件夹（每个含 html + md）。'));
-  }); /* end Promise.all.then */
-  }).catch(function(e){ reportError('sandbox-list', e, '加载原型列表失败：'+(e&&e.message||e)); });
+    _refreshDone(true, '沙箱已刷新，共 '+folders.length+' 个原型文件夹。');
+   }); /* end Promise.all.then */
+   }).catch(function(e){ _refreshDone(false); reportError('sandbox-list', e, '加载原型列表失败：'+(e&&e.message||e)); });
 }
 
 /* AI 结束后重扫沙箱：把模型生成/修改的 html、md 同步回当前原型与文档列表 */

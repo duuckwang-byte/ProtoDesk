@@ -160,7 +160,7 @@
  <div id="editDrawer">
   <div class="ed-head">待提交修改<i class="badge" id="drawerBadge">0</i><span class="ed-x" id="editDrawerClose" title="关闭">✕</span></div>
   <div class="ed-body" id="editDrawerBody"></div>
-  <div class="ed-foot"><button class="docs-btn" id="editQueueClear" title="清空全部待提交条目">清空</button><button class="docs-btn primary" id="editQueueSubmit" title="把列表统一提交给大模型修改">提交</button></div>
+   <div class="ed-foot"><button class="docs-btn ed-foot-left" id="editQueueSelAll" title="全选/取消全选待提交条目">全选</button><button class="docs-btn" id="editQueueClear" title="清空全部待提交条目">清空</button><button class="docs-btn primary" id="editQueueSubmit" title="把列表统一提交给大模型修改">提交</button></div>
  </div>
  <div class="drawer-mask" id="editDrawerMask" style="display:none"></div>
 </div>
@@ -209,28 +209,8 @@
     <span id="liClose" class="sd-x" title="关闭">✕</span>
   </header>
   <div class="li-sel" id="liSelTip"></div>
-  <div class="li-drawer-content">
-    <!-- 板块1：跳转交互（蓝色主题卡片） -->
-    <section class="li-card jump-card open" id="liSecJump">
-      <div class="li-card-hd">
-        <div class="li-card-hd-left">
-          <span class="li-card-icon"><i data-ic="link"></i></span>
-          <span class="li-card-name">跳转交互</span>
-          <span class="state-chip" id="liJumpChip"></span>
-        </div>
-        <b class="li-fold">▾</b>
-      </div>
-      <div class="li-card-bd" id="liJumpBody"></div>
-    </section>
-
-    <!-- 视觉分割指示 -->
-    <div class="li-divider">
-      <span class="li-divider-line"></span>
-      <span class="li-divider-badge">或者</span>
-      <span class="li-divider-line"></span>
-    </div>
-
-    <!-- 板块2：修改需求（紫色/琥珀色卡片） -->
+   <div class="li-drawer-content">
+    <!-- 板块1：修改需求（浅橙色卡片，默认展开） -->
     <section class="li-card req-card open" id="liSecReq">
       <div class="li-card-hd">
         <div class="li-card-hd-left">
@@ -253,8 +233,28 @@
       <span class="li-divider-line"></span>
     </div>
 
-    <!-- 板块3：需求标注（粉红/玫瑰红卡片） -->
-    <section class="li-card anno-card open" id="liSecAnno">
+    <!-- 板块2：跳转交互（浅绿色卡片，默认收起） -->
+    <section class="li-card jump-card" id="liSecJump">
+      <div class="li-card-hd">
+        <div class="li-card-hd-left">
+          <span class="li-card-icon"><i data-ic="link"></i></span>
+          <span class="li-card-name">跳转交互</span>
+          <span class="state-chip" id="liJumpChip"></span>
+        </div>
+        <b class="li-fold">▾</b>
+      </div>
+      <div class="li-card-bd" id="liJumpBody"></div>
+    </section>
+
+    <!-- 视觉分割指示 -->
+    <div class="li-divider">
+      <span class="li-divider-line"></span>
+      <span class="li-divider-badge">或者</span>
+      <span class="li-divider-line"></span>
+    </div>
+
+    <!-- 板块3：需求标注（浅蓝色卡片，默认收起） -->
+    <section class="li-card anno-card" id="liSecAnno">
       <div class="li-card-hd">
         <div class="li-card-hd-left">
           <span class="li-card-icon"><i data-ic="file-text"></i></span>

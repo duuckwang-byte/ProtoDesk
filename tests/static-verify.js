@@ -51,6 +51,14 @@ if (!/\.sheet-mask\{/.test(css)) fails.push('full-sim: sheet-mask 存在');
 if (!/jump-card/.test(css) || !/jump-card/.test(html)) fails.push('full-sim: jump-card 缺失');
 if (!/anno-card/.test(css) || !/anno-card/.test(html)) fails.push('full-sim: anno-card 缺失');
 if (!/req-card/.test(css) || !/req-card/.test(html)) fails.push('full-sim: req-card 缺失');
+// 检查器三板块：修改需求首位默认展开（浅橙），跳转/标注默认收起（浅绿/浅蓝）
+if (!(html.indexOf('id="liSecReq"') < html.indexOf('id="liSecJump"') && html.indexOf('id="liSecJump"') < html.indexOf('id="liSecAnno"'))) fails.push('full-sim: 板块顺序须 修改需求/跳转交互/需求标注');
+if (!/id="liSecReq"[^>]*class="[^"]*open/.test(html) && !/class="[^"]*open"[^>]*id="liSecReq"/.test(html)) fails.push('full-sim: 修改需求须默认展开');
+if (/id="liSecJump"[^>]*class="[^"]*open/.test(html) || /class="[^"]*open"[^>]*id="liSecJump"/.test(html)) fails.push('full-sim: 跳转交互须默认收起');
+if (/id="liSecAnno"[^>]*class="[^"]*open/.test(html) || /class="[^"]*open"[^>]*id="liSecAnno"/.test(html)) fails.push('full-sim: 需求标注须默认收起');
+if (!/\.li-card\.req-card\s*\{[^}]*#FED7AA/.test(css)) fails.push('full-sim: 修改需求须浅橙色');
+if (!/\.li-card\.jump-card\s*\{[^}]*#BBF7D0/.test(css)) fails.push('full-sim: 跳转交互须浅绿色');
+if (!/\.li-card\.anno-card\s*\{[^}]*#BAE6FD/.test(css)) fails.push('full-sim: 需求标注须浅蓝色');
 if (!/\.li-divider/.test(css)) fails.push('full-sim: li-divider 缺失');
 if (!/id="liTitle"/.test(html)) fails.push('full-sim: liTitle 缺失');
 if (!/id="liReqText"/.test(html)) fails.push('full-sim: liReqText 缺失');

@@ -44,6 +44,7 @@ const SUITES = [
   ['permission-modes', 'verify-permission-modes.js'],
   ['terminal', 'verify-terminal.js'],
   ['remote-send', 'verify-remote-send.js'],
+  ['edit-select', 'verify-edit-select.js'],
 ];
 
 function pad(s, n) {

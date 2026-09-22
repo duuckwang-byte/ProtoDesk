@@ -11,6 +11,7 @@ var escHtml = (typeof window !== 'undefined' && window.escHtml) || (typeof windo
 var escAttr = (typeof window !== 'undefined' && window.escAttr) || (typeof window !== 'undefined' && window.Utils && window.Utils.escAttr) || function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
 var showToast = (typeof window !== 'undefined' && window.showToast) || (typeof window !== 'undefined' && window.Utils && window.Utils.showToast) || function (msg) { try { if (typeof libStatus === 'function') { libStatus(msg); return; } } catch (e) {} try { alert(msg); } catch (e2) {} return null; };
 var EDIT_QUEUE=[],EDIT_HOVER_EL=null,EDIT_LOCKED_EL=null,EDIT_PENDING_SUBMIT=false,EDIT_EDITING_ID=null; /* T3.2:僵尸编辑模式已下线，拾取统一由CTRL_PICK接管 */
+var EDIT_SUBMITTED_IDS=[]; /* 本轮已提交的条目 id：done 时只清这些，未选中的继续留列 */
 var EDIT_LAST_QUEUE=null; /* G01: 清空前的快照，用于撤销/审计 */
 var _editQueuePersistTimer=null;
 function persistEditQueue(){ try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(e){} try { if (typeof window !== 'undefined' && window.Store && window.Store.replaceQueue) { /* Store 镜像 (过渡期双写, Wave-D 以 Store 为准): 避免递归, 仅当长度/首末 id 不一致时同步 */ try { var _sq = window.Store.getQueue(); var _same = _sq && _sq.length === EDIT_QUEUE.length; if (!_same) window.Store.replaceQueue(EDIT_QUEUE.slice()); } catch (e2) {} } } catch (e3) {} }
@@ -243,7 +244,8 @@ var btnSubmitEditEl=$('btnSubmitEdit'),
     submitBadgeEl=$('submitBadge'),editHoverEl=$('editHover'),
     editDrawerEl=$('editDrawer'),editDrawerBodyEl=$('editDrawerBody'),editDrawerCloseEl=$('editDrawerClose'),
     editDrawerMaskEl=$('editDrawerMask'),drawerBadgeEl=$('drawerBadge'),
-    editQueueClearEl=$('editQueueClear'),editQueueSubmitEl=$('editQueueSubmit');
+    editQueueClearEl=$('editQueueClear'),editQueueSubmitEl=$('editQueueSubmit'),
+    editQueueSelAllEl=$('editQueueSelAll');
 function editFrameDoc(){ try{ return frame.contentDocument; }catch(e){ return null; } }
 function editFrameHash(){ try{ var h=(frame.contentWindow&&frame.contentWindow.location&&frame.contentWindow.location.hash)||''; return h.replace(/^#/,''); }catch(e){ return ''; } }
 function editFrameScale(){ try{ var fr=frame.getBoundingClientRect(); return fr.width/Math.max(1,frame.clientWidth); }catch(e){ return 1; } }
@@ -785,7 +787,7 @@ function editQueueAdd(el, text){
     if(!dup.htmlFile)dup.htmlFile=curHtml;
     libStatus('已更新该元素原有的修改需求。');
   }else{
-    EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(),
+    EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(), sel:true,
       page:pg, selector:sel, label:editElementLabel(el), text:t, htmlFile:curHtml,
       ancestors:(typeof editAncestorChain==='function'?editAncestorChain(el):[]), parentHtml:(typeof editParentSnippet==='function'?editParentSnippet(el):'') });
     libStatus('已加入待提交列表：'+EDIT_QUEUE.length+' 条（可点顶部「待提交列表」查看或提交）。');
@@ -811,7 +813,7 @@ function editQueueAddRemote(info, text){
     if(!dup.htmlFile)dup.htmlFile=curHtml;
     libStatus('已更新该元素原有的修改需求。');
   }else{
-    EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(),
+    EDIT_QUEUE.push({ id:(Date.now()+Math.random().toString(36).slice(2,8)), ts:Date.now(), sel:true,
       page:pg, selector:sel, label:label, text:t, htmlFile:curHtml,
       ancestors:(info&&Array.isArray(info.ancestors))?info.ancestors.slice(0,8):[], parentHtml:String((info&&info.parentHtml)||'').slice(0,2000) });
     libStatus('已加入待提交列表：'+EDIT_QUEUE.length+' 条（可点顶部「待提交列表」查看或提交）。');
@@ -897,6 +899,27 @@ function inlineEditOpenRemote(res){
   try{ inlineEditBuildPop(p); }catch(e){ try{ inlineEditToast('就地改浮层打开失败，请用Ctrl+拾取走AI队列。'); }catch(e2){} try{ inlineEditCloseNow(); }catch(e3){} return; }
   try{ if(window.MaskStack&&window.MaskStack.push)window.MaskStack.push('inlineEditPop',function(){ inlineEditTryClose(); }); }catch(e){}
 }
+/* 待提交选中态：sel!==false 即选中（默认全选；存量无字段按选中计） */
+function editQueueSelected(){ try{ return EDIT_QUEUE.filter(function(it){ return it&&(it.sel!==false); }); }catch(e){ return EDIT_QUEUE.slice(); } }
+function editQueueIsAllSel(){ try{ return EDIT_QUEUE.length>0&&EDIT_QUEUE.every(function(it){ return it&&(it.sel!==false); }); }catch(e){ return false; } }
+function editQueueSetAll(on){
+  try{
+    EDIT_QUEUE.forEach(function(it){ if(it)it.sel=!!on; });
+    updateEditBadge(); renderEditDrawer(); schedulePersistEditQueue();
+  }catch(e){}
+}
+function editQueueToggleSel(id){
+  if(!id)return;
+  try{
+    for(var i=0;i<EDIT_QUEUE.length;i++){
+      if(EDIT_QUEUE[i]&&EDIT_QUEUE[i].id===id){
+        EDIT_QUEUE[i].sel=(EDIT_QUEUE[i].sel===false);
+        break;
+      }
+    }
+    updateEditBadge(); renderEditDrawer(); schedulePersistEditQueue();
+  }catch(e){}
+}
 function updateEditBadge(){
   var n=EDIT_QUEUE.length;
   if(btnSubmitEditEl)btnSubmitEditEl.style.display=n?'':'none';
@@ -910,15 +933,13 @@ function renderEditDrawer(){
   if(!EDIT_QUEUE.length){ editDrawerBodyEl.innerHTML='<div class="ed-empty">暂无待提交的修改需求<br>按住 Ctrl 点击原型元素即可拾取，松开 Ctrl 后批量提交</div>'; return; }
   var h='';
   EDIT_QUEUE.forEach(function(it,i){
-    var lab=it.label||it.selector;
-    var selTip=it.selector+(it.label?'（'+it.label+'）':'');
+    var _sel=!(it&&(it.sel===false));
     var protoName=(typeof currentSource!=='undefined'&&currentSource&&(currentSource.displayName||currentSource.name))||'当前原型';
     var mainF=((typeof currentSource!=='undefined'&&currentSource&&(currentSource.mainHtmlFile||currentSource.name))||'');
     var effFile=it.htmlFile||mainF||'当前文件';
-    h+='<div class="ed-item"><div class="ei-top"><span class="ei-no">'+(i+1)+'</span><span class="ei-proto" title="'+escAttr(protoName)+'">'+escHtml(protoName)+'</span><span class="ei-file" title="'+escAttr(effFile)+'">'+escHtml(effFile)+'</span><span class="ei-page">'+escHtml(it.page?it.page:'（首页）')+'</span>'
+    h+='<div class="ed-item'+(_sel?' sel':'')+'" data-id="'+escAttr(it.id)+'"><div class="ei-top"><span class="ei-no">'+(i+1)+'</span><span class="ei-proto" title="'+escAttr(protoName)+'">'+escHtml(protoName)+'</span><span class="ei-file" title="'+escAttr(effFile)+'">'+escHtml(effFile)+'</span><span class="ei-page">'+escHtml(it.page?it.page:'（首页）')+'</span>'
       +'<span class="ei-edit" data-id="'+escAttr(it.id)+'" title="修改该条需求">✎</span>'
       +'<span class="ei-x" data-id="'+escAttr(it.id)+'" title="删除该条">✕</span></div>'
-      +'<div class="ei-sel" title="'+escAttr(selTip)+'">'+escHtml(lab)+'</div>'
       +(it.id===EDIT_EDITING_ID
         ?'<div class="ei-editbox"><textarea class="ei-editta" spellcheck="false">'+escHtml(it.text)+'</textarea>'
         +'<div class="ei-edit-ops"><span class="ei-edit-cancel" data-id="'+escAttr(it.id)+'">取消</span><span class="ei-edit-save" data-id="'+escAttr(it.id)+'">保存</span></div></div>'
@@ -926,6 +947,30 @@ function renderEditDrawer(){
       +'</div>';
   });
   editDrawerBodyEl.innerHTML=h;
+  /* 点击条目切换选中（边框高亮）；✎/✕/编辑框内操作不触发 */
+  Array.prototype.forEach.call(editDrawerBodyEl.querySelectorAll('.ed-item'),function(row){
+    row.onclick=function(ev){
+      try{
+        var t=ev&&(ev.target||ev.srcElement);
+        if(t&&t.closest){
+          var hit=t.closest('.ei-x,.ei-edit,.ei-editbox,.ei-edit-ops,textarea,.ei-edit-save,.ei-edit-cancel');
+          if(hit&&row.contains(hit))return;
+        }
+      }catch(e){}
+      editQueueToggleSel(row.getAttribute('data-id'));
+    };
+  });
+  /* 左下角同一位置：全选/取消全选互斥显示 */
+  try{
+    var _selAllBtn=document.getElementById('editQueueSelAll');
+    if(_selAllBtn){
+      if(!EDIT_QUEUE.length){ _selAllBtn.style.display='none'; }
+      else{
+        _selAllBtn.style.display='';
+        _selAllBtn.textContent=editQueueIsAllSel()?'取消全选':'全选';
+      }
+    }
+  }catch(e){}
   Array.prototype.forEach.call(editDrawerBodyEl.querySelectorAll('.ei-x'),function(x){
     x.onclick=function(){ editQueueRemove(x.getAttribute('data-id')); };
   });
@@ -979,15 +1024,29 @@ function editQueueClear(){
     updateEditBadge(); renderEditDrawer();
   }
 }
-/* 编辑清单提交完成（AI done）：清空待提交列表并提示 */
+/* 编辑清单提交完成（AI done）：只移除本轮已提交项，未选中的继续留列并提示 */
 function __editOnAiDone(){
-  if(EDIT_PENDING_SUBMIT){ EDIT_PENDING_SUBMIT=false; EDIT_QUEUE=[]; updateEditBadge(); renderEditDrawer(); libStatus('大模型已按清单完成修改并刷新原型。'); }
+  if(EDIT_PENDING_SUBMIT){
+    EDIT_PENDING_SUBMIT=false;
+    try{
+      var _doneIds=(typeof EDIT_SUBMITTED_IDS!=='undefined'&&Array.isArray(EDIT_SUBMITTED_IDS))?EDIT_SUBMITTED_IDS:[];
+      var _mark={}; _doneIds.forEach(function(id){ if(id)_mark[id]=1; });
+      var _hasMark=Object.keys(_mark).length>0;
+      if(_hasMark){ EDIT_QUEUE=EDIT_QUEUE.filter(function(it){ return !(it&&it.id&&_mark[it.id]); }); }
+      else{ EDIT_QUEUE=[]; }
+      EDIT_SUBMITTED_IDS=[];
+    }catch(e){ try{ EDIT_QUEUE=[]; EDIT_SUBMITTED_IDS=[]; }catch(e2){} }
+    updateEditBadge(); renderEditDrawer(); libStatus('大模型已按清单完成修改并刷新原型。');
+  }
   if(window.LinkBind)LinkBind.onAfterAiRefresh();
   if(window.AnnotationEngine && typeof AnnotationEngine.onAfterAiRefresh === 'function') AnnotationEngine.onAfterAiRefresh();
 }
 function editQueueSubmit(){
   if(!EDIT_QUEUE.length)return;
   if(!HAS_AI){ alert('大模型修改仅桌面端可用（请使用 exe 版打开）。'); return; }
+  /* 只提交选中的条目：没选中的继续留在列表 */
+  var _selList=editQueueSelected();
+  if(!_selList.length){ alert('请先选中至少一条需求再提交（点击条目切换选中）。'); return; }
   var srcName=(currentSource&&currentSource.displayName)||(currentSource&&currentSource.name)||'当前原型';
   var mainFile=(currentSource&&(currentSource.mainHtmlFile||currentSource.name))||'';
   var curActive=(typeof editQueueCurHtmlFile==='function'?editQueueCurHtmlFile():(currentSource&&(currentSource.activeSubFile||mainFile)||''));
@@ -995,12 +1054,12 @@ function editQueueSubmit(){
   var srcFull=srcName+((isMulti&&curActive&&mainFile&&curActive!==mainFile)?' / '+curActive:'');
   function effOf(it){ return it.htmlFile||mainFile||'当前文件'; }
   var seen={}, htmlFiles=[];
-  EDIT_QUEUE.forEach(function(it){ var f=effOf(it); if(!seen[f]){ seen[f]=1; htmlFiles.push(f); } });
+  _selList.forEach(function(it){ var f=effOf(it); if(!seen[f]){ seen[f]=1; htmlFiles.push(f); } });
   if(!htmlFiles.length&&mainFile)htmlFiles=[mainFile];
   /* 精简拼装：按文件+需求文本合并同类项（同一种改法只写一遍，选择器并列）；单文件单页省略页面行；
    * 每条附层级链 + 父级代码片段（定位参考，截断，以磁盘文件为准） */
   var groups=[];
-  EDIT_QUEUE.forEach(function(it){
+  _selList.forEach(function(it){
     var t=String(it.text||'').trim(), f=effOf(it);
     var g=null;
     for(var i=0;i<groups.length;i++){ if(groups[i].file===f&&groups[i].text===t){ g=groups[i]; break; } }
@@ -1010,7 +1069,7 @@ function editQueueSubmit(){
     if(!dup) g.sels.push({sel:sel, page:String(it.page||''), anc:it.ancestors, ph:it.parentHtml});
   });
   var showPage=isMulti;
-  if(!showPage){ for(var k=0;k<EDIT_QUEUE.length;k++){ if(String(EDIT_QUEUE[k].page||'')){ showPage=true; break; } } }
+  if(!showPage){ for(var k=0;k<_selList.length;k++){ if(String(_selList[k].page||'')){ showPage=true; break; } } }
   function ancLine(a){
     if(!a||!a.length) return '';
     var arr=[]; for(var i=0;i<a.length&&i<8;i++){ var s=String(a[i]||'').slice(0,128); if(s) arr.push(s); }
@@ -1021,8 +1080,8 @@ function editQueueSubmit(){
     if(s.length>1200) s=s.slice(0,1200)+'\n…（已截断，仅供定位参考）';
     return s;
   }
-  var parts=['改「'+srcFull+'」（共'+EDIT_QUEUE.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
-  var dparts=['改「'+srcFull+'」（共'+EDIT_QUEUE.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
+  var parts=['改「'+srcFull+'」（共'+_selList.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
+  var dparts=['改「'+srcFull+'」（共'+_selList.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
   groups.forEach(function(g,i){
     var chips=g.sels.map(function(s){ return '`'+s.sel+'`'+((showPage&&s.page)?'（页面：'+s.page+'）':''); });
     var head='['+(i+1)+'] 所属文件：'+g.file+' ｜ '+chips.join('、')+'：'+g.text;
@@ -1040,14 +1099,14 @@ function editQueueSubmit(){
   parts.push('','要求：只在所属文件中找，只改清单中的元素；定位不到就直说并跳过，别编、别碰别的文件。');
   var t=parts.join('\n');
   var td=dparts.join('\n'); /* 对话框展示用简版（无层级/代码），发模型仍用完整 t */
-  var count=EDIT_QUEUE.length;
+  var count=_selList.length;
   closeEditDrawer();
-  /* G01: 提交前备份队列并持久化；失败不清空 - 仅成功提交后才清空 */
-  var _editQueueBackup=EDIT_QUEUE.slice();
+  /* G01: 提交前备份选中条目并持久化；失败不清空 - 仅成功提交后才移除已提交项，未选中的始终保留 */
+  var _editQueueBackup=_selList.slice();
   // P1-3 fix: 备份至 edit_queue_backup 供失败回滚
-  try{ localStorage.setItem('edit_queue_backup', JSON.stringify(EDIT_QUEUE)); }catch(e){} // P1-3 fix
+  try{ localStorage.setItem('edit_queue_backup', JSON.stringify(_selList)); }catch(e){} // P1-3 fix
   try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(e){}
-  EDIT_QUEUE=[];
+  EDIT_SUBMITTED_IDS=_selList.map(function(it){ return it&&it.id; }).filter(Boolean);
   persistEditQueue();
   updateEditBadge(); renderEditDrawer();
   EDIT_PENDING_SUBMIT=true;
@@ -1058,7 +1117,6 @@ function editQueueSubmit(){
   if(_detachedRemote){
     (function(){
       var _go=function(){
-        EDIT_QUEUE=[];
         persistEditQueue();
         updateEditBadge(); renderEditDrawer();
         EDIT_PENDING_SUBMIT=true;
@@ -1087,11 +1145,13 @@ function editQueueSubmit(){
     editQueueRollback((e&&e.message||e));
   }
 }
-/* 提交失败回滚（抽取共用：独立窗远端失败与本地异常走同一恢复） */
+/* 提交失败回滚（抽取共用：独立窗远端失败与本地异常走同一恢复；只补回已提交项，未动过的保留） */
 function editQueueRollback(msg){
-  var backup=null; try{ backup=localStorage.getItem('edit_queue_backup'); }catch(_e){}
-  var fb=null; try{ fb=(typeof _editQueueBackup!=='undefined')?_editQueueBackup:null; }catch(_e2){}
-  if(backup){ try{ EDIT_QUEUE=JSON.parse(backup); }catch(_e){ if(fb)EDIT_QUEUE=fb; } } else if(fb){ EDIT_QUEUE=fb; }
+  var backup=null; try{ backup=JSON.parse(localStorage.getItem('edit_queue_backup')||'null'); }catch(_e){ backup=null; }
+  var list=(Array.isArray(backup)&&backup.length)?backup:((typeof _editQueueBackup!=='undefined'&&Array.isArray(_editQueueBackup))?_editQueueBackup:[]);
+  var have={}; try{ EDIT_QUEUE.forEach(function(it){ if(it&&it.id)have[it.id]=1; }); }catch(e){}
+  list.forEach(function(it){ if(it&&it.id&&!have[it.id]){ EDIT_QUEUE.push(it); have[it.id]=1; } });
+  EDIT_SUBMITTED_IDS=[];
   EDIT_PENDING_SUBMIT=false;
   updateEditBadge(); renderEditDrawer();
   try{ localStorage.setItem('edit_queue_v1', JSON.stringify(EDIT_QUEUE)); }catch(_e){}
@@ -1103,6 +1163,7 @@ if(btnSubmitEditEl)btnSubmitEditEl.onclick=function(){ openEditDrawer(); };
 if(editDrawerCloseEl)editDrawerCloseEl.onclick=closeEditDrawer;
 if(editQueueClearEl)editQueueClearEl.onclick=editQueueClear;
 if(editQueueSubmitEl)editQueueSubmitEl.onclick=editQueueSubmit;
+if(editQueueSelAllEl)editQueueSelAllEl.onclick=function(){ try{ editQueueSetAll(!editQueueIsAllSel()); }catch(e){} };
 updateEditBadge();
 
 /* 渲染批量面板：标题 / 批量统一视图 chips / 分别独立视图卡片 */
