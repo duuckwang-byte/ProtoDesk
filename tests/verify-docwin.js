@@ -229,6 +229,22 @@ function testA10b_UnifiedReqTab() {
   console.log('[PASS] A10b');
 }
 
+// ── A10c PC 目录左侧固定列（与文档平级不遮挡） ──
+function testA10c_TocSideColumn() {
+  const tocCount = (htmlSrc.match(/id="docToc"/g) || []).length;
+  assert.strictEqual(tocCount, 1, 'docToc 须唯一，实际' + tocCount);
+  const panelIdx = htmlSrc.indexOf('<div class="docs-panel">');
+  const tocIdx = htmlSrc.indexOf('id="docToc"');
+  const mainIdx = htmlSrc.indexOf('class="docs-main"');
+  assert.ok(panelIdx >= 0 && tocIdx > panelIdx && mainIdx > tocIdx, '目录须在面板内文档列左侧');
+  assert.ok(/body\.kind-pc:not\(\.docwin-mode\) \.docs-panel\s*\{[^}]*flex-direction\s*:\s*row/.test(cssSrc), 'PC 面板须横向排布');
+  assert.ok(/body\.kind-pc:not\(\.docwin-mode\) \.doc-toc\s*\{[^}]*position\s*:\s*static/.test(cssSrc), 'PC 目录须静态列（非悬浮）');
+  assert.ok(/body\.kind-pc:not\(\.docwin-mode\) \.docs-main/.test(cssSrc), 'PC 须有文档主列');
+  const pos = extractFn(coreSrc, 'positionToc');
+  assert.ok(/isTocPinMode/.test(pos), 'positionToc 须识别常驻模式清行内定位');
+  console.log('[PASS] A10c');
+}
+
 // ── A11 切换按钮文案互换 ──
 function testA11_ToggleBtnText() {
   assert.ok(htmlSrc.includes('id="btnDocWinToggle"'), 'HTML 缺 #btnDocWinToggle');
@@ -1458,6 +1474,7 @@ function runAll() {
     ['A9 mirrorPush防环', testA9_MirrorLoopGuard],
     ['A10 双Tab与reqMode切换', testA10_DualTabs],
     ['A10b 合一单壳tab', testA10b_UnifiedReqTab],
+    ['A10c 目录左侧固定列', testA10c_TocSideColumn],
     ['A11 切换按钮文案互换', testA11_ToggleBtnText],
     ['A12 apply源码语义', testA12_ApplySrc],
     ['S1 窗口判别+按钮文案真执行', testS1_IsModeAndBtnRuntime],

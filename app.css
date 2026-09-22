@@ -160,6 +160,10 @@ body:not(.kind-pc) .sb-hotzone{display:flex}
 /* PC 端：功能说明为右侧悬浮弹窗，默认收起，点击“功能说明”按钮展开 */
 body.kind-pc .docs-panel{position:fixed;top:62px;right:16px;bottom:16px;width:66vw;min-width:460px;max-width:1100px;height:auto;z-index:var(--z-panel-float) /* P1-6 fix */;flex:none;transform:translateX(calc(100% + 24px));transition:transform .22s ease}
 body.kind-pc.docs-open .docs-panel{transform:translateX(0)}
+/* PC 主窗：目录为面板内左侧固定列，与文档左右平级（不遮挡）；移动端/独立窗保持悬浮 */
+body.kind-pc:not(.docwin-mode) .docs-panel{flex-direction:row}
+body.kind-pc:not(.docwin-mode) .doc-toc{position:static;flex:none;width:208px;align-self:stretch;min-height:0;max-height:none;overflow-y:auto;border:none;border-right:1px solid var(--line);border-radius:0;box-shadow:none;z-index:auto}
+body.kind-pc:not(.docwin-mode) .docs-main{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 /* 最新需求面板：PC 端右侧悬浮弹窗（与功能说明同风格，独立开关） */
 .req-panel{/* 基础样式已合并至 .docs-panel,.req-panel，此处保留差异扩展位 */}
 body.kind-pc .req-panel{position:fixed;top:62px;right:16px;bottom:16px;width:66vw;min-width:460px;max-width:1100px;height:auto;z-index:var(--z-panel-float) /* P1-6 fix */;flex:none;transform:translateX(calc(100% + 24px));transition:transform .22s ease}

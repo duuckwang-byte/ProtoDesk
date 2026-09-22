@@ -1379,6 +1379,13 @@ if(docTocEl){
 }
 function positionToc(){
  if(!docTocEl)return;
+ try{
+  /* PC 常驻列：清掉历史行内定位（fixed 残留会和 flex 列打架），其余交由 CSS */
+  if(typeof isTocPinMode==='function'&&isTocPinMode()){
+   try{ docTocEl.style.top=''; docTocEl.style.left=''; docTocEl.style.width=''; docTocEl.style.height=''; docTocEl.style.maxHeight=''; }catch(e){}
+   return;
+  }
+ }catch(e){}
  try{ if(typeof isDocWinMode==='function'&&isDocWinMode()){ try{ docTocEl.style.top=''; docTocEl.style.left=''; docTocEl.style.width=''; docTocEl.style.height=''; docTocEl.style.maxHeight=''; }catch(e){} return; } }catch(e){}
  try{ if(typeof isAiWinMode==='function'&&isAiWinMode()) return; }catch(e){}
  var panel=document.querySelector('.docs-panel');
