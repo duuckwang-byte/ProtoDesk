@@ -1339,7 +1339,10 @@ function escHtml(s){return String(s).replace(/\&/g,'&amp;').replace(/</g,'&lt;')
   PC 端：位于功能说明弹窗左侧紧挨、高度与弹窗相同 */
 var docTocEl=$('docToc'),btnTocEl=$('btnToc');
 function tocOpen(){ return !!(docTocEl&&docTocEl.style.display!=='none'); }
-function closeToc(){ if(docTocEl)docTocEl.style.display='none'; }
+function closeToc(){
+ if(docTocEl)docTocEl.style.display='none';
+ try{ if(document.body)document.body.classList.remove('toc-open'); }catch(e){}
+}
 /* 点击目录项定位到对应标题并闪烁两次，随后自动收起目录弹窗（须在 docTocEl 声明后绑定） */
 function flashTitle(el){
  if(!el)return;
@@ -1372,8 +1375,9 @@ if(docTocEl){
        if(b&&b.classList)b.classList.add('active');
       }catch(err2){}
     }
-    /* 独立窗口内常驻侧栏不收起，主窗点击后收起弹窗 */
+    /* 独立窗口内常驻侧栏不收起；PC 常驻列点击定位后保持可见（目录板块常驻要求） */
     try{ if(typeof isDocWinMode==='function'&&isDocWinMode()) return; }catch(err3){}
+    try{ if(typeof isTocPinMode==='function'&&isTocPinMode()) return; }catch(err5){}
     try{ closeToc(); }catch(err4){}
   });
 }
@@ -1415,6 +1419,7 @@ function openToc(){
  buildToc();
  positionToc();
  docTocEl.style.display='block';
+ try{ if(document.body)document.body.classList.add('toc-open'); }catch(e){}
  try{ updateTocSpy(); }catch(e){}
 }
 if(btnTocEl)btnTocEl.onclick=function(){

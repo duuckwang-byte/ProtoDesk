@@ -242,6 +242,11 @@ function testA10c_TocSideColumn() {
   assert.ok(/body\.kind-pc:not\(\.docwin-mode\) \.docs-main/.test(cssSrc), 'PC 须有文档主列');
   const pos = extractFn(coreSrc, 'positionToc');
   assert.ok(/isTocPinMode/.test(pos), 'positionToc 须识别常驻模式清行内定位');
+  // 点击定位后常驻不收 + 开目录弹窗加宽不挤文档
+  const clickSeg = coreSrc.slice(coreSrc.indexOf("docTocEl.addEventListener('click'"), coreSrc.indexOf("docTocEl.addEventListener('click'") + 1500);
+  assert.ok(/isTocPinMode/.test(clickSeg), '目录项点击定位后常驻模式不得 closeToc');
+  assert.ok(/toc-open/.test(coreSrc), '开/关目录须同步 toc-open 标记');
+  assert.ok(/\.toc-open \.docs-panel\s*\{[^}]*calc\(66vw \+ 224px\)/.test(cssSrc), '开目录时弹窗须加宽一列不挤文档');
   console.log('[PASS] A10c');
 }
 
