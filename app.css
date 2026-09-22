@@ -293,7 +293,7 @@ body .sb-foot{padding-bottom:58px}
 .ai-msg.ai{align-self:stretch;background:transparent;border:none;color:var(--ink-2);box-shadow:none;max-width:100%;width:100%;padding:0;border-radius:0;margin:0}
 .ai-msg.ai .ai-msg-body{background:transparent;padding:0}
 .ai-msg.err{align-self:flex-start;background:#FEF2F0;border:1px solid #F3C9C1;color:#B3382A;border-bottom-left-radius:4px}
-.ai-msg-body{flex:1;word-break:break-word}
+.ai-msg-body{flex:1;min-width:0;word-break:break-word}
 .ai-msg.user .ai-msg-body{white-space:pre-wrap}
 .ai-msg.err .ai-msg-body{white-space:pre-wrap}
 .ai-msg-actions{display:flex;justify-content:flex-end;align-items:center;margin-top:4px;line-height:1}
@@ -991,10 +991,10 @@ i[data-ic] svg, svg.ap-icon{ width:16px; height:16px; display:block; vertical-al
 .i5-chip{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; color:var(--ink-2); background:#F3F4F6; border:1px solid var(--line); border-radius:6px; padding:1px 8px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .i5-edit-row,.i5-shell-row{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:13px; line-height:1.6; color:var(--ink-2); min-width:0; }
 .i5-edit-row.i5-stalled,.i5-shell-row.i5-stalled{ background:#FEF3C7; border-radius:6px; padding:2px 6px; }
-.i5-file{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; color:var(--ink-2); min-width:0; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.i5-file{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; color:var(--ink-2); min-width:0; max-width:100%; overflow-wrap:anywhere; word-break:break-all; white-space:normal; }
 .i5-delta{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:700; flex:none; }
 .i5-add{ color:var(--ok); } .i5-del{ color:var(--err); }
-.i5-cmd{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; color:var(--ink-2); background:#F8FAFC; border:1px solid var(--line); border-radius:6px; padding:1px 8px; min-width:0; max-width:70%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.i5-cmd{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; color:var(--ink-2); background:#F8FAFC; border:1px solid var(--line); border-radius:6px; padding:1px 8px; min-width:0; max-width:100%; overflow-wrap:anywhere; word-break:break-all; white-space:normal; }
 .i5-tag-done{ font-size:11px; font-weight:700; color:#027A48; background:var(--ok-soft); border-radius:6px; padding:1px 7px; white-space:nowrap; flex:none; }
 .i5-tag-run{ font-size:11px; font-weight:700; color:var(--pri); background:var(--pri-soft); border-radius:6px; padding:1px 7px; white-space:nowrap; flex:none; }
 .i5-tag-fail{ font-size:11px; font-weight:700; color:var(--err); background:var(--err-soft); border:1px solid var(--err); border-radius:6px; padding:1px 7px; white-space:nowrap; flex:none; cursor:pointer; }
@@ -1269,7 +1269,7 @@ body.docwin-mode .doc-toc{z-index:70; position:static; flex:none; width:220px; m
 /* Shell行 */
 .shell-row{display:flex;align-items:baseline;gap:9px;margin:11px 0;font-size:14.5px;color:var(--ink);min-width:0;flex-wrap:wrap}
 .shell-row b{font-weight:700;flex:none;color:var(--ink)}
-.shell-row code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;color:#374151;background:#F6F8FA;border:1px solid var(--line);border-radius:6px;padding:3px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;min-width:0;flex:1}
+.shell-row code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;color:#374151;background:#F6F8FA;border:1px solid var(--line);border-radius:6px;padding:3px 8px;white-space:normal;overflow-wrap:anywhere;word-break:break-all;max-width:100%;min-width:0;flex:1}
 .tag{flex:none;font-size:11px;font-weight:700;border-radius:99px;padding:1px 9px;line-height:1.6;white-space:nowrap}
 .tag.done{color:#10B981;background:#DCFCE7}
 .tag.fail{color:#DC2626;background:#FEE2E2;cursor:pointer}

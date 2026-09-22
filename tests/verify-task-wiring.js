@@ -38,8 +38,8 @@ function rmDir(p) {
 (function testMapConst() {
   assert.strictEqual(typeof sbSvc.stageSkillsToContext, 'function', '缺 stageSkillsToContext');
   assert.ok(sbSvc.SKILL_KEYWORDS_MAP, '缺 SKILL_KEYWORDS_MAP 导出');
-  assert.strictEqual(sbSvc.SKILL_KEYWORDS_MAP['prototype-ui'], '修改原型/页面/原型图/prototype-ui', 'prototype-ui 关键词写死');
-  assert.strictEqual(sbSvc.SKILL_KEYWORDS_MAP['prd-skill'], '修改文档/功能说明/PRD/需求文档', 'prd-skill 关键词写死');
+  assert.strictEqual(sbSvc.SKILL_KEYWORDS_MAP['prototype-ui'], '修改原型、页面、原型图、prototype-ui', 'prototype-ui 关键词写死');
+  assert.strictEqual(sbSvc.SKILL_KEYWORDS_MAP['prd-skill'], '修改文档、功能说明、PRD、需求文档', 'prd-skill 关键词写死');
   console.log('[PASS] 映射关系写死');
 })();
 
@@ -95,12 +95,12 @@ function rmDir(p) {
   assert.strictEqual(aiSvc.buildSkillMapSection([]), '', '空 staged 回空串');
   assert.strictEqual(aiSvc.buildSkillMapSection(null), '', 'null 回空串');
   const sec = aiSvc.buildSkillMapSection([
-    { id: 'prototype-ui', keywords: '修改原型/页面/原型图/prototype-ui', relPath: '.context/skills/prototype-ui/SKILL.md' },
-    { id: 'prd-skill', keywords: '修改文档/功能说明/PRD/需求文档', relPath: '.context/skills/prd-skill/skill.md' }
+    { id: 'prototype-ui', keywords: '修改原型、页面、原型图、prototype-ui', relPath: '.context/skills/prototype-ui/SKILL.md' },
+    { id: 'prd-skill', keywords: '修改文档、功能说明、PRD、需求文档', relPath: '.context/skills/prd-skill/skill.md' }
   ]);
   assert.ok(sec.includes('【技能映射·按关键词取用】'), '须含标题');
-  assert.ok(sec.includes('修改原型/页面/原型图/prototype-ui'), '须含原型关键词');
-  assert.ok(sec.includes('修改文档/功能说明/PRD/需求文档'), '须含文档关键词');
+  assert.ok(sec.includes('修改原型、页面、原型图、prototype-ui'), '须含原型关键词');
+  assert.ok(sec.includes('修改文档、功能说明、PRD、需求文档'), '须含文档关键词');
   assert.ok(sec.includes('.context/skills/prototype-ui/SKILL.md'), '须含原型相对地址');
   assert.ok(sec.includes('.context/skills/prd-skill/skill.md'), '须含文档相对地址');
   assert.ok(sec.includes('动手前完整读取'), '须含动手前完整读取约束');

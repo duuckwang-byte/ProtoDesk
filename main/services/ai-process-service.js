@@ -314,7 +314,10 @@ function findScopeRefs(text, cwd) {
         const first = String(segs[0] || '').toLowerCase();
         const looksRooted = posixRoots.indexOf(first) >= 0;
         const looksDeep = segs.length >= 3 || (segs.length === 2 && /\.[A-Za-z0-9]{1,8}$/.test(segs[1]));
-        if ((looksRooted || looksDeep) && !isInsideCwd(cand3)) pushHit(cand3);
+        /* 中文 prose 豁免：含 CJK 且非已知根的（如技能映射“修改原型、页面…”、用户“甲/乙/丙”）视为中文枚举而非路径；
+         * 纯 ASCII 深路径（如 /etc/passwd、/a/b/c）照旧判定。win32 产品不考虑 CJK 的 posix 绝对路径。 */
+        const hasCjk = /[一-鿿]/.test(cand3);
+        if ((looksRooted || (looksDeep && !hasCjk)) && !isInsideCwd(cand3)) pushHit(cand3);
       } catch (e) {}
     }
   } catch (e) {}

@@ -1129,8 +1129,8 @@ function diffSandboxRootAgainst(rootDir, allowedDir, beforeMap) {
  * @param {Array<string|Object>} [skills] 可选覆盖：string 为 skill-id 走默认源查找；{id, src|srcDir} 可显式指定源目录/文件
  * @returns {Array<{id:string,keywords:string,relPath:string}>} 已落盘技能清单（源缺失/拷贝失败即跳过该项） */
 const SKILL_KEYWORDS_MAP = {
-  'prototype-ui': '修改原型/页面/原型图/prototype-ui',
-  'prd-skill': '修改文档/功能说明/PRD/需求文档'
+  'prototype-ui': '修改原型、页面、原型图、prototype-ui',
+  'prd-skill': '修改文档、功能说明、PRD、需求文档'
 };
 const SKILL_CONTEXT_SUBDIR = 'skills';
 function resolveSkillMainFile(dir) {

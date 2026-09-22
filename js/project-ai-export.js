@@ -6030,6 +6030,7 @@ if(btnRefreshEl)btnRefreshEl.onclick=function(){
   if(!(window.protoAPI&&window.protoAPI.sandbox)){ showToast('浏览器模式无沙箱数据，无需刷新。'); return; }
   if(!currentProject){ showToast('尚未进入任何项目，请先选择项目。'); return; }
   try{ if(typeof libStatus==='function')libStatus('正在刷新沙箱…'); }catch(e){}
+  try{ showToast('正在刷新沙箱…'); }catch(e){} /* 可见反馈：libStatus 在设置区不易察觉，toast 确保点击有回音 */
   // fix refresh preserve: snapshot subpage+hash before async reload
  var _savedSub = currentSource && currentSource.activeSubFile;
  var _savedHash = '';

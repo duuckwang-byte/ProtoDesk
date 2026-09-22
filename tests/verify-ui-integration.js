@@ -604,6 +604,13 @@ function test6_AnnoLink() {
     assert.ok(lbSrc.includes('>' + b + '<'), `按钮须中文:${b}`);
   }
   assert.ok(/\.lm-target-val\s*\{[^}]*white-space\s*:\s*nowrap/.test(cssContent), '跳转值须不换行');
+  // 工具行防撑破弹窗：长 JSON 参数必须限宽 100% + 允许换行（.i5-cmd/.shell-row code/.i5-file），气泡体须 min-width:0 断掉 flex 最小尺寸传递
+  assert.ok(/\.i5-cmd\s*\{[^}]*max-width\s*:\s*100%/.test(cssContent), '.i5-cmd 须限宽 100%');
+  assert.ok(/\.i5-cmd\s*\{[^}]*overflow-wrap\s*:\s*anywhere/.test(cssContent), '.i5-cmd 须允许换行');
+  assert.ok(!/\.i5-cmd\s*\{[^}]*white-space\s*:\s*nowrap/.test(cssContent), '.i5-cmd 不得 nowrap');
+  assert.ok(/\.shell-row code\s*\{[^}]*overflow-wrap\s*:\s*anywhere/.test(cssContent), '.shell-row code 须允许换行');
+  assert.ok(/\.i5-file\s*\{[^}]*max-width\s*:\s*100%/.test(cssContent), '.i5-file 须限宽 100%');
+  assert.ok(/\.ai-msg-body\s*\{[^}]*min-width\s*:\s*0/.test(cssContent), '.ai-msg-body 须 min-width:0');
   assert.ok(rlm > lbSrc.indexOf('lm-item-top'), '跳转行须在顶部行之后');
   assert.ok(lbSrc.indexOf("' class=\"lm-item-acts\"'") > 0 || lbSrc.indexOf('lm-item-acts">') > 0, '按钮行存在');
   assert.ok(!lbSrc.includes('lm-item-meta') && !lbSrc.includes('所在页面'), '所在页面行须删除');

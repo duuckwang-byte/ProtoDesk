@@ -5,11 +5,16 @@
  * 故工厂与路由同置本层；主窗口 createWindow 保留在 main.js（启动骨架）。
  * 全部实现自 main.js 原文搬迁（共享态经 shared，preload 路径已修正为 ../../）。
  */
-const { BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('path');
 const shared = require('../state');
 const paths = require('../paths');
 const { killProcessTree } = require('../../platform/process');
+
+/* 主 HTML 绝对路径（打包后 cwd 不再是应用目录，相对 loadFile 会找不到文件导致白屏/错乱） */
+function appHtmlPath() {
+  try { return path.join(app.getAppPath(), '原型+文档.html'); } catch (e) { return '原型+文档.html'; }
+}
 
 /**
  * 窗口域 8 通道契约 (docwin:open/close/toggle, aiwin:open/close/toggle, doc:mirror-push/back).
@@ -50,7 +55,7 @@ function createDocWindow(opts) {
     shared.docWin = null;
     try { if (shared.mainWin && !shared.mainWin.isDestroyed()) shared.mainWin.webContents.send('doc:mirror', { kind: 'mode', mode: 'panel' }); } catch (e) {}
   });
-  try { shared.docWin.loadFile('原型+文档.html', { query: _q }); } catch (e) {}
+  try { shared.docWin.loadFile(appHtmlPath(), { query: _q }); } catch (e) {}
   try { shared.docWin.show(); } catch (e) {}
   try { shared.docWin.maximize(); } catch (e) {}
   return shared.docWin;
@@ -87,7 +92,7 @@ function createAiWindow(opts) {
     shared.aiWin = null;
     try { if (shared.mainWin && !shared.mainWin.isDestroyed()) shared.mainWin.webContents.send('doc:mirror', { kind: 'ai-mode', mode: 'ai-panel' }); } catch (e) {}
   });
-  try { shared.aiWin.loadFile('原型+文档.html', { query: _q }); } catch (e) {}
+  try { shared.aiWin.loadFile(appHtmlPath(), { query: _q }); } catch (e) {}
   try { shared.aiWin.show(); } catch (e) {}
   try { shared.aiWin.maximize(); } catch (e) {}
   /* iter25: 关窗任务守卫（纯色，无渐变）：任务在跑时弹窗确认，继续跑则归属转主窗口 */

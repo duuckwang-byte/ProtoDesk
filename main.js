@@ -67,7 +67,7 @@ function createWindow() {
     win.maximize();
     win.show();
   });
-  win.loadFile('原型+文档.html');
+  win.loadFile(path.join(app.getAppPath(), '原型+文档.html'));
 }
 
 /* IPC 薄层装配（通道名与契约不变，实现下沉 services） */

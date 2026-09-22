@@ -64,6 +64,24 @@ try { svc.resetScopeConfirmForTest(); } catch (e) {}
   console.log('[PASS] 沙箱内正斜杠/file 链接零误报');
 })();
 
+// ---- 1c. 快检：中文枚举（含斜杠）不得误报为 posix 路径 ----
+(function testScannerCjkProse() {
+  const cwd = 'C:\\sbx\\proj';
+  assert.deepStrictEqual(
+    svc.findScopeRefs('| 修改原型、页面、原型图、prototype-ui | .context/skills/prototype-ui/SKILL.md |', cwd),
+    [], '技能映射行须零命中'
+  );
+  assert.deepStrictEqual(
+    svc.findScopeRefs('支持甲/乙/丙三种格式，见功能说明/PRD/需求文档', cwd),
+    [], '中文斜杠枚举须零命中'
+  );
+  assert.ok(
+    svc.findScopeRefs('看看 /etc/passwd 里有什么', cwd).length >= 1,
+    '纯 ASCII 深路径照旧命中'
+  );
+  console.log('[PASS] 中文枚举零误报');
+})();
+
 // ---- 2. 快检：越界命中 + 去重 + 上限 ----
 (function testScannerHits() {
   const cwd = 'C:\\sbx\\proj';

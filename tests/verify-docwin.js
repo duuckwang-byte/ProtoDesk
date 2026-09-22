@@ -99,7 +99,7 @@ function testA3_CloseNotifyPanel() {
   assert.ok(/docWin\.on\('closed'/.test(body), '须监听 docWin closed');
   assert.ok(/docWin\s*=\s*null/.test(body), 'closed 须置空 docWin');
   assert.ok(/mainWin.*\.webContents\.send\('doc:mirror',\s*\{\s*kind:\s*'mode',\s*mode:\s*'panel'\s*\}\)/.test(body), 'closed 须通知主窗 mode=panel');
-  assert.ok(/loadFile\('原型\+文档\.html',\s*\{\s*query:\s*_q\s*\}\)/.test(body), '须以 query _q（含docwin=1+project/proto）复用同一 HTML');
+  assert.ok(/loadFile\(appHtmlPath\(\),\s*\{\s*query:\s*_q\s*\}\)/.test(body), '须以 query _q（含docwin=1+project/proto）复用同一 HTML（绝对路径，打包后 cwd 不可靠）');
 }
 
 // ── A4 主窗联带关闭 ──
@@ -111,7 +111,7 @@ function testA4_MainCloseChain() {
   assert.ok(/win\.on\('close'/.test(body), '须监听主窗 close');
   assert.ok(/docWin.*\.close\(\)/.test(body.slice(body.indexOf("win.on('close'"), body.indexOf("win.on('close'") + 400)), '主窗 close 须联带 docWin.close');
   assert.ok(/win\.on\('closed'/.test(body), '须监听主窗 closed');
-  assert.ok(/win\.loadFile\('原型\+文档\.html'\)/.test(body), '主窗须 loadFile 原型+文档.html（无 docwin 参数）');
+  assert.ok(/win\.loadFile\(path\.join\(app\.getAppPath\(\),\s*'原型\+文档\.html'\)\)/.test(body), '主窗须 loadFile 绝对路径（getAppPath，打包后 cwd 不可靠）');
 }
 
 // ── A5 preload docwin/mirror 暴露（open带参透传） ──
@@ -371,7 +371,7 @@ function testB3_DocwinMaximizeOpenToc() {
   const cbody = mainSrc.slice(ci, ci + 2500);
   assert.ok(/function createDocWindow\(\s*opts\s*\)/.test(cbody), 'createDocWindow 须带 opts 参');
   assert.ok(/encodeURIComponent\(_project\)/.test(cbody) && /encodeURIComponent\(_proto\)/.test(cbody), '须透传 project/proto');
-  assert.ok(/loadFile\('原型\+文档\.html',\s*\{\s*query:\s*_q\s*\}\)/.test(cbody), '须以 query _q 复用同一 HTML');
+  assert.ok(/loadFile\(appHtmlPath\(\),\s*\{\s*query:\s*_q\s*\}\)/.test(cbody), '须以 query _q 复用同一 HTML（绝对路径）');
   assert.ok(/docWin\.maximize\(\)/.test(cbody), 'docwin 创建后须 maximize 最大化');
   assert.ok(/docWin\.show\(\)/.test(cbody), 'docwin 创建后须 show');
   const bi = coreSrc.indexOf('function bootDocWinMode(');
@@ -399,7 +399,7 @@ function testC1_AiwinChannels() {
   assert.ok(/encodeURIComponent\(_project\)/.test(cbody) && /encodeURIComponent\(_proto\)/.test(cbody), 'project/proto 须 encodeURIComponent 透传');
   assert.ok(/aiWin\s*=\s*new BrowserWindow/.test(cbody), '须创建独立 aiWin 窗口');
   assert.ok(/title:\s*'AI对话'/.test(cbody), 'aiwin 标题须 AI对话');
-  assert.ok(/loadFile\('原型\+文档\.html',\s*\{\s*query:\s*_q\s*\}\)/.test(cbody), '须以 query _q（含aiwin=1+project/proto）复用同一 HTML');
+  assert.ok(/loadFile\(appHtmlPath\(\),\s*\{\s*query:\s*_q\s*\}\)/.test(cbody), '须以 query _q（含aiwin=1+project/proto）复用同一 HTML（绝对路径）');
   assert.ok(/aiWin\.show\(\)/.test(cbody) && /aiWin\.maximize\(\)/.test(cbody), 'aiwin 须 show+maximize');
   const openAt = mainSrc.indexOf("ipcMain.handle('aiwin:open'");
   assert.ok(openAt >= 0, '缺 aiwin:open');

@@ -89,7 +89,7 @@ ok(expSrc.includes('window.__EXPORT_SOURCES__'), 'EXPORT保留__EXPORT_SOURCES__
 ok(htmlCss.includes('app.css'), 'HTML引用app.css');
 ok(/fetchText\(\s*['"]app\.css['"]\s*\)/.test(expSrc), 'fetchText加载app.css');
 for (const s of [...htmlScripts, ...htmlCss, ...expList]) ok(covered.has(s), `前端覆盖 ${s}`);
-ok(fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8').includes("win.loadFile('原型+文档.html')"), 'main.loadFile原型+文档.html');
+ok(fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8').includes("win.loadFile(path.join(app.getAppPath(), '原型+文档.html'))"), 'main.loadFile须绝对路径（getAppPath，打包后cwd不可靠）');
 ok(covered.has('preload.js') && covered.has('原型+文档.html') && covered.has('toolPrompt.md'), 'preload/HTML/toolPrompt在包内');
 ok(covered.has('design-specs/ui-mobile.md') && covered.has('design-specs/ui-desktop.md'), 'UI规范种子在包内(随包分发到design-specs/)');
 
