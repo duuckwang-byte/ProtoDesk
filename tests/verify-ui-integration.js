@@ -321,6 +321,11 @@ function test2_CssRulesContract() {
   // 菜单蓝字：选中与悬停均为pri文字
   assertLastProp('.sb-item.active', 'color', /var\(--pri\)/, `[CSS契约失败] 侧栏选中须蓝字`);
   assertLastProp('.sb-item:hover', 'color', /var\(--pri\)/, `[CSS契约失败] 侧栏悬停须蓝字`);
+  // 侧栏原型行：收起展开点居最右，无页数徽标
+  assertLastProp('.sb-tree-arrow', 'margin-left', /^auto\b/, `[CSS契约失败] 收起展开点须最右`);
+  assert.ok(!/\.sb-sub-count\s*\{/.test(cssContent), `[CSS契约失败] 页数徽标样式须删除`);
+  assert.ok(!/sb-sub-count/.test(fs.readFileSync(path.join(rootDir, 'js', 'sandbox-core.js'), 'utf8')), `[CSS契约失败] 页数徽标须不再渲染`);
+  assert.ok(/it\.innerHTML = '<span class="nm">'/.test(fs.readFileSync(path.join(rootDir, 'js', 'sandbox-core.js'), 'utf8')), `[CSS契约失败] 行首须为名称（箭头在后）`);
   assertLastProp('.settings-tab-btn.active', 'color', /var\(--pri\)/, `[CSS契约失败] 设置选中须蓝字`);
   // 字重铬600 (抽查.docs-btn/.ai-head，时间线动词类除外；末次定义为准)
   assertLastProp('.docs-btn', 'font-weight', /^600\b/, `[CSS契约失败][Ant] 工具铬 .docs-btn 末次字重须为600`);

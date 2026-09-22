@@ -70,7 +70,20 @@ function collect(lines) {
   })();
   assert.ok(/appendChild\(aiTlAnswerEl\)/.test(m), '定稿须把回答元素搬到末尾');
   assert.ok(/回答归位/.test(m), '须有归位注释');
+  assert.ok(/i5-empty-note/.test(m), '零输出须落占位说明，禁静默空白');
+  assert.ok(/零输出/.test(m), '占位须配 trace 说明');
   console.log('[PASS] 回答归位逻辑存在');
 }
+
+// ---- 4. 发送前加固：组装启动抛错直接报错复位 ----
+(function testPreSendGuard() {
+  const src = fs.readFileSync(path.join(rootDir, 'js', 'project-ai-export.js'), 'utf8');
+  const i = src.indexOf('开启新日志组');
+  assert.ok(i >= 0, '缺发送组装段');
+  const seg = src.slice(i, i + 2500);
+  assert.ok(/发送前加固/.test(seg), '须有加固注释');
+  assert.ok(/aiBubbleError\('发送失败/.test(seg), '抛错须报错气泡');
+  console.log('[PASS] 发送前加固存在');
+})();
 
 console.log('ANSWER_PLACE_PASS: 回答归位与思考分流全绿');

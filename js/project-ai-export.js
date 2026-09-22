@@ -4830,6 +4830,25 @@ function i5AnswerFinalize(ts){
     if(tl&&aiTlAnswerEl){ tl.appendChild(aiTlAnswerEl); }
     if(tl&&(typeof sign!=='undefined')&&sign){ tl.appendChild(sign); }
    }catch(e){}
+   /* 空响应占位：进程 0 退出但零输出时按成功走完，全程无文本/思考/工具调用，
+    * 原逻辑什么都不画（用户只看到空区）。此处落一句说明 + trace，杜绝静默 */
+   try{
+    var _hasAny=!!(String(aiTlAnswerText||'')+String(aiStreamText||'')+String(aiStreamThink||''));
+    var _fcn=0;
+    try{
+     var _fcl=Array.isArray(aiCurFileChanges)?aiCurFileChanges:((typeof window!=='undefined'&&window.aiCurFileChanges)||[]);
+     if(Array.isArray(_fcl))_fcn=_fcl.length;
+    }catch(e){}
+    if(!_hasAny&&tl){
+     var _note=document.createElement('div'); _note.className='answer i5-answer i5-empty-note';
+     var _nb=document.createElement('div'); _nb.className='i5-answer-body';
+     _nb.textContent=(_fcn>0)
+       ?('本次模型无文本回复，但检测到 '+_fcn+' 处文件变更（见上方编辑行）。')
+       :('模型本次没有返回任何内容（进程正常结束但零输出）。可重试一次，若反复出现请检查模型、网络或配额。');
+     _note.appendChild(_nb); tl.appendChild(_note);
+     try{ if(typeof aiAppendTrace==='function') aiAppendTrace({tag:'WARN',level:'warn',text:'本轮零输出：无文本/思考/工具调用，已落占位说明。'}); }catch(e){}
+    }
+   }catch(e){}
   }catch(e){}
 }
 function i5TlSetStalled(on, silentSec){
@@ -5815,13 +5834,20 @@ function aiDoSend(){
     try{ aiAppendMsg((_uDisp||t),'user',_uTs); }catch(e){ try{ aiAppendMsg((_uDisp||t),'user'); }catch(e2){} }
     /* 发送自己的新消息必定位到底部：清滚动暂停并强制到底（读历史时上滑不影响） */
     try{ aiUserScrolledPause=false; if(aiChatView){ aiChatView.scrollTop=aiChatView.scrollHeight; } try{ if(typeof aiUpdateJumpBtn==='function') aiUpdateJumpBtn(); }catch(e){} }catch(e){}
-  /* 开启新日志组：本次任务的思考/操作/删除/输出链全部归入该组 */
-  var g=aiTraceBegin(t.replace(/\s+/g,' ').slice(0,24)+(t.length>24?'…':''));
-  aiStreaming=aiAppendMsg('','ai'); aiStreamText=''; aiStreamThink=''; aiCurFileChanges=[]; try{ window.aiCurFileChanges=[]; }catch(e){}
-  try{ i5TlReset(); aiTlLastPacket=Date.now(); aiTlLastType=''; }catch(e){}
-   aiRenderStream(); /* 时间线保活：确保 .i5-timeline 容器，避免无反馈等待 */
-   try{ var _eng0=(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')); var _ag0=null; try{ _ag0=(curAiConfig&&(curAiConfig.agentId||curAiConfig.mainAgent))||null; }catch(e){} if(typeof i5ShowBooting==='function') i5ShowBooting(_eng0,_ag0); else i5ShowWaiting(); }catch(e){ try{ i5ShowWaiting(); }catch(e2){} } /* T-CLI启动中先行，run_started到后再切等待响应 */
-   aiSetBusy(true); try{ aiTlLastPacket=Date.now(); }catch(e){}
+   /* 开启新日志组：本次任务的思考/操作/删除/输出链全部归入该组 */
+   /* 发送前加固：组装与启动任一步抛错直接报错复位，杜绝用户气泡发出后响应区永久空白 */
+   try{
+   var g=aiTraceBegin(t.replace(/\s+/g,' ').slice(0,24)+(t.length>24?'…':''));
+   aiStreaming=aiAppendMsg('','ai'); aiStreamText=''; aiStreamThink=''; aiCurFileChanges=[]; try{ window.aiCurFileChanges=[]; }catch(e){}
+   try{ i5TlReset(); aiTlLastPacket=Date.now(); aiTlLastType=''; }catch(e){}
+    aiRenderStream(); /* 时间线保活：确保 .i5-timeline 容器，避免无反馈等待 */
+    try{ var _eng0=(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')); var _ag0=null; try{ _ag0=(curAiConfig&&(curAiConfig.agentId||curAiConfig.mainAgent))||null; }catch(e){} if(typeof i5ShowBooting==='function') i5ShowBooting(_eng0,_ag0); else i5ShowWaiting(); }catch(e){ try{ i5ShowWaiting(); }catch(e2){} } /* T-CLI启动中先行，run_started到后再切等待响应 */
+    aiSetBusy(true); try{ aiTlLastPacket=Date.now(); }catch(e){}
+   }catch(_sendErr){
+    try{ aiBubbleError('发送失败：'+((_sendErr&&_sendErr.message)||_sendErr)); }catch(e){ try{ aiSetBusy(false); }catch(e2){} }
+    try{ aiSetBusy(false); }catch(e3){}
+    return;
+   }
    // 401 预检：Iteration6弹窗化后仅弹窗打开时比对表单，否则以当前使用项为准
    try {
      var _maskOpen=false; try{ var _mm=(typeof $==='function')?$('apiProfileMask'):null; _maskOpen=!!(_mm&&_mm.style&&_mm.style.display!=='none'&&_mm.style.display!==''); }catch(e){}

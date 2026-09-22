@@ -450,9 +450,8 @@ function makeSourceItem(s){
   it.className = 'sb-item' + (isMainActive ? ' active' : (isSubActiveAny ? ' active-parent' : '')) + (hasSub ? ' is-parent' : '');
 
   var arrowHtml = hasSub ? '<span class="sb-tree-arrow' + (isFolded ? ' folded' : '') + '">▾</span>' : '';
-  var countBadge = hasSub ? '<span class="sb-sub-count" title="包含 ' + (s.subPages.length + 1) + ' 个页面">' + (s.subPages.length + 1) + 'P</span>' : '';
 
-  it.innerHTML = arrowHtml + '<span class="nm">' + escHtml(s.displayName) + '</span>' + countBadge;
+  it.innerHTML = '<span class="nm">' + escHtml(s.displayName) + '</span>' + arrowHtml;
   it.title = '查看该原型主页（' + (s.kind==='pc'?'PC 端':'移动端') + '）；双击重命名，右键更多操作';
   it.draggable = !(window.__EXPORT_BOOT__===true); // drag fix
   it.dataset.key = groupKeyOf(s); // drag fix
