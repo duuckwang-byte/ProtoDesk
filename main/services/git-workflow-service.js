@@ -19,6 +19,9 @@ const gitAuth = require('../../git/auth');
 const gitConfigStore = require('../../git/config-store');
 const shared = require('../state');
 const paths = require('../paths');
+/* 分支名/路径/日志目录校验单源复用（sandbox-storage-service、platform/process 已导出；此前漏引导致 git:status/fetch-diff 等通道 ReferenceError） */
+const { isValidBranch, isSafeGitRel, isSubPath, logsDir } = require('./sandbox-storage-service');
+const { killProcessTree } = require('../../platform/process');
 
 const GIT_STATUS_MAP={M:'mod',A:'add',D:'del',R:'mod',C:'mod',U:'add',T:'mod','?':'add'};
 function gitHandledPath(handledSet, relPath){ if(!relPath||handledSet.has(relPath)) return true; handledSet.add(relPath); return false; }

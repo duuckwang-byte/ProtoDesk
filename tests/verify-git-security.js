@@ -214,7 +214,25 @@ async function main() {
     assert.ok(/\.bak-/.test(m), '应含.bak-隔离改名');
   });
 
-  // ── F. force无令牌/无确认不执行 ──
+  // ── G. 跨文件引用完整（git:status/fetch-diff曾报isValidBranch未定义） ──
+  await ok('G01 共享函数有定义来源', () => {
+    const s = fs.readFileSync(path.join(ROOT, 'main', 'services', 'git-workflow-service.js'), 'utf8');
+    for (const n of ['isValidBranch', 'isSafeGitRel', 'isSubPath', 'logsDir', 'killProcessTree']) {
+      assert.ok(s.includes(n), '须引用' + n);
+    }
+    assert.ok(/require\(['"]\.\/sandbox-storage-service['"]\)/.test(s), '须从存储服务引入');
+    assert.ok(/require\(['"]\.\.\/\.\.\/platform\/process['"]\)/.test(s), '须从platform引入killProcessTree');
+    const store = fs.readFileSync(path.join(ROOT, 'main', 'services', 'sandbox-storage-service.js'), 'utf8');
+    for (const n of ['isValidBranch', 'isSafeGitRel', 'isSubPath', 'logsDir']) {
+      assert.ok(new RegExp('function ' + n + '\\(').test(store), '存储服务须定义' + n);
+    }
+  });
+  await ok('G02 非法分支名在spawn前拒绝', async () => {
+    const gw = require('../main/services/git-workflow-service');
+    assert.strictEqual(typeof gw.gitStatusImpl, 'function', '须暴露gitStatusImpl');
+    const r = await gw.gitStatusImpl(null, { project: '', branch: 'bad branch!!' });
+    assert.ok(r && r.ok === false && r.error === '非法分支名', `非法分支须拒收，实际:${JSON.stringify(r)}`);
+  });  // ── F. force无令牌/无确认不执行 ──
   await ok('F01 后端仅force显式才加--force', () => {
     const m = readMainAggregated();
     assert.ok(/if\s*\(force\)\s*pushArgs\.push\('--force'\)/.test(m), '应为 if (force) pushArgs.push(--force)');
