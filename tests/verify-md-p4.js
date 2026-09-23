@@ -231,6 +231,9 @@ function test9_SearchKeys() {
   assert.ok(cssSrc.includes('.doc-search-hit-active'), 'CSS须有.doc-search-hit-active');
   assert.ok(cssSrc.includes('.doc-search-hit'), 'CSS须有.doc-search-hit');
   assert.ok(cssSrc.includes('.doc-search-box'), 'CSS须有.doc-search-box搜索条');
+  assert.ok(coreSrc.includes('阅读模式全局唤起'), '阅读模式焦点在外须同样唤起检索');
+  assert.ok(coreSrc.includes('docs-open'), '全局唤起须以docs-open判定面板打开');
+  assert.ok(coreSrc.includes('inCodeEdit){ return; }'), '代码抽屉须让路自有搜索');
 }
 
 // 断言10：导出preload仅长图/PDF（无快照历史）

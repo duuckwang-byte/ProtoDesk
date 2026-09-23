@@ -86,6 +86,49 @@ const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
   console.log('[PASS] 条目展示');
 })();
 
+// ---- 7. 拾取标签输入条 + 面板增宽 + 批量合单条 ----
+(function testPickFab() {
+  const ee2 = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
+  const html2 = fs.readFileSync(path.join(rootDir, '原型+文档.html'), 'utf8');
+  const css2 = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
+  const lb2 = fs.readFileSync(path.join(rootDir, 'js', 'link-bind.js'), 'utf8');
+  assert.ok(html2.includes('id="pickBar"') && html2.includes('id="pickBarTags"') && html2.includes('id="pickBarInput"') && html2.includes('id="pickBarSend"'), '缺底部标签输入条（标签区+输入框+发送）');
+  assert.ok(html2.includes('id="pickBarAnno"') && html2.includes('id="pickBarLink"') && html2.includes('id="pickBarPop"'), '缺标注/交互按钮与上方悬浮窗');
+  assert.ok(!html2.includes('id="pickFab"'), '旧悬浮球须移除');
+  assert.ok(/showFab/.test(ee2) && /hideFab/.test(ee2), '缺显隐函数');
+  assert.ok(/renderPickBar/.test(ee2) && /removeById/.test(ee2), '标签须可渲染可删');
+  assert.ok(/\.pick-bar-tag\s*\{[^}]*background\s*:\s*#F3F5F7/i.test(css2), '标签背景须浅灰');
+  assert.ok(/pick-bar-tag-no/.test(ee2) && /\.pick-bar-tag-no\s*\{[^}]*font-weight\s*:\s*700/.test(css2), '序号须加粗');
+  assert.ok(/createTextNode\(' '\)/.test(ee2), '序号与文字须空一格');
+  assert.ok(/ctrlPickBuildParts\(CTRL_PICK\.selected\)/.test(ee2), '发送与批量提交须共用部件拼装');
+  assert.ok(/pickBarSendGo[\s\S]{0,3000}EDIT_QUEUE\.push/.test(ee2), '发送须直达待提交列表');
+  assert.ok(!/pickBarSendGo\(\)[\s\S]{0,400}openPanel\(\)/.test(ee2), '发送不得再进中间面板');
+  assert.ok(/\.pick-bar\s*\{[^}]*width\s*:\s*560px/.test(css2), '输入条须固定宽度');
+  assert.ok(/\.pick-bar-main[\s\S]*?flex-direction\s*:\s*column/.test(css2), '须上标签下输入纵向布局');
+  assert.ok(/\.pick-bar-pop\s*\{[^}]*bottom\s*:\s*calc\(100% \+ 8px\)/.test(css2), '悬浮窗须在按钮上方');
+  assert.ok(html2.includes('data-ic="target"') && html2.includes('data-ic="link"'), '标注/交互须用点位/链接图标');
+  assert.ok(/pick-bar-iconbtn/.test(html2) && !/pickBarAnno" class="pick-bar-btn/.test(html2), '按钮须图标化无文字');
+  assert.ok(/\.pick-bar-iconbtn:hover \.nm/.test(css2), '悬浮须展开按钮名字');
+  assert.ok(/\.pick-bar-side\s*\{[^}]*flex-direction\s*:\s*row/.test(css2), '按钮须横排在发送左侧');
+  assert.ok(/<textarea[^>]*id="pickBarInput"[^>]*rows="1"/.test(html2), '需求输入须多行textarea');
+  assert.ok(/function pickBarInputAuto\(\)/.test(ee2) && /function autoEditTa\(/.test(ee2), '两处输入须按内容自增高');
+  assert.ok(/\.pick-bar-input\s*\{[^}]*max-height\s*:\s*120px/.test(css2), '输入条超量须内滚封顶');
+  assert.ok(/\.ed-item \.ei-editta\s*\{[^}]*max-height\s*:\s*none/.test(css2), '待提交编辑框须不限制高度');
+  assert.ok(/ev\.ctrlKey\|\|ev\.metaKey\)\)\{ ev\.preventDefault\(\); pickBarSendGo/.test(ee2), '输入条须Ctrl+回车发送（回车换行）');
+  assert.ok(/pickBarTogglePop\(/g.test(ee2) && /pickBarOpenLink\(\)/.test(ee2), '须有悬浮窗切换/交互');
+  assert.ok(/function pickBarAnnoGo\(\)/.test(ee2) && !/function pickBarOpenAnno\(\)/.test(ee2), '标注须直存输入框文字（无弹窗）');
+  assert.ok(/annoContentInput/.test(ee2.match(/function pickBarAnnoGo\(\)[\s\S]*?\n\}/)[0]) && /saveCurrentAnno\(\)/.test(ee2), '直存须经标注模块保存');
+  assert.ok(/CTRL_PICK\.clear\(\)/.test(ee2.match(/function pickBarAnnoGo\(\)[\s\S]*?\n\}/)[0]), '直存后须收条清选中');
+  assert.ok(/__pickBarEscBound/.test(ee2) && /pickBarEscArmed/.test(ee2) && /pickBarEscTip\(/.test(ee2), '须有Esc两段退出');
+  assert.ok(/再次按 Esc 退出输入条？/.test(ee2), '首次Esc须小吐司确认');
+  assert.ok(/\.pick-bar-esc-tip/.test(css2), '须有输入条下方小吐司样式');
+  assert.ok(/function quickBind\(/.test(lb2) && /quickBind: quickBind/.test(lb2) && /removeJumpBinding: removeJumpBinding/.test(lb2), 'LinkBind须暴露快绑/解绑');
+  assert.ok(/#multiEditDrawer\s*\{[^}]*width\s*:\s*760px/.test(css2), '需求弹窗须增宽一倍到760px');
+  assert.ok(/batchParts/.test(ee2), '批量须合并部件');
+  assert.ok(/批量修改（/.test(ee2), '合并条目须标批量个数');
+  console.log('[PASS] 标签输入条与批量合单');
+})();
+
 // ---- 6. 条目标题字号 11px ----
 (function testItemTitleSize() {
   const css2 = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');

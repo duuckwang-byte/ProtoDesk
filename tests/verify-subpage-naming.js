@@ -58,6 +58,11 @@ function test5_CondenseSubmit() {
   assert.ok(/层级：/.test(code), '缺层级链');
   assert.ok(/上级代码/.test(code), '缺父级代码片段');
   assert.ok(/定位不到就直说/.test(code), '缺防臆造约束');
+  // 稳定ID精简映射：有ID条目只发ID+短文案（不附层级/父级），无ID回退现状
+  assert.ok(/function prIdOfSel\(/.test(ee), '缺pr-id提取函数');
+  assert.ok(/prIdOfSel\(s\.sel\)/.test(code), '拼装须按条目分支精简/回退');
+  assert.ok(/不附层级\/父级代码/.test(code), '精简分支须注明不附层级/父级');
+  assert.ok(/label:String\(it\.label/.test(code), '拼装须携带短文案label供精简行');
   // 入列携带：live 计算 + remote 透传
   assert.ok(/ancestors:\(typeof editAncestorChain/.test(ee), 'toggle入列缺层级');
   assert.ok(/ancestors:\(info&&Array\.isArray\(info\.ancestors\)\)/.test(ee), 'remote入列缺层级透传');

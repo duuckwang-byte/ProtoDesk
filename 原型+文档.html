@@ -176,6 +176,18 @@
 <!-- ═══════ Ctrl 即时拾取：覆盖层 + 提示条 + 多选批量面板 ═══════ -->
 <div id="selectionOverlay"></div>
 <div class="ctrl-pick-tip" id="ctrlPickTip" role="status">按住 Ctrl 拾取元素，支持连续点击多选</div>
+<div id="pickBar" class="pick-bar" style="display:none">
+  <div class="pick-bar-main">
+    <div class="pick-bar-tags" id="pickBarTags"></div>
+    <textarea class="pick-bar-input" id="pickBarInput" rows="1" placeholder="描述统一修改需求…" spellcheck="false" autocomplete="off"></textarea>
+  </div>
+  <div class="pick-bar-side">
+    <button id="pickBarAnno" class="pick-bar-iconbtn" type="button" title="标注" style="display:none"><i data-ic="target" data-ic-size="15"></i><span class="nm">标注</span></button>
+    <button id="pickBarLink" class="pick-bar-iconbtn" type="button" title="交互" style="display:none"><i data-ic="link" data-ic-size="15"></i><span class="nm">交互</span></button>
+    <button id="pickBarSend" class="pick-bar-send" type="button" title="直接加入待提交列表">发送</button>
+  </div>
+  <div id="pickBarPop" class="pick-bar-pop" style="display:none"></div>
+</div>
 
 <div id="multiEditMask" class="drawer-mask" style="display:none"></div>
 <aside id="multiEditDrawer" class="side-drawer wide" aria-hidden="true">

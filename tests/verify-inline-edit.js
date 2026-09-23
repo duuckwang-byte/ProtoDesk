@@ -100,9 +100,9 @@ function testA3_DblclickBindSrc() {
   assert.ok(!editSrc.includes("'dblclick'") && !editSrc.includes('"dblclick"'),
     '原型就地改须无dblclick绑定（本批已删除dblclick挂载，Ctrl+Shift+单击为唯一入口）');
   assert.ok(!editSrc.includes('__inlineDblAttached'), '不得残留 __inlineDblAttached 旧防重标志');
-  // editDblClick保留供Ctrl+Shift委托（同入口定位/保存/转队列一致）
-  assert.ok(editSrc.includes('function editDblClick('), '须保留 editDblClick 实现供Ctrl+Shift委托');
-  assert.ok(editSrc.includes('editDblClick(_proxy)'), 'Ctrl+Shift须仍委托 editDblClick(_proxy)（同入口）');
+  // editDblClick保留供纯双击（文字浮层）；Ctrl+Shift 改走代码编辑抽屉
+  assert.ok(editSrc.includes('function editDblClick('), '须保留 editDblClick 实现供纯双击');
+  assert.ok(editSrc.includes('codeEditOpenFromLive(_csT)'), 'Ctrl+Shift须委托 codeEditOpenFromLive（代码编辑抽屉）');
   // window capture抢占 + document保留兼容
   assert.ok(editSrc.includes("_fw.addEventListener('click', editClick, true)"),
     '须有 window capture抢占：_fw.addEventListener(click,editClick,true)（先于document，与原型库注册顺序无关）');
@@ -460,17 +460,13 @@ function testS3_DblclickDispatch() {
   assert.strictEqual(ev._pd, true, '合法进入须 preventDefault');
 }
 
-// ── A13 Ctrl+Shift+click委托同一入口（源码级：editDblClick仅作委托入口，原dblclick绑定已删） ──
+// ── A13 Ctrl+Shift+click委托代码编辑抽屉（源码级：editDblClick仅供纯双击） ──
 function testA13_CtrlShiftClickDelegatesSrc() {
   const body = extractFn(editSrc, 'editClick');
   assert.ok(body, '须能提取 editClick');
   assert.ok(body.includes('(ev.ctrlKey||ev.metaKey)&&ev.shiftKey'), 'editClick须有 Ctrl+Shift分支 (ctrlKey||metaKey)&&shiftKey');
-  assert.ok(body.includes('editDblClick(_proxy)'), 'Ctrl+Shift+click须复用editDblClick同一入口（定位/保存/转队列一致，原dblclick绑定已删但函数保留）');
-  assert.ok(body.includes('ctrlKey:false') && body.includes('metaKey:false') && body.includes('shiftKey:false'),
-    '委托须剥修饰键（proxy ctrl/meta/shift均为false，绕过editDblClick Ctrl穿透）');
-  assert.ok(body.includes('clientX:(ev&&ev.clientX)||0') && body.includes('clientY:(ev&&ev.clientY)||0') && body.includes('detail:(ev&&ev.detail)||0'),
-    '委托代理须补全 clientX/clientY/detail（上一批新增，定位与事件语义完整）');
-  assert.ok(body.includes('_csT') && body.includes("typeof editDblClick==='function'"), '委托须取ev.target为_csT并判editDblClick可用');
+  assert.ok(body.includes('codeEditOpenFromLive(_csT)'), 'Ctrl+Shift+click须走代码编辑抽屉（codeEditOpenFromLive）');
+  assert.ok(body.includes('_csT') && body.includes("typeof codeEditOpenFromLive==='function'"), '委托须取ev.target为_csT并判函数可用');
   assert.ok(body.includes('CTRL_PICK.holding=false') && body.includes('CTRL_PICK.exit()'),
     '委托前须清holding并exit（不残留准星/悬停，不进拾取）');
   assert.ok(body.includes('ev.preventDefault(); ev.stopPropagation();'), 'Ctrl+Shift分支须preventDefault+stopPropagation');
@@ -507,14 +503,11 @@ function testA14_CtrlShiftSuppressAndCompatSrc() {
   assert.ok(editSrc.includes('function editDblClick('), 'editDblClick实现须保留（供Ctrl+Shift委托，原dblclick绑定已删）');
 }
 
-// ── S4 Ctrl+Shift+click运行时分发（vm真执行 editClick→editDblClick同一浮层，纯文本语义） ──
+// ── S4 Ctrl+Shift+click运行时分发（vm真执行 editClick→codeEditOpenFromLive） ──
 function testS4_CtrlShiftClickDispatch() {
-  const srcHas = extractFn(editSrc, 'inlineEditHasDirectText');
-  const srcIsChrome = extractFn(editSrc, 'inlineEditIsChrome');
-  const srcIsBusy = extractFn(editSrc, 'inlineEditIsAiBusy');
-  const srcDbl = extractFn(editSrc, 'editDblClick');
   const srcClick = extractFn(editSrc, 'editClick');
-  assert.ok(srcHas && srcIsChrome && srcIsBusy && srcDbl && srcClick, '须能提取五函数（HasDirectText/IsChrome/IsAiBusy/editDblClick/editClick）');
+  const srcDedup = extractFn(editSrc, 'editEvtDedup');
+  assert.ok(srcClick && srcDedup, '须能提取 editClick/editEvtDedup');
   const sb = {
     console, JSON, RegExp, String,
     CTRL_PICK: {
@@ -522,88 +515,50 @@ function testS4_CtrlShiftClickDispatch() {
       exit() { this.exitN++; }, enter() { this.enterN++; }, toggle() { this.toggleN++; },
     },
     INLINE_EDIT: { open: false },
-    __busy: false, __opened: null, __toasts: [],
-    inlineEditToast(m) { sb.__toasts.push(String(m)); },
-    inlineEditOpen(el) { sb.__opened = el; sb.INLINE_EDIT.open = true; },
+    __codeTarget: null,
+    codeEditOpenFromLive(t) { sb.__codeTarget = t; },
+    showToast() {}, libStatus() {},
   };
   sb.window = sb; sb.LinkBind = null;
   vm.createContext(sb);
-  vm.runInContext(srcHas + '\n' + srcIsChrome + '\n' + srcIsBusy + '\n' + srcDbl + '\n' + srcClick, sb, { filename: 'inline-edit-ctrlshift' });
+  vm.runInContext('var EDIT_HOVER_EL=null;\nvar EDIT_LOCKED_EL=null;\nvar _editEvtSeen={type:\'\',stamp:-1,target:null};\n'
+    + srcDedup + '\n' + srcClick, sb, { filename: 'inline-edit-ctrlshift' });
+  sb.editClick = vm.runInContext('editClick', sb);
   const mkEv = (tag, over) => Object.assign({
     ctrlKey: false, metaKey: false, shiftKey: false, altKey: false,
     target: mkChromeEl({ tagName: tag }),
     preventDefault() { this._pd = true; }, stopPropagation() { this._sp = true; },
   }, over || {});
-  sb.editDblClick = vm.runInContext('editDblClick', sb);
-  sb.editClick = vm.runInContext('editClick', sb);
-  const reset = () => { sb.__opened = null; sb.__toasts.length = 0; sb.INLINE_EDIT.open = false; sb.CTRL_PICK.holding = false; sb.CTRL_PICK.hovering = null; sb.CTRL_PICK.exitN = 0; sb.CTRL_PICK.enterN = 0; sb.CTRL_PICK.toggleN = 0; };
-  // 1) 同一浮层：Ctrl+Shift+click(P有文本)须open且不进拾取（剥键证明：直接dbl+Ctrl不进，但经click+CtrlShift进）
+  const reset = () => { sb.__codeTarget = null; sb.CTRL_PICK.holding = false; sb.CTRL_PICK.toggleN = 0; sb.CTRL_PICK.exitN = 0; };
+  // 1) Ctrl+Shift+click(P) → 代码编辑抽屉，不进拾取
   reset();
   const pEl = mkChromeEl({ tagName: 'P' });
-  const evDirect = mkEv('P', { ctrlKey: true }); evDirect.target = pEl;
-  sb.editDblClick(evDirect);
-  assert.strictEqual(sb.__opened, null, '直接dblclick+Ctrl须穿透不open（对照组）');
   const evCs = mkEv('P', { ctrlKey: true, shiftKey: true }); evCs.target = pEl;
   sb.editClick(evCs);
-  assert.strictEqual(sb.__opened, pEl, 'Ctrl+Shift+click(P有文本)须进同一浮层（与dblclick同open）');
+  assert.strictEqual(sb.__codeTarget, pEl, 'Ctrl+Shift+click须调 codeEditOpenFromLive');
   assert.strictEqual(evCs._pd, true, 'Ctrl+Shift须preventDefault');
   assert.strictEqual(sb.CTRL_PICK.toggleN, 0, 'Ctrl+Shift不得进CTRL_PICK.toggle（不进拾取）');
-  // 1b) Cmd+Shift同样进浮层
+  // 2) Cmd+Shift 同样进抽屉
   reset();
   const pMeta = mkChromeEl({ tagName: 'P' });
   const evMeta = mkEv('P', { metaKey: true, shiftKey: true }); evMeta.target = pMeta;
   sb.editClick(evMeta);
-  assert.strictEqual(sb.__opened, pMeta, 'Cmd+Shift+click(P)须同样进浮层');
+  assert.strictEqual(sb.__codeTarget, pMeta, 'Cmd+Shift+click须同样进抽屉');
   assert.strictEqual(sb.CTRL_PICK.toggleN, 0, 'Cmd+Shift不得进拾取');
-  // 2) holding须被清除并exit，仍进浮层
+  // 3) holding须被清除并exit
   reset(); sb.CTRL_PICK.holding = true;
   const pHold = mkChromeEl({ tagName: 'P' });
   const evHold = mkEv('P', { ctrlKey: true, shiftKey: true }); evHold.target = pHold;
   sb.editClick(evHold);
   assert.strictEqual(sb.CTRL_PICK.holding, false, 'Ctrl+Shift须清holding');
   assert.strictEqual(sb.CTRL_PICK.exitN, 1, '须调CTRL_PICK.exit清准星');
-  assert.strictEqual(sb.__opened, pHold, '清holding后仍须进浮层');
-  // 3) 无直接文字同样走dbl语义：toast无可编辑、不open、不进拾取
-  reset();
-  const noText = mkChromeEl({ tagName: 'DIV', childNodes: [], textContent: '' });
-  const evDiv = mkEv('DIV', { ctrlKey: true, shiftKey: true }); evDiv.target = noText;
-  sb.editClick(evDiv);
-  assert.strictEqual(sb.__opened, null, '无直接文字经Ctrl+Shift不得open');
-  assert.ok(sb.__toasts.some(t => t.includes('该元素无可编辑文字')), '无直接文字须提示无可编辑（与dblclick同语义）');
-  assert.ok(!sb.__toasts.some(t => t.includes('暂不支持')), '不得再提示旧暂不支持文案');
-  assert.strictEqual(sb.CTRL_PICK.toggleN, 0, '无文字也不得进拾取');
-  // 3b) 仅子元素文字同样无可编辑（不展平）
-  reset();
-  const spanOnly = mkChromeEl({ tagName: 'DIV', childNodes: [mkSpanEl('hi')], textContent: 'hi' });
-  const evSpan = mkEv('DIV', { ctrlKey: true, shiftKey: true }); evSpan.target = spanOnly;
-  sb.editClick(evSpan);
-  assert.strictEqual(sb.__opened, null, '仅子元素文字经Ctrl+Shift不得open');
-  assert.ok(sb.__toasts.some(t => t.includes('该元素无可编辑文字')), '仅子元素文字同样提示无可编辑');
-  // 3c) DIV有直接文字经Ctrl+Shift须open（不限标签证明）
-  reset();
-  const divEl = mkChromeEl({ tagName: 'DIV' });
-  const evDivOk = mkEv('DIV', { ctrlKey: true, shiftKey: true }); evDivOk.target = divEl;
-  sb.editClick(evDivOk);
-  assert.strictEqual(sb.__opened, divEl, 'DIV有直接文字经Ctrl+Shift须同样进浮层（不限标签）');
-  assert.strictEqual(sb.CTRL_PICK.toggleN, 0, 'DIV进浮层也不得进拾取');
-  // 4) 浮层已开再按无效：不重开、不拾取
-  reset(); sb.INLINE_EDIT.open = true;
-  const evBusy = mkEv('P', { ctrlKey: true, shiftKey: true }); evBusy.target = mkChromeEl({ tagName: 'P' });
-  sb.editClick(evBusy);
-  assert.strictEqual(sb.__opened, null, '已开浮层时Ctrl+Shift不得重开');
-  assert.strictEqual(sb.CTRL_PICK.toggleN, 0, '已开时不得进拾取');
-  sb.INLINE_EDIT.open = false;
-  // 5) 原行为不变：纯Ctrl+单击仍走拾取不进浮层；纯dblclick有文本仍进浮层
+  assert.strictEqual(sb.__codeTarget, pHold, '清holding后仍须进抽屉');
+  // 4) 原行为不变：纯Ctrl+单击仍走拾取不进抽屉
   reset();
   const evCtrl = mkEv('P', { ctrlKey: true, shiftKey: false }); evCtrl.target = mkChromeEl({ tagName: 'P' });
   sb.editClick(evCtrl);
   assert.strictEqual(sb.CTRL_PICK.toggleN, 1, '原Ctrl+单击须仍走CTRL_PICK.toggle（不动）');
-  assert.strictEqual(sb.__opened, null, '原Ctrl+单击不得进就地改浮层');
-  reset();
-  const pDbl = mkChromeEl({ tagName: 'P' });
-  const evDbl = mkEv('P'); evDbl.target = pDbl;
-  sb.editDblClick(evDbl);
-  assert.strictEqual(sb.__opened, pDbl, '原dblclick(P有文本)须仍进浮层（不动）');
+  assert.strictEqual(sb.__codeTarget, null, '原Ctrl+单击不得进抽屉');
 }
 
 // ── S5 editHover抑制运行时（vm真执行：按住不启动高亮） ──
@@ -806,22 +761,20 @@ function testA15_ClampSrc() {
   assert.ok(editSrc.includes("window.addEventListener('resize'") && editSrc.includes('inlineEditPosition'), 'window resize须重定位');
 }
 
-// ── A16 代理补全字段 + 失败toast（源码级：上一批代理补clientX/Y/detail，open失败toast经inlineEditToast） ──
+// ── A16 代码编辑委托 + 失败toast（源码级：Ctrl+Shift 走 codeEditOpenFromLive，失败toast链不变） ──
 function testA16_ProxyToastSrc() {
   const clickBody = extractFn(editSrc, 'editClick');
   assert.ok(clickBody, '须能提取 editClick');
-  // 代理补全字段（供定位/后续扩展，剥修饰键后仍保留坐标与detail）
-  assert.ok(clickBody.includes('clientX:(ev&&ev.clientX)||0'), '代理须补 clientX');
-  assert.ok(clickBody.includes('clientY:(ev&&ev.clientY)||0'), '代理须补 clientY');
-  assert.ok(clickBody.includes('detail:(ev&&ev.detail)||0'), '代理须补 detail');
-  assert.ok(clickBody.includes('altKey:false'), '代理须含 altKey:false（剥修饰键完整）');
+  // 新委托：Ctrl+Shift 直接调 codeEditOpenFromLive（代码编辑抽屉），不再拼代理对象
+  assert.ok(clickBody.includes('codeEditOpenFromLive(_csT)'), 'Ctrl+Shift须委托 codeEditOpenFromLive');
+  assert.ok(clickBody.includes("typeof codeEditOpenFromLive==='function'"), '委托前须判函数可用');
   // 失败toast链：showToast->libStatus->alert
   const toastBody = extractFn(editSrc, 'inlineEditToast');
   assert.ok(toastBody, '须有 inlineEditToast');
   assert.ok(toastBody.includes("typeof showToast==='function'") && toastBody.includes("typeof libStatus==='function'") && toastBody.includes('alert(msg)'),
     '失败toast须 showToast->libStatus->alert 三段回退');
   const openBody = extractFn(editSrc, 'inlineEditOpen');
-  assert.ok(openBody, '须能提取 inlineEditOpen');
+  assert.ok(openBody, '须能提取 inlineEditOpen（纯双击链路保留）');
   assert.ok(openBody.includes('未能定位目标元素，请重试或用Ctrl+拾取走AI队列。'), 'open失败须toast未能定位');
   assert.ok(openBody.includes('读取元素位置失败，请用Ctrl+拾取走AI队列。'), 'open失败须toast读取位置失败');
   assert.ok(openBody.includes('就地改浮层打开失败，请用Ctrl+拾取走AI队列。'), 'open失败须toast浮层打开失败');
@@ -848,12 +801,12 @@ function runAll() {
     ['A13 CtrlShift委托同入口', testA13_CtrlShiftClickDelegatesSrc],
     ['A14 抑制高亮互斥与兼容', testA14_CtrlShiftSuppressAndCompatSrc],
     ['A15 浮层视口钳制', testA15_ClampSrc],
-    ['A16 代理字段+失败toast', testA16_ProxyToastSrc],
+    ['A16 代码编辑委托+失败toast', testA16_ProxyToastSrc],
     ['S1 IsTextTag不限标签', testS1_TextTagRuntime],
     ['S1b HasDirectText真值表', testS1b_HasDirectTextRuntime],
     ['S2 IsChrome真值表', testS2_ChromeRuntime],
     ['S3 无文字拒绝+不限标签分发', testS3_DblclickDispatch],
-    ['S4 CtrlShift纯文本分发', testS4_CtrlShiftClickDispatch],
+    ['S4 CtrlShift进代码编辑抽屉', testS4_CtrlShiftClickDispatch],
     ['S5 Hover抑制语义', testS5_CtrlShiftHoverSuppress],
     ['S6 GetDirectText分段拼接（br占位）', testS6_GetDirectTextRuntime],
     ['S7 ApplyDirectText分段回填（并末段/保留）', testS7_ApplyDirectTextRuntime],

@@ -55,15 +55,17 @@ function testA1_PlidSchema() {
   assert.ok(save.includes("links[i].ts = Date.now();"), '入库须刷新 ts');
 }
 
-// ── A2 建绑定恰1门槛（选择器在源文件恰好命中1个否则拒绝） ──
+// ── A2 建绑定恰1门槛（选择器在源文件恰好命中1个；多命中走稳定ID升级/后台收敛，不再一律拒绝） ──
 function testA2_ExactlyOne() {
   const save = extractFn(src, 'saveJumpBinding');
   assert.ok(save, '须能提取 saveJumpBinding');
   assert.ok(save.includes("new DOMParser().parseFromString(srcHtml, 'text/html')") || save.includes('new DOMParser().parseFromString(srcHtml'), '建绑定须用 DOMParser 解析源文件');
   assert.ok(save.includes('pdoc.querySelectorAll(sel)'), '须用选择器在源文件定位 pdoc.querySelectorAll(sel)');
   assert.ok(save.includes('if (n !== 1)'), '须断言命中恰好1个（n!==1）');
-  assert.ok(save.includes('需恰好1个') && save.includes('已拒绝绑定'), '恰1失败提示须写明“需恰好1个”+“已拒绝绑定”');
-  assert.ok(save.includes('该元素在源文件中定位命中'), '拒绝文案须带命中数（定位命中+n+个）');
+  assert.ok(save.includes('lbUpgradeToPrId'), '多命中须走稳定ID升级（不对用户直接拒绝）');
+  assert.ok(save.includes('prIdBackfillFileInBackground'), '升级失败须后台补ID收敛');
+  assert.ok(save.includes('已拒绝绑定'), '稳定ID重复等真失败仍须拒绝绑定');
+  assert.ok(save.includes('该元素在源文件中定位命中'), '拒绝/收敛文案须带命中数（定位命中+n+个）');
   // 拒绝后直接 return，不得继续写盘/入库：排序断言
   const iReject = idx(save, 'if (n !== 1)');
   const iWrite = idx(save, 'sb.write({ dir: dir, file: file, content: out })');
@@ -75,14 +77,15 @@ function testA2_ExactlyOne() {
   assert.ok(save.includes('选择器在源文件无效，绑定已取消'), '选择器抛异常须拒绝绑定');
 }
 
-// ── A3 live+源文件双写戳 ──
+// ── A3 live+源文件双写戳（升级后打戳须落到升级后元素） ──
 function testA3_DualStamp() {
   const save = extractFn(src, 'saveJumpBinding');
   assert.ok(save, '须能提取 saveJumpBinding');
   assert.ok(save.includes("liveEl.setAttribute('data-plink', plid)"), '须 live 写戳 liveEl.setAttribute(data-plink,plid)');
-  assert.ok(save.includes("hits[0].setAttribute('data-plink', plid)"), '须源文件写戳 hits[0].setAttribute(data-plink,plid)');
+  assert.ok(save.includes("stampEl.setAttribute('data-plink', plid)"), '须源文件写戳（升级后元素 stampEl.setAttribute）');
+  assert.ok(save.includes('up.el'), '升级须带回定位到的元素供打戳');
   const iLive = idx(save, "liveEl.setAttribute('data-plink', plid)");
-  const iHit = idx(save, "hits[0].setAttribute('data-plink', plid)");
+  const iHit = idx(save, "stampEl.setAttribute('data-plink', plid)");
   const iWrite = idx(save, 'sb.write({ dir: dir, file: file, content: out })');
   assert.ok(iLive >= 0 && iHit >= 0, '双写戳均须存在');
   assert.ok(iHit < iWrite, '源文件打戳须在 sb.write 序列化写盘之前');

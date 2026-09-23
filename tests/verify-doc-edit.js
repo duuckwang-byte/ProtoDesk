@@ -481,6 +481,27 @@ function testA10_SettingsShortcutTab() {
   for (const k of needKeys) assert.ok(sec.includes(k), '设置快捷键一览缺关键条目:' + k);
 }
 
+// ── A11 需求草稿按原型隔离（串沙箱回归：显示/保存/取消曾串到其他原型） ──
+function testA11_ReqDraftIsolation() {
+  assert.ok(!/return 'protoDocDraft___req__'/.test(coreSrc), '不得再有全局需求草稿键');
+  const { sandbox } = loadCore();
+  assert.strictEqual(typeof sandbox.draftKeyFor, 'function', '须暴露draftKeyFor');
+  sandbox.currentSource = { name: 'ProtoA', kind: 'pc' };
+  const ka = sandbox.draftKeyFor(true);
+  const kaDoc = sandbox.draftKeyFor(false);
+  sandbox.currentSource = { name: 'ProtoB', kind: 'pc' };
+  const kb = sandbox.draftKeyFor(true);
+  assert.notStrictEqual(ka, kb, `不同原型需求草稿键须不同，实际${ka} vs ${kb}`);
+  assert.ok(ka.includes('ProtoA') && kb.includes('ProtoB'), `草稿键须带原型名，实际${ka} vs ${kb}`);
+  assert.notStrictEqual(ka, kaDoc, '同原型下需求与说明草稿键须不同');
+  // 切原型须先落定时草稿（防500ms定时器把旧文本写到新键下）
+  const sbSrc = fs.readFileSync(path.join(rootDir, 'js', 'sandbox-core.js'), 'utf8');
+  assert.ok(/function loadSource\(src, keepPanels\)\{[\s\S]{0,800}draftTimer/.test(sbSrc), 'loadSource须先落定时草稿');
+  // 需求读取须带目录守卫（快切原型时旧读回包直接丢弃）
+  const paeSrc = fs.readFileSync(path.join(rootDir, 'js', 'project-ai-export.js'), 'utf8');
+  assert.ok((paeSrc.match(/wantDir/g) || []).length >= 4, 'loadReqContent/renderReqIntoDocs须带目录守卫');
+}
+
 function runAll() {
   const tests = [
     ['A1 新提示文案双处+双按钮', testA1_NewTip],
@@ -497,7 +518,8 @@ function runAll() {
     ['S3 弹窗Esc运行时', testS3_PopupEsc],
     ['S4 自建undo栈运行时', testS4_UndoStack],
     ['S5 回车五分支+有序ol', testS5_EnterFiveAndOl],
-    ['A10 设置页快捷键Tab(关于上方+行数+关键条目)', testA10_SettingsShortcutTab]
+    ['A10 设置页快捷键Tab(关于上方+行数+关键条目)', testA10_SettingsShortcutTab],
+    ['A11 需求草稿按原型隔离', testA11_ReqDraftIsolation]
   ];
   let passed = 0, failed = 0;
   for (const [title, fn] of tests) {
@@ -505,7 +527,7 @@ function runAll() {
     catch (err) { console.error(`[FAIL] ${title}`); console.error(err && err.stack || String(err)); failed++; }
   }
   console.log(`SUMMARY passed=${passed} failed=${failed}`);
-  console.log(failed ? 'DOC_EDIT_FAIL' : 'DOC_EDIT_PASS: 全部15项文档编辑体验断言通过');
+  console.log(failed ? 'DOC_EDIT_FAIL' : 'DOC_EDIT_PASS: 全部16项文档编辑体验断言通过');
   process.exitCode = failed ? 1 : 0;
 }
 runAll();

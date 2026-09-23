@@ -160,7 +160,10 @@ var reqFabEl=$('reqFab'),reqMaskEl=$('reqMask'),reqContentEl=$('reqContent'),
     btnEditReq=$('btnEditReq'),btnCancelReq=$('btnCancelReq'),btnSaveReq=$('btnSaveReq');
 var reqOpen=false,reqEditing=false,reqText='';
 function loadReqContent(){
+  var wantDir='';
+  try{ wantDir=(typeof aiSbxDir==='function')?aiSbxDir():''; }catch(e){}
   var render=function(txt){
+    try{ if((typeof aiSbxDir==='function'?aiSbxDir():'')!==wantDir) return; }catch(e){ return; } /* 切原型竞态：旧读回包直接丢弃 */
     reqText=String(txt||'');
     if(reqContentEl)reqContentEl.innerHTML=renderMd(reqText||'# 最新需求\n\n（暂无内容）');
   };
@@ -199,7 +202,10 @@ function toggleReqPane(){
 /* 移动端：右侧文档面板显示「最新需求」（复用 docs-panel，直接切换内容，非弹窗） */
 var reqMode=false;
 function renderReqIntoDocs(){
+  var wantDir='';
+  try{ wantDir=(typeof aiSbxDir==='function')?aiSbxDir():''; }catch(e){}
   var render=function(txt){
+    try{ if((typeof aiSbxDir==='function'?aiSbxDir():'')!==wantDir) return; }catch(e){ return; } /* 切原型竞态：旧读回包直接丢弃 */
     reqText=String(txt||'');
     docTitleEl.textContent='最新需求 · 当前迭代';
     docContentEl.innerHTML=renderMd(reqText||'# 最新需求\n\n（暂无内容）');

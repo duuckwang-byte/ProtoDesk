@@ -385,7 +385,7 @@ var LinkBind = (function () {
     var pg = String((info && info.page !== undefined) ? info.page : framePageKey());
     var label = String((info && (info.label || info.text)) || info.tagName || sel).slice(0, 30);
     var txt = String((info && info.text) || '').slice(0, 30);
-    inspectorRemote = { selector: sel, page: pg, label: label, text: txt, tagName: String((info && info.tagName) || ''), dname: String((info && info.dname) || '') };
+    inspectorRemote = { selector: sel, page: pg, label: label, text: txt, tagName: String((info && info.tagName) || ''), dname: String((info && info.dname) || ''), pickIndex: (info && typeof info.pickIndex === 'number') ? info.pickIndex : -1 };
     var links = (currentSource && currentSource._links) || [];
     inspectorLink = null;
     for (var i = 0; i < links.length; i++) {
@@ -602,9 +602,48 @@ var LinkBind = (function () {
     };
   }
 
+  /* 输入条悬浮窗快绑：不经检查器抽屉，直接以给定元素（live el 或远端信息）建绑定 */
+  function quickBind(selInfo, targetName, targetPage) {
+    try {
+      if (!selInfo || !selInfo.selector) { lbToast('选择器生成失败，无法绑定。'); return; }
+      if (!targetName) { lbToast('请先选择跳转目标原型。'); return; }
+      closeAllDrawers();
+      if (selInfo.el) { inspectorEl = selInfo.el; inspectorRemote = null; }
+      else {
+        inspectorEl = null;
+        inspectorRemote = {
+          selector: String(selInfo.selector || ''), page: String(selInfo.page || ''),
+          label: String(selInfo.label || selInfo.text || ''), text: String(selInfo.text || ''),
+          tagName: String(selInfo.tagName || ''), dname: '',
+          pickIndex: (typeof selInfo.pickIndex === 'number') ? selInfo.pickIndex : -1
+        };
+      }
+      inspectorLink = null;
+      inspectorMode = 'view';
+      inspectorSelectTarget = null;
+      inspectorSelectSubPage = '';
+      saveJumpBinding(String(selInfo.selector || ''), String(selInfo.page || ''), targetName, targetPage || '');
+    } catch (e) { lbToast('绑定失败。'); }
+  }
   /* 打戳绑定：selector 在源文件恰好命中1个才建绑定；live+源文件双写 data-plink；links.json 加 plid */
-  function saveJumpBinding(sel, pg, targetName, targetPage) {
-    if (!currentSource || !currentSource.sandboxDir) return;
+  /* 多命中时（重复组件）：内存补ID→按活元素序号/帧序号+文本校验定唯一→升级为 pr-id 后继续，不让用户重绑 */
+  function lbUpgradeToPrId(sel, pdoc, srcHtml, liveEl, remote) {
+    try {
+      if (typeof prIdPickUpgrade !== 'function') return null;
+      var liveIndex = -1;
+      try {
+        if (liveEl && liveEl.ownerDocument) {
+          var all = liveEl.ownerDocument.querySelectorAll(sel);
+          for (var i = 0; i < all.length; i++) { if (all[i] === liveEl) { liveIndex = i; break; } }
+        }
+      } catch (e) {}
+      if (!(liveIndex >= 0) && remote && typeof remote.pickIndex === 'number') liveIndex = remote.pickIndex;
+      var text = '';
+      try { text = String((remote && remote.text) || (liveEl && liveEl.textContent) || ''); } catch (e) {}
+      return prIdPickUpgrade(srcHtml, sel, liveIndex, text);
+    } catch (e) { return null; }
+  }
+  function saveJumpBinding(sel, pg, targetName, targetPage) {    if (!currentSource || !currentSource.sandboxDir) return;
     if (!lbIsPreviewEl(inspectorEl)) {
       /* 沙箱跨域远端锁定（inspectorRemote）无 live el：转为选择器非空校验后放行 */
       if (typeof inspectorRemote !== 'undefined' && inspectorRemote) {
@@ -629,15 +668,51 @@ var LinkBind = (function () {
       var hits = null;
       try { hits = pdoc.querySelectorAll(sel); } catch (e) { lbToast('选择器在源文件无效，绑定已取消。'); return; }
       var n = hits ? hits.length : 0;
-      if (n !== 1) { lbToast('该元素在源文件中定位命中' + n + '个（需恰好1个），已拒绝绑定，请重新拾取。'); return; }
+      var origSel = sel;
+      var up = null;
+      if (n === 1 && !/data-pr-id\s*=/.test(sel)) {
+        /* 单命中非稳定选择器：同样先补ID，能升级则入库即 pr-id（长久精准） */
+        try{
+          var inj0 = (typeof prIdEnsureInjected === 'function') ? prIdEnsureInjected(srcHtml) : '';
+          if (inj0 && inj0 !== srcHtml) {
+            var pd0 = null;
+            try { pd0 = new DOMParser().parseFromString(inj0, 'text/html'); } catch (e0) {}
+            var h0 = null;
+            try { h0 = pd0 ? pd0.querySelectorAll(sel) : null; } catch (e1) {}
+            if (h0 && h0.length === 1) {
+              var pid0 = '';
+              try { pid0 = String(h0[0].getAttribute('data-pr-id') || ''); } catch (e2) {}
+              if (pid0) {
+                var ns0 = '[data-pr-id="' + pid0.replace(/"/g, '') + '"]';
+                var c0 = null;
+                try { c0 = pd0.querySelectorAll(ns0); } catch (e3) {}
+                if (c0 && c0.length === 1) { sel = ns0; pdoc = pd0; srcHtml = inj0; hits = h0; n = 1; }
+              }
+            }
+          }
+        }catch(e){}
+      }
+      if (n !== 1) {
+        if (/data-pr-id\s*=/.test(sel)) { lbToast('稳定ID在源文件中定位命中' + n + '个（文件内重复，应唯一），已拒绝绑定，请重新拾取。'); return; }
+        try { up = lbUpgradeToPrId(sel, pdoc, srcHtml, liveEl, (typeof inspectorRemote !== 'undefined' ? inspectorRemote : null)); } catch (e) { up = null; }
+        if (!up || !up.sel) {
+          try { if (typeof prIdBackfillFileInBackground === 'function' && dir && file) prIdBackfillFileInBackground(dir, file); } catch (e2) {}
+          lbToast('该元素在源文件中定位命中' + n + '个，已后台补齐稳定ID并刷新，请重新打开检查器再绑定。');
+          return;
+        }
+        sel = up.sel; pdoc = up.pdoc; srcHtml = up.srcHtml;
+        try { if (typeof libStatus === 'function') libStatus('已按所点元素自动定位（' + n + '选1），继续绑定。'); } catch (e3) {}
+      }
       var links0 = currentSource._links || [];
       var existPlid = '';
       for (var k = 0; k < links0.length; k++) {
         if (links0[k].selector === sel && links0[k].page === pg) { existPlid = String(links0[k].plid || ''); break; }
+        if (origSel && origSel !== sel && links0[k].selector === origSel && links0[k].page === pg && !existPlid) { existPlid = String(links0[k].plid || ''); }
       }
       var plid = existPlid || lbMakePlid();
       try { if (liveEl && liveEl.setAttribute) liveEl.setAttribute('data-plink', plid); } catch (e) {}
-      try { hits[0].setAttribute('data-plink', plid); } catch (e) { lbToast('源文件打戳失败，绑定已取消。'); return; }
+      var stampEl = (up && up.el) ? up.el : hits[0];
+      try { stampEl.setAttribute('data-plink', plid); } catch (e) { lbToast('源文件打戳失败，绑定已取消。'); return; }
       var out = '';
       try {
         var hasDoctype = /^\s*<!doctype/i.test(srcHtml);
@@ -646,6 +721,14 @@ var LinkBind = (function () {
       sb.write({ dir: dir, file: file, content: out }).then(function (w) {
         if (!w || !w.ok) { lbToast('源文件写盘失败，绑定已取消：' + ((w && w.error) || '未知错误')); return; }
         var links = currentSource._links || [];
+        /* pr-id 升级后清掉同页旧选择器残留条目（防一元素两条绑定） */
+        try{
+          if (typeof origSel === 'string' && origSel && origSel !== sel) {
+            for (var _oi = links.length - 1; _oi >= 0; _oi--) {
+              if (links[_oi].selector === origSel && String(links[_oi].page || '') === String(pg || '')) links.splice(_oi, 1);
+            }
+          }
+        }catch(e0){}
         var remoteLbl = (typeof inspectorRemote !== 'undefined' && inspectorRemote && (inspectorRemote.label || inspectorRemote.text)) || '';
         var remoteTxt = (typeof inspectorRemote !== 'undefined' && inspectorRemote && inspectorRemote.text) || '';
         /* 中文名优先链：帧侧中文显示名 > 原label/文本 > live元素文本 */
@@ -690,7 +773,7 @@ var LinkBind = (function () {
         var jumpChip = $('liJumpChip');
         var jumpBody = $('liJumpBody');
         var sel2 = sel;
-        try { sel2 = inspectorRemote ? sel : generateSelector(liveEl); } catch (e2) {}
+        try { if (!sel2) sel2 = inspectorRemote ? sel : generateSelector(liveEl); } catch (e2) { sel2 = sel; }
         var pg2 = pg;
         try { if (!inspectorRemote) pg2 = framePageKey(); } catch (e3) {}
         renderJumpSection(sel2, pg2, jumpChip, jumpBody);
@@ -1264,6 +1347,8 @@ var LinkBind = (function () {
     closeInspector: closeInspector,
     openLinkMgr: openLinkMgr,
     closeLinkMgr: closeLinkMgr,
+    quickBind: quickBind,
+    removeJumpBinding: removeJumpBinding,
     updateLinkBadge: updateLinkBadge,
     validateLinks: validateLinks,
     onAfterAiRefresh: onAfterAiRefresh,

@@ -247,6 +247,7 @@ function testA10c_TocSideColumn() {
   assert.ok(/isTocPinMode/.test(clickSeg), '目录项点击定位后常驻模式不得 closeToc');
   assert.ok(/toc-open/.test(coreSrc), '开/关目录须同步 toc-open 标记');
   assert.ok(/\.toc-open \.docs-panel\s*\{[^}]*calc\(66vw \+ 224px\)/.test(cssSrc), '开目录时弹窗须加宽一列不挤文档');
+  assert.ok(/body\.docwin-mode \.docs-panel\s*\{[^}]*flex-direction\s*:\s*row/.test(cssSrc), '独立窗面板须行排（目录入面板后防主列压成0）');
   assert.ok(/\.docs-main\s*\{[^}]*flex-direction\s*:\s*column/.test(cssSrc), '文档主列须纵向布局（移动端滚动与独立窗内容靠它）');
   assert.ok(/\.docs-main\s*\{[^}]*min-height\s*:\s*0/.test(cssSrc), '文档主列须 min-height:0 不撑破滚动链');
   console.log('[PASS] A10c');
@@ -948,11 +949,11 @@ function testF1_HeightChain() {
   assert.ok(/body\.docwin-mode \.stage-frame\{[^}]*min-height:0/.test(cssSrc), 'stage-frame须min-height:0防挤压');
   const panels = cssSrc.match(/body\.docwin-mode \.docs-panel\{[^}]*\}/g) || [];
   assert.ok(panels.length, 'css缺docwin .docs-panel规则');
-  const panelStr = panels.find(s => /height:100%/.test(s) && /flex-direction:column/.test(s));
-  assert.ok(panelStr, 'css缺高度链docs-panel规则(height:100%+column)，实际仅:' + panels.map(s => s.slice(0, 80)).join(' | '));
+  const panelStr = panels.find(s => /height:100%/.test(s) && /flex-direction:row/.test(s));
+  assert.ok(panelStr, 'css缺高度链docs-panel规则(height:100%+row，目录入面板后左右排)，实际仅:' + panels.map(s => s.slice(0, 80)).join(' | '));
   assert.ok(/height:100%/.test(panelStr), 'docs-panel须height:100%承接100vh链，实际:' + panelStr.slice(0, 200));
-  assert.ok(/display:flex/.test(panelStr), 'docs-panel须display:flex纵向成链');
-  assert.ok(/flex-direction:column/.test(panelStr), 'docs-panel须flex-direction:column');
+  assert.ok(/display:flex/.test(panelStr), 'docs-panel须display:flex横向成链');
+  assert.ok(/flex-direction:row/.test(panelStr), 'docs-panel须flex-direction:row（目录左列+文档右列）');
   assert.ok(/overflow:hidden/.test(panelStr), 'docs-panel须overflow:hidden（仅内容区滚动）');
   assert.ok(/min-height:0/.test(panelStr), 'docs-panel须min-height:0');
   const bds = cssSrc.match(/body\.docwin-mode \.docs-body\{[^}]*\}/g) || [];
@@ -970,6 +971,7 @@ function testF1_HeightChain() {
   assert.ok(/max-height:100%/.test(toc), 'doc-toc须max-height:100%');
   assert.ok(/overflow-y:auto/.test(toc), 'doc-toc须独立overflow-y:auto（与docs-body互不干扰）');
   assert.ok(/body\.docwin-mode \.docs-head\{[^}]*flex:none/.test(cssSrc), 'docs-head须flex:none不被压缩');
+  assert.ok(/\.docs-main\s*\{[^}]*flex\s*:\s*1 1 auto/.test(cssSrc), 'docs-main须flex:1 1 auto吃掉剩余（目录列固定后）');
   assert.ok(/body\.docwin-mode \.doc-mode-tabs\{[^}]*flex:none/.test(cssSrc), 'doc-mode-tabs须flex:none不被压缩');
 }
 

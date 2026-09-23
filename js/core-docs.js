@@ -176,7 +176,11 @@ function docWrapEl(){
  return docContentEl;
 }
 function draftKeyFor(inReq){
- if(inReq)return 'protoDocDraft___req__';
+ /* 需求与说明一律按原型隔离：全局键曾导致切原型后显示/保存/取消串沙箱 */
+ var scope='';
+ try{ scope=sourceDocKey((typeof currentSource!=='undefined')?currentSource:null); }catch(e){}
+ if(!scope)scope='default';
+ if(inReq)return 'protoDocDraft_'+scope+'__req__';
  try{
   var base='protoDocDraft_'+sourceDocKey((typeof currentSource!=='undefined')?currentSource:null);
   return base;
@@ -3326,9 +3330,16 @@ function ensureDocSearchUI(){
      try{
       var k=e.key||'';
       var isF=(k==='f'||k==='F');
-      if((e.ctrlKey||e.metaKey)&&isF){
-       var t=e.target||null;
-       var inDocs=false;
+       if((e.ctrlKey||e.metaKey)&&isF){
+        var t=e.target||null;
+        var inCodeEdit=false;
+        try{
+          if(t&&t.closest){
+            if(t.closest('#codeEditDrawer')||t.closest('#codeEditInline')||t.closest('.code-edit-search')) inCodeEdit=true;
+          }
+        }catch(err){}
+        if(inCodeEdit){ return; }
+        var inDocs=false;
        try{
         if(t&&t.closest){
          if(t.closest('.docs-panel')||t.closest('#docSearchBox')||t.closest('.req-panel')) inDocs=true;
@@ -3339,6 +3350,18 @@ function ensureDocSearchUI(){
          }catch(err){}
         }
        }catch(err){}
+       /* 阅读模式全局唤起：文档面板开着且正文可见、非编辑态时，焦点在预览区/工具栏按 Ctrl+F 同样打开文档检索
+        * （Electron 无浏览器查找条，不拦截则毫无反应；代码编辑抽屉有自己的搜索，此处已让路） */
+       if(!inDocs){
+        try{
+         var _isPc=false, _docsOpen=false, _editing=false, _shown=false;
+         try{ _isPc=!!(document.body&&document.body.classList.contains('kind-pc')); }catch(e0){}
+         try{ _docsOpen=!!(document.body&&document.body.classList.contains('docs-open')); }catch(e1){}
+         try{ _editing=!!(typeof editOn!=='undefined'&&editOn); }catch(e2){}
+         try{ _shown=!!(typeof docContentEl!=='undefined'&&docContentEl&&docContentEl.style.display!=='none'); }catch(e3){}
+         if(_shown&&!_editing&&(!_isPc||_docsOpen)) inDocs=true;
+        }catch(err){}
+       }
        if(inDocs){
         e.preventDefault();
         try{ if(e.stopPropagation) e.stopPropagation(); }catch(err){}

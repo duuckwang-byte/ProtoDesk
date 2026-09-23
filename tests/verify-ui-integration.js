@@ -308,6 +308,9 @@ function test2_CssRulesContract() {
   assertLastProp('.modal', 'border-radius', /^8px\b/, `[CSS契约失败][Ant] 表面 .modal 末次圆角须为8px`);
   assertLastProp('.ai-modal', 'border-radius', /^8px\b/, `[CSS契约失败][Ant] 表面 .ai-modal 末次圆角须为8px`);
   assertLastProp('.docs-panel', 'border-radius', /^8px\b/, `[CSS契约失败][Ant] 表面 .docs-panel 末次圆角须为8px`);
+  // 标注层级：角标层须低于一切弹窗（文档浮层70/遮罩130/抽屉210/浮层400/弹窗600+）
+  assertLastProp('#annoBadgeLayer', 'z-index', /var\(--z-anno\)/, `[CSS契约失败][层级] #annoBadgeLayer 须走 --z-anno（不得再压弹窗）`);
+  assert.ok(/--z-anno\s*:\s*55\b/.test(cssContent), `[CSS契约失败][层级] --z-anno 须为55（低于文档浮层70）`);
   // hover#4096FF / active#0958D9 (末次定义为准)
   assertLastProp('.docs-btn.primary:hover', 'background', /#4096FF/i, `[CSS契约失败][Ant] .docs-btn.primary:hover 末次背景须为#4096FF`);
   assertLastProp('.ai-fab:hover', 'background', /#4096FF/i, `[CSS契约失败][Ant] .ai-fab:hover 末次背景须为#4096FF`);

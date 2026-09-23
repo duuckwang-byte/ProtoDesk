@@ -548,6 +548,13 @@ var AnnotationEngine = (function () {
     }
 
     saveAnnotations(currentSource.sandboxDir, list);
+    /* 收敛：非稳定ID选择器的文件后台补ID（静默刷新），后续拾取/定位自动走 pr-id */
+    try{
+      if(currentAnnoSel && !/data-pr-id\s*=/.test(String(currentAnnoSel)) && typeof prIdBackfillFileInBackground === 'function'){
+        var _ad=currentSource.sandboxDir, _af=curHtml;
+        if(_ad&&_af) prIdBackfillFileInBackground(_ad,_af);
+      }
+    }catch(e){}
     loadInspectorAnno(currentAnnoEl, currentAnnoSel, targetPg);
     if (typeof libStatus === 'function') {
       libStatus('已保存需求标注：' + (title || '未命名标注'));

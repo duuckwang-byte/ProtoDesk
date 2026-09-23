@@ -351,6 +351,19 @@ function test14_JumpReuseNoThrow() {
   assert.doesNotThrow(() => { sb.DocShuttle.docToCanvas(''); }, '空路由不应抛错');
 }
 
+// 断言15：子页面切换须刷新文档面板（与主页面loadSource一致，否则滞留旧原型文档）
+function test15_SubPageReloadsDoc() {
+  const subIdx = sbSrc.indexOf('function loadSubPage(s, subFile)');
+  assert.ok(subIdx >= 0, '须能定位loadSubPage');
+  const subBlock = sbSrc.slice(subIdx, subIdx + 2200);
+  assert.ok(subBlock.includes('loadSourceDocs(s)'), '子页面切换须合入本地文档');
+  assert.ok(/typeof loadDesc==='function'/.test(subBlock) || /loadDesc\(\)/.test(subBlock), '子页面切换须调loadDesc渲染文档面板');
+  const mainIdx = sbSrc.indexOf('function loadSource(src, keepPanels)');
+  assert.ok(mainIdx >= 0, '须能定位loadSource');
+  const mainBlock = sbSrc.slice(mainIdx, mainIdx + 2500);
+  assert.ok(mainBlock.includes('loadDesc()'), '主页面切换须调loadDesc（既有行为保持）');
+}
+
 function runAllAssertions() {
   const tests = [
     ['断言1 flowchart三节点两边SVG无泄漏', test1_FlowchartTD],
@@ -366,7 +379,8 @@ function runAllAssertions() {
     ['断言11 主进程读写文件名清洗', test11_MainSanitize],
     ['断言12 preload三暴露', test12_PreloadThree],
     ['断言13 无Tab条恒功能说明', test13_DocSwitchVirtualGuard],
-    ['断言14 复用器只读不抛', test14_JumpReuseNoThrow]
+    ['断言14 复用器只读不抛', test14_JumpReuseNoThrow],
+    ['断言15 子页面切换刷新文档', test15_SubPageReloadsDoc]
   ];
   let passed = 0;
   let failed = 0;
@@ -376,7 +390,7 @@ function runAllAssertions() {
   }
   console.log(`SUMMARY passed=${passed} failed=${failed}`);
   if (failed) console.log('MD_P3_FAIL');
-  else console.log('MD_P3_PASS: 全部14项MD-P3断言通过');
+  else console.log('MD_P3_PASS: 全部15项MD-P3断言通过');
   process.exitCode = failed ? 1 : 0;
 }
 

@@ -1476,6 +1476,51 @@ async function sandboxListImpl(ev, projectName) {
   return { root: paths.SANDBOX_ROOT, project: project || '', projects, folders };
 
 }
+/* 稳定ID注入（对齐 PlanC data-pr-id 语义，PlanD 覆盖放宽到一切带 class 的元素）：
+ * 仅补缺失（已有 data-pr-id / data-testid 跳过），跳过 script/style/注释与 html/head/body 等骨架标签；
+ * 同文件内唯一（pr-<tag>-<序号>，从已用最大序号续排），幂等，多次执行不增量。 */
+function ensurePrIdInjected(html) {
+  try {
+    let s = String(html == null ? '' : html);
+    const seen = Object.create(null);
+    let maxN = 0;
+    let m;
+    const reExist = /data-pr-id\s*=\s*"([^"]*)"/gi;
+    while ((m = reExist.exec(s))) {
+      seen[m[1]] = 1;
+      const k = /^pr-[a-z0-9]+-(\d+)$/.exec(m[1]);
+      if (k) { const n = parseInt(k[1], 10); if (n > maxN) maxN = n; }
+    }
+    let cnt = maxN;
+    const nid = (tag) => {
+      cnt++;
+      let id = 'pr-' + String(tag || 'div').toLowerCase().replace(/[^a-z0-9]/g, '') + '-' + cnt;
+      while (seen[id]) { cnt++; id = 'pr-' + String(tag || 'div').toLowerCase().replace(/[^a-z0-9]/g, '') + '-' + cnt; }
+      seen[id] = 1;
+      return id;
+    };
+    const parts = s.split(/(<!--[\s\S]*?-->|<script[\s>][\s\S]*?<\/script\s*>|<style[\s>][\s\S]*?<\/style\s*>)/gi);
+    for (let i = 0; i < parts.length; i += 2) {
+      let chunk = parts[i];
+      chunk = chunk.replace(/<(button|a|input|select|textarea|option|label)([^>]*?)>/gi, (m0, tag, attrs) => {
+        if (/data-pr-id\s*=/.test(attrs) || /data-testid\s*=/.test(attrs)) return m0;
+        return '<' + tag + attrs + ' data-pr-id="' + nid(tag) + '">';
+      });
+      chunk = chunk.replace(/<([a-z][a-z0-9]*)([^>]*\bclass\s*=\s*["'][^"']*["'][^>]*?)>/gi, (m0, tag, attrs) => {
+        const tl = String(tag).toLowerCase();
+        if (/^(html|head|body|script|style|link|meta|title|base|template)$/.test(tl)) return m0;
+        if (/data-pr-id\s*=/.test(attrs) || /data-testid\s*=/.test(attrs)) return m0;
+        return '<' + tag + attrs + ' data-pr-id="' + nid(tag) + '">';
+      });
+      chunk = chunk.replace(/<([a-z][a-z0-9]*)([^>]*\b(?:data-page|onclick)\s*=[^>]*?)>/gi, (m0, tag, attrs) => {
+        if (/data-pr-id\s*=/.test(attrs)) return m0;
+        return '<' + tag + attrs + ' data-pr-id="' + nid(tag) + '">';
+      });
+      parts[i] = chunk;
+    }
+    return parts.join('');
+  } catch (e) { return String(html == null ? '' : html); }
+}
 function sandboxWriteImpl(ev, o) {
   const o2 = o || {};
   const dir = String(o2.dir || '');
@@ -1484,7 +1529,10 @@ function sandboxWriteImpl(ev, o) {
   if (!isSubPath(dir, paths.SANDBOX_ROOT)) return { ok: false, error: '目录不在沙箱范围内' };
   try {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, file), String(o2.content == null ? '' : o2.content), 'utf8');
+    let content = String(o2.content == null ? '' : o2.content);
+    /* 稳定ID（对齐 PlanC data-pr-id）：html 写盘时为缺失元素补唯一标识并持久化，已有则跳过，保证选择器跨活文档/磁盘文件稳定 */
+    try { if (/\.html?$/i.test(file)) content = ensurePrIdInjected(content); } catch (e) {}
+    fs.writeFileSync(path.join(dir, file), content, 'utf8');
     return { ok: true, path: path.join(dir, file) };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 
@@ -1620,7 +1668,9 @@ function sandboxAdoptImpl(ev, o) {
       if (fs.existsSync(dir2)) return;
       try {
         fs.mkdirSync(dir2, { recursive: true });
-        fs.writeFileSync(path.join(dir2, nm + '.html'), em.html, 'utf8');
+        let adoptHtml = em.html;
+        try { adoptHtml = ensurePrIdInjected(adoptHtml); } catch (e) {}
+        fs.writeFileSync(path.join(dir2, nm + '.html'), adoptHtml, 'utf8');
         fs.writeFileSync(path.join(dir2, nm + '.md'), em.md, 'utf8');
         /* 写入 links.json（如有链接数据） */
         if (em.links && em.links.length) {
@@ -1636,7 +1686,8 @@ function sandboxAdoptImpl(ev, o) {
   try {
     if (fs.existsSync(dir)) return { ok: false, error: '同名原型已存在：' + name, dir };
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, name + '.html'), content, 'utf8'); // P1-1 fix 使用净化后 content
+    try { content = ensurePrIdInjected(content); } catch (e) {}
+    fs.writeFileSync(path.join(dir, name + '.html'), content, 'utf8'); // P1-1 fix 使用净化后 content（已补稳定ID）
     /* 源目录存在同名 .md 时一并复制进沙箱（文档与原型同放一文件夹） */
     let mdFile = null;
     if (srcPath) {

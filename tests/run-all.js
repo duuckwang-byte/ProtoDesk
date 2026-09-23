@@ -46,6 +46,7 @@ const SUITES = [
   ['remote-send', 'verify-remote-send.js'],
   ['edit-select', 'verify-edit-select.js'],
   ['import-subpage', 'verify-import-subpage.js'],
+  ['code-edit', 'verify-code-edit.js'],
 ];
 
 function pad(s, n) {

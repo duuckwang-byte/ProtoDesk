@@ -1,8 +1,9 @@
 'use strict';
 // Ctrl拾取释放链回归仿真（只读实现文件，不修改 js/*）
-// 背景：帧侧 sendCtrlState 加 force 参数，keyup 改走 sendCtrlState(ev,true) 跳过 inFormFocus 守卫，keydown 保持守卫
-// 覆盖：(a) INPUT内按下Ctrl→keydown不上报 (b) INPUT内松开Ctrl→keyup必上报释放态
+// 背景：帧侧 keydown/keyup 均直传上报（输入框可拾取）；宿主进入拾取受弹窗互斥门禁约束
+// 覆盖：(a) INPUT内按下Ctrl→keydown上报 (b) INPUT内松开Ctrl→keyup必上报释放态
 //       (c) 武装→点选→输入框内释放→宿主openPanel被触发 (d) 模板与内嵌副本两处逐行一致
+//       (e) 任一弹窗打开时宿主/远端均不进入拾取态
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -160,7 +161,7 @@ function mkKey(key, down) {
   console.log('[PASS] (b-扩展) TEXTAREA/SELECT内keyup均上报');
 }
 
-// ---------- (c) 完整流程：武装→点选→输入框内释放→宿主openPanel被触发 ----------
+// ---------- (c) 完整流程：武装→点选→输入框内释放→宿主亮悬浮按钮（点后才开面板） ----------
 // 宿主侧用真实 edit-entry.js remoteCtrlStateChanged 源码求值（stub 外围依赖），帧侧用真实 sendCtrlState 行求值，
 // 中间经 sandbox-core.js CTRL_STATE 分发分支（静态已验 + 运行时转发仿真）。
 {
@@ -169,20 +170,21 @@ function mkKey(key, down) {
   assert.ok(coreSrc.includes('__onRemoteCtrlState'), '宿主须分发到 __onRemoteCtrlState');
   assert.ok(eeSrc.includes('function remoteCtrlStateChanged('), '宿主须含 remoteCtrlStateChanged 状态机');
   assert.ok(eeSrc.includes('__onRemoteCtrlState'), '宿主须注册远端按键回调');
-  // 释放分支须含 openPanel（selected>0 时开面板）
+  // 释放分支须含 showFab（selected>0 时亮悬浮按钮，不直开面板）
   const rcIdx = eeSrc.indexOf('function remoteCtrlStateChanged(');
   const rcSeg = eeSrc.slice(rcIdx, rcIdx + 2200);
-  assert.ok(rcSeg.includes('CTRL_PICK.openPanel()') || rcSeg.includes('openPanel'), '释放分支须触发 openPanel');
+  assert.ok(rcSeg.includes('CTRL_PICK.showFab()') || rcSeg.includes('showFab'), '释放分支须触发 showFab');
   console.log('[PASS] (c0) 宿主链路静态存在：CTRL_STATE→__onRemoteCtrlState→remoteCtrlStateChanged→openPanel');
 
   // 2) 求值真实 remoteCtrlStateChanged（brace提取，stub依赖）
   const rcCode = braceExtract(eeSrc, 'remoteCtrlStateChanged');
-  const calls = { enter: 0, exit: 0, openPanel: 0, startLoop: 0, stopLoop: 0, armInline: 0 };
+  const calls = { enter: 0, exit: 0, openPanel: 0, showFab: 0, startLoop: 0, stopLoop: 0, armInline: 0 };
   const CTRL_PICK = {
     holding: false, remoteMode: 'pick', selected: [],
     enter: () => { calls.enter++; },
     exit: () => { calls.exit++; },
     openPanel: () => { calls.openPanel++; },
+    showFab: () => { calls.showFab++; },
   };
   const stubs = {
     CTRL_PICK,
@@ -216,7 +218,7 @@ function mkKey(key, down) {
   assert.strictEqual(CTRL_PICK.selected.length, 1, '点选后 selected 应为 1');
   console.log('[PASS] (c2) 点选：selected=1（模拟PICK_RESULT收编）');
 
-  // 5) 输入框内释放：帧 keyup(force=true) 必上报 RELEASE → 宿主 openPanel
+  // 5) 输入框内释放：帧 keyup(force=true) 必上报 RELEASE → 宿主亮悬浮按钮（不直开面板）
   const frameRel = buildFrameRuntime('INPUT');
   frameRel.api.sendCtrlState(mkKey('Control', false), true);
   assert.strictEqual(frameRel.posted.length, 1, 'INPUT内释放须上报（force）');
@@ -226,14 +228,43 @@ function mkKey(key, down) {
   runHost({ key: relMsg.payload.key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false });
   assert.strictEqual(CTRL_PICK.holding, false, 'RELEASE 后 holding 应为 false');
   assert.strictEqual(calls.exit, 1, 'RELEASE 后须 exit');
-  assert.strictEqual(calls.openPanel, 1, 'RELEASE 且 selected>0 时须 openPanel');
-  console.log('[PASS] (c3) 输入框内释放→宿主openPanel被触发（holding=false/exit/openPanel=1）');
+  assert.strictEqual(calls.showFab, 1, 'RELEASE 且 selected>0 时须亮悬浮按钮');
+  assert.strictEqual(calls.openPanel, 0, 'RELEASE 不得直开面板');
+  console.log('[PASS] (c3) 输入框内释放→亮悬浮按钮（holding=false/exit/showFab=1）');
 
-  // 6) 反例：空选释放不弹面板（防空扰）
-  CTRL_PICK.holding = true; CTRL_PICK.selected.length = 0; calls.openPanel = 0; calls.exit = 0;
+  // 6) 反例：空选释放不亮按钮（防空扰）
+  CTRL_PICK.holding = true; CTRL_PICK.selected.length = 0; calls.openPanel = 0; calls.exit = 0; calls.showFab = 0;
   runHost({ key: 'Control', ctrlKey: false, metaKey: false, shiftKey: false, altKey: false });
-  assert.strictEqual(calls.openPanel, 0, '空选释放不得 openPanel');
-  console.log('[PASS] (c4-反例) 空选释放不弹面板');
+  assert.strictEqual(calls.showFab, 0, '空选释放不得亮按钮');
+  console.log('[PASS] (c4-反例) 空选释放不亮按钮');
 }
 
-console.log('=== Ctrl释放链仿真全部通过 (a/b/c/d) ===');
+// ---------- (e) 弹窗互斥：任一弹窗打开时不进入拾取态 ----------
+{
+  const srcFn = braceExtract(eeSrc, 'isAnyPopupOpen');
+  assert.ok(srcFn, '缺 isAnyPopupOpen');
+  const factory = new Function('document', 'window', srcFn + '\nreturn isAnyPopupOpen;');
+  const run = (masks, drawers, stackLen) => {
+    const els = {};
+    masks.forEach((id) => { els[id] = { style: { display: 'block' } }; });
+    const fakeDoc = { getElementById: (id) => els[id] || null };
+    const fakeWin = { MaskStack: { stack: new Array(stackLen) } };
+    return factory(fakeDoc, fakeWin)();
+  };
+  assert.strictEqual(run([], [], 0), false, '无弹窗须放行');
+  assert.strictEqual(run(['aiMask'], [], 0), true, 'AI 弹窗须拦截');
+  assert.strictEqual(run(['editDrawerMask'], [], 0), true, '待提交抽屉遮罩须拦截');
+  assert.strictEqual(run([], [], 1), true, 'MaskStack 非空须拦截');
+  // drawer open 类分支
+  const runDrawer = () => {
+    const fakeDoc = { getElementById: (id) => (id === 'linkInspector' ? { classList: { contains: (c) => c === 'open' } } : null) };
+    return factory(fakeDoc, { MaskStack: { stack: [] } })();
+  };
+  assert.strictEqual(runDrawer(), true, '抽屉 open 类须拦截');
+  // 接线：宿主进入与远端进入两处均须调用门禁
+  const gateCalls = eeSrc.match(/isAnyPopupOpen\(\)/g) || [];
+  assert.ok(gateCalls.length >= 3, '门禁定义+两处接线，实际' + gateCalls.length);
+  console.log('[PASS] (e) 弹窗互斥门禁');
+}
+
+console.log('=== Ctrl释放链仿真全部通过 (a/b/c/d/e) ===');
