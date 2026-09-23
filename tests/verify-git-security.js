@@ -232,7 +232,74 @@ async function main() {
     assert.strictEqual(typeof gw.gitStatusImpl, 'function', '须暴露gitStatusImpl');
     const r = await gw.gitStatusImpl(null, { project: '', branch: 'bad branch!!' });
     assert.ok(r && r.ok === false && r.error === '非法分支名', `非法分支须拒收，实际:${JSON.stringify(r)}`);
-  });  // ── F. force无令牌/无确认不执行 ──
+  });
+  await ok('G03 推送拉取成功须同步origin追踪', () => {
+    const s = fs.readFileSync(path.join(ROOT, 'main', 'services', 'git-workflow-service.js'), 'utf8');
+    assert.ok(/function gitSyncOriginRef\(/.test(s), '缺追踪同步函数');
+    assert.ok(/update-ref/.test(s) && /refs\/remotes\/origin\//.test(s), '须经update-ref写origin追踪');
+    const pushFn = s.slice(s.indexOf('async function gitPushImpl'), s.indexOf('async function gitPushImpl') + 9000);
+    assert.ok(pushFn.includes('gitSyncOriginRef(branch)'), '推送成功后须同步追踪');
+    assert.ok(pushFn.includes('所选文件暂存为空'), '空暂存须诚实报错不得谎报成功');
+    assert.ok(/filesCount: stagedList\.length/.test(pushFn), '上报数须为实际暂存数');
+  });
+  await ok('G04 失败必有文本且落盘', () => {    const s = fs.readFileSync(path.join(ROOT, 'main', 'services', 'git-workflow-service.js'), 'utf8');
+    assert.ok(/function gitPushFailLog\(/.test(s), '缺失败落盘函数');
+    assert.ok(s.includes('无任何返回'), '空输出须有兜底文案');
+    const dom = fs.readFileSync(path.join(ROOT, 'js', 'git-ui', 'git-domain.js'), 'utf8');
+    assert.ok(/详情：/.test(dom), '报错条须带出详情文本');
+  });
+  await ok('G05 凭证按项目无则回退默认', () => {
+    const s = fs.readFileSync(path.join(ROOT, 'git', 'config-store.js'), 'utf8');
+    const fn = s.slice(s.indexOf('function _readCredentialsSync'), s.indexOf('function _readCredentialsSync') + 2500);
+    assert.ok(fn.includes("__default__"), '须回退默认凭证键');
+  });  await ok('G06 拉取列表工作区感知', () => {
+    const gw = require('../main/services/git-workflow-service');
+    assert.strictEqual(typeof gw.gitPullAdjustEntries, 'function', '须暴露gitPullAdjustEntries');
+    const en = (p, code, label) => {
+      const ps = String(p).split('/');
+      return { path: p, project: ps[0], proto: ps[1], subPath: ps.slice(2).join('/'), code, label };
+    };
+    const H = 'a'.repeat(40), H2 = 'b'.repeat(40);
+    // 已拉取（工作区与远端同内容）须剔除
+    let r = gw.gitPullAdjustEntries(
+      [en('P/Q/Q.html', 'mod', '修改')],
+      { 'P/Q/Q.html': H }, { 'P/Q/Q.html': H },
+      () => true
+    );
+    assert.deepStrictEqual(r, [], '已同步须清空');
+    // 未拉取须保留原标签
+    r = gw.gitPullAdjustEntries(
+      [en('P/Q/Q.html', 'mod', '修改')],
+      { 'P/Q/Q.html': H }, { 'P/Q/Q.html': H2 },
+      () => true
+    );
+    assert.strictEqual(r.length, 1, '未同步须保留');
+    assert.strictEqual(r[0].code, 'mod', '保留原标签');
+    // 本地已删但远端有 → 新增（可恢复）
+    r = gw.gitPullAdjustEntries(
+      [en('P/Q/Q.md', 'mod', '修改')],
+      { 'P/Q/Q.md': H }, {},
+      () => false
+    );
+    assert.strictEqual(r.length, 1, '删除须保留一条');
+    assert.strictEqual(r[0].code, 'add', '删除须标新增');
+    // 远端有、工作区缺、提交比对没列出 → 补新增
+    r = gw.gitPullAdjustEntries(
+      [],
+      { 'P/Q/旧文件.html': H }, {},
+      () => false
+    );
+    assert.strictEqual(r.length, 1, '漏列的缺失须补回');
+    assert.strictEqual(r[0].code, 'add', '补回须标新增');
+    // 远端无、工作区缺 → 不打扰
+    r = gw.gitPullAdjustEntries(
+      [en('P/Q/gone.html', 'del', '删除')],
+      {}, {},
+      () => false
+    );
+    assert.deepStrictEqual(r, [], '两边都没有须剔除');
+  });
+  // ── F. force无令牌/无确认不执行 ──
   await ok('F01 后端仅force显式才加--force', () => {
     const m = readMainAggregated();
     assert.ok(/if\s*\(force\)\s*pushArgs\.push\('--force'\)/.test(m), '应为 if (force) pushArgs.push(--force)');

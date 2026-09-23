@@ -126,7 +126,8 @@ var GitDomain = (function () {
         try { if (ctx.els && ctx.els.force) ctx.els.force.style.display = 'none'; } catch (e) {}
         GitPushUI.renderOk(ctx.els, (force ? '强制覆盖发布成功！' : '发布成功！') + '已上传 ' + (r.filesCount || files.length) + ' 个文件至分支 [' + (r.branch || branch) + ']。' + (force ? '远端历史已被改写。' : ''));
         try { emit('git:push-ok', { branch: (r.branch || branch), count: (r.filesCount || files.length) }); } catch (e2) {}
-        GitPushUI.scheduleClose(ctx.closeModal, GIT_PUSH_CLOSE_DELAY_MS);
+        try { if (typeof ctx.refreshList === 'function') ctx.refreshList(r.branch || branch); } catch (e3) {}
+        /* 成功后不再自动关窗：列表就地刷新为空即是凭证，用户手动关闭 */
       } else if (r && r.code === 'NEED_HEAL') {
         try { GitPushUI.setBusy(ctx.els, false, '确认上传'); } catch (e) {}
         try { if (typeof ctx.onNeedHeal === 'function') ctx.onNeedHeal(r, function () { executeGitPush(ctx); }); } catch (e2) {}
@@ -136,8 +137,11 @@ var GitDomain = (function () {
       } else {
         try { GitPushUI.setBusy(ctx.els, false, '重试上传'); } catch (e) {}
         var info = { title: '发布失败', body: String((r && r.error) || '') };
-        try { if (typeof gitErrorInfo === 'function') info = gitErrorInfo((r && r.code) || '', (r && r.error) || ''); } catch (e2) {}
-        GitPushUI.renderErr(ctx.els, info.title + '：' + info.body);
+        try { if (typeof gitErrorInfo === 'function') info = gitErrorInfo((r && r.code) || '', String((r && r.error) || '')); } catch (e2) {}
+        /* 详情必须可见：未知错误也带原文（截断），否则用户无法定位 */
+        var detailTxt = '';
+        try { detailTxt = String((r && r.error) || '').trim().slice(0, 200); } catch (e3) {}
+        GitPushUI.renderErr(ctx.els, info.title + '：' + info.body + (detailTxt ? '（详情：' + detailTxt + '）' : ''));
         try { emit('git:push-err', { code: (r && r.code) || '', title: info.title }); } catch (e3) {}
         try { if (typeof ctx.onRoutableError === 'function') ctx.onRoutableError(r, info); } catch (e4) {}
       }
@@ -145,7 +149,9 @@ var GitDomain = (function () {
       try { GitPushUI.setBusy(ctx.els, false, '重试上传'); } catch (e) {}
       var info2 = { title: '发布失败', body: String((err && err.message) || err) };
       try { if (typeof gitErrorInfo === 'function') info2 = gitErrorInfo('', String((err && err.message) || err)); } catch (e2) {}
-      GitPushUI.renderErr(ctx.els, info2.title + '：' + info2.body);
+      var detailTxt2 = '';
+      try { detailTxt2 = String((err && err.message) || err || '').trim().slice(0, 200); } catch (e3) {}
+      GitPushUI.renderErr(ctx.els, info2.title + '：' + info2.body + (detailTxt2 ? '（详情：' + detailTxt2 + '）' : ''));
     });
   }
 
@@ -160,7 +166,8 @@ var GitDomain = (function () {
       if (r && r.ok) {
         try { if (ctx.els && ctx.els.force) ctx.els.force.style.display = 'none'; } catch (e) {}
         GitPushUI.renderOk(ctx.els, '发布成功！已上传 ' + (r.filesCount || files.length) + ' 个文件至分支 [' + (r.branch || ctx.branch) + ']。');
-        GitPushUI.scheduleClose(ctx.closeModal, GIT_PUSH_CLOSE_DELAY_MS);
+        try { if (typeof ctx.refreshList === 'function') ctx.refreshList(r.branch || ctx.branch); } catch (e2) {}
+        /* 成功后不再自动关窗：列表就地刷新为空即是凭证，用户手动关闭 */
       } else if (r && r.code === 'NEED_HEAL') {
         try { GitPushUI.setBusy(ctx.els, false, '确认上传'); } catch (e) {}
         try { if (typeof ctx.onNeedHeal === 'function') ctx.onNeedHeal(r, function () { executeGitPushWithForeign(ctx); }); } catch (e2) {}

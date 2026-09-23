@@ -332,7 +332,52 @@ testConfirmBehavior().then(() => {
   assert.ok(/gitFilterPushProjects\(r\.projects\)/.test(paeSrc), '上传须先过滤再渲染');
   assert.ok(/'push', \{ ?subFold: true ?\}/.test(paeSrc), '上传须开子页面折叠');
   assert.ok(/git-sub-toggle/.test(paeSrc) && /git-sub-list/.test(paeSrc), '须有折叠行与子列表');
+  assert.ok(/git-proto-body/.test(paeSrc) && /git-proto-arrow/.test(paeSrc), '原型整组须可收起（body+箭头）');
   const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
   assert.ok(/\.git-sub-toggle\s*\{/.test(css) && /\.git-sub-list \.git-tree-item/.test(css), '须有折叠样式');
+  assert.ok(/\.git-proto-arrow\s*\{/.test(css), '须有原型组箭头样式');
+  const dom = fs.readFileSync(path.join(rootDir, 'js', 'git-ui', 'git-domain.js'), 'utf8');
+  assert.ok(!/scheduleClose\(ctx\.closeModal/.test(dom), '上传成功不得自动关窗');
   console.log('[PASS] 上传文件树过滤与子页面折叠');
+})();
+
+// ---- 11. 拉取覆盖确认：去掉先上传 + 已删文件不计脏 ----
+(function testPullCoverNoPushNoDel() {
+  const html = fs.readFileSync(path.join(rootDir, '原型+文档.html'), 'utf8');
+  assert.ok(!html.includes('btnGitPullCoverGotoPush'), '覆盖确认弹窗须无先去上传按钮');
+  assert.ok(!paeSrc.includes('btnGitPullCoverGotoPush'), 'JS须无先去上传接线');
+  assert.ok(html.includes('btnGitPullCoverOverwrite'), '须有以远端为准覆盖本地按钮');
+  assert.ok(/btnGitPullCoverOverwrite[\s\S]{0,1200}gitDoPull\(pend\.files, pend\.branch, false\)/.test(paeSrc), '覆盖本地须不备份直拉');
+  assert.ok(!/openGitPushModal\(\); \} catch/.test(paeSrc.match(/function bindGitPullCover\(\)[\s\S]*?\n\}\);/)?.[0] || ''), '覆盖确认内须无跳上传逻辑');
+  const body = paeSrc.slice(paeSrc.indexOf('function gitCheckDirtyThenPull'), paeSrc.indexOf('function gitCheckDirtyThenPull') + 1500);
+  assert.ok(/dirtyCode\[f\.path\] = f\.code/.test(body), '脏检查须记录文件状态码');
+  assert.ok(/dirtyCode\[p\] !== 'del'/.test(body), '已删文件须排除出覆盖确认');
+  console.log('[PASS] 拉取覆盖确认精简');
+})();
+
+// ---- 12. 推送拉取成功后重查刷新列表 ----
+(function testRefreshAfterSync() {
+  const dom = fs.readFileSync(path.join(rootDir, 'js', 'git-ui', 'git-domain.js'), 'utf8');
+  assert.ok(/ctx\.refreshList\(r\.branch \|\| branch\)/.test(dom), '推送成功须调刷新回调');
+  assert.ok(/ctx\.refreshList\(r\.branch \|\| ctx\.branch\)/.test(dom), '跨项目推送成功须调刷新回调');
+  assert.ok(/refreshList: function \(b\)/.test(paeSrc), '推送ctx须带refreshList');
+  assert.ok(/loadGitPullDiff\(r\.branch \|\| branch\)/.test(paeSrc), '拉取成功须重查远端刷新列表');
+  console.log('[PASS] 同步成功后刷新列表');
+})();
+
+// ---- 13. 推送拉取弹窗头部单行化（删提示文案/分支缩短/按钮同行/列表上提） ----
+(function testPushPullHeaderSingleRow() {
+  const html = fs.readFileSync(path.join(rootDir, '原型+文档.html'), 'utf8');
+  assert.ok(!html.includes('id="gitPushBranchHint"') && !html.includes('id="gitPullBranchHint"'), '分支提示文案须删除');
+  assert.ok(!html.includes('id="gitPushHint"') && !html.includes('id="gitPullHint"'), '列表提示文案须删除');
+  assert.ok(!paeSrc.includes('gitPushBranchHint') && !paeSrc.includes('gitPullBranchHint'), 'JS须无死引用');
+  for (const id of ['gitPushBranchSelect', 'btnGitPushSelectAll', 'btnGitPushClearAll', 'gitPullBranchSelect', 'btnGitPullSelectAll', 'btnGitPullClearAll']) {
+    assert.ok(html.includes('id="' + id + '"'), '须保留#' + id);
+  }
+  assert.ok(/max-width:360px/.test(html), '分支板块须缩短');
+  const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
+  const m = css.match(/\.git-tree-list\s*\{([^}]*)\}/);
+  assert.ok(m, '须有.git-tree-list规则');
+  assert.ok(/max-height\s*:\s*360px/.test(m[1]), '列表须上提到360px');
+  console.log('[PASS] 弹窗头部单行化');
 })();

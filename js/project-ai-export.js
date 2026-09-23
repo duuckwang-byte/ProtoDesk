@@ -433,7 +433,7 @@ var gitConfigMask = $('gitConfigMask'), gitConfigClose = $('gitConfigClose'), gi
 var gitRemoteUrl = $('gitRemoteUrl'), gitBranch = $('gitBranch'), gitUsername = $('gitUsername'), gitToken = $('gitToken'), btnGitTokenEye = $('btnGitTokenEye');
 var btnTestGitConn = $('btnTestGitConn'), testGitStatus = $('testGitStatus'), gitSaveTip = $('gitSaveTip');
 var gitGlobalOriginText = $('gitGlobalOriginText'), gitRemoteUrlHint = $('gitRemoteUrlHint'), gitBranchHint = $('gitBranchHint');
-var gitPushBranchHint = $('gitPushBranchHint'), gitPullBranchHint = $('gitPullBranchHint'), gitPushBranchRuleHint = $('gitPushBranchRuleHint'), gitPullBranchRuleHint = $('gitPullBranchRuleHint');
+var gitPushBranchRuleHint = $('gitPushBranchRuleHint'), gitPullBranchRuleHint = $('gitPullBranchRuleHint');
 var gitLastSavedRemoteUrl = '';
 var gitPendingSavePayload = null;
 var gitPendingPullCover = null;
@@ -803,11 +803,13 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, o
         if (!mainFiles.length && !subFiles.length) return;
       }
       html += '<div class="git-tree-group" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
-        + '<div class="git-tree-proto">'
+        + '<div class="git-tree-proto" title="收起/展开该原型文件列表">'
         + '<input type="checkbox" class="git-group-chk"' + (isDefaultChecked ? ' checked' : '') + ' data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
+        + '<span class="git-proto-arrow">▾</span>'
         + '<span class="git-tree-proto-name">' + escHtml(pr.proto) + '</span>'
         + '<span class="git-tree-proto-count">' + files.length + ' 个文件</span>'
-        + '</div>';
+        + '</div>'
+        + '<div class="git-proto-body">';
 
       mainFiles.forEach(function(f) {
         html += gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx);
@@ -821,7 +823,7 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, o
         });
         html += '</div>';
       }
-      html += '</div>';
+      html += '</div></div>';
     });
     html += '</div>';
   });
@@ -899,6 +901,23 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, o
       if (!list) return;
       var hidden = list.style.display === 'none';
       list.style.display = hidden ? '' : 'none';
+      if (arrow) arrow.textContent = hidden ? '▾' : '▸';
+    };
+  });
+
+  // 5. 原型整组收起/展开（点行收起下方列表；点勾选框只勾选不折叠）
+  containerEl.querySelectorAll('.git-tree-proto').forEach(function(hd) {
+    hd.onclick = function(ev) {
+      try{
+        var t = ev && (ev.target || ev.srcElement);
+        if (t && ((t.tagName || '').toLowerCase() === 'input' || (t.closest && t.closest('input')))) return;
+      }catch(e){}
+      var grp = hd.parentElement;
+      var body = grp ? grp.querySelector('.git-proto-body') : null;
+      var arrow = hd.querySelector('.git-proto-arrow');
+      if (!body) return;
+      var hidden = body.style.display === 'none';
+      body.style.display = hidden ? '' : 'none';
       if (arrow) arrow.textContent = hidden ? '▾' : '▸';
     };
   });
@@ -1269,6 +1288,7 @@ function executeGitPush(force) {
         branchCustom: (typeof gitPushBranchCustom !== 'undefined') ? gitPushBranchCustom : null,
         els: { submit: (typeof gitPushSubmit !== 'undefined') ? gitPushSubmit : null, force: (typeof btnGitPushForce !== 'undefined') ? btnGitPushForce : null, status: (typeof gitPushStatus !== 'undefined') ? gitPushStatus : null },
         closeModal: (typeof closeGitPushModal === 'function') ? closeGitPushModal : function () {},
+        refreshList: function (b) { try { loadGitPushStatus(b || _branch); } catch (e) {} },
         onCrossProject: function (info) {
           try { gitPendingCrossProj = { kind: 'push', files: info.files, message: info.message, branch: info.branch }; } catch (e) {}
           try { var t = $('gitCrossProjConfirmText'); if (t) t.textContent = '本次将跨项目推送到同一远端同一分支 [' + info.branch + ']，异项目文件将一并推送，不可单独撤回。'; } catch (e2) {}
@@ -1340,6 +1360,7 @@ function executeGitPushWithForeign(files, msg, branch) {
         files: files, message: msg, branch: branch,
         els: { submit: (typeof gitPushSubmit !== 'undefined') ? gitPushSubmit : null, force: (typeof btnGitPushForce !== 'undefined') ? btnGitPushForce : null, status: (typeof gitPushStatus !== 'undefined') ? gitPushStatus : null },
         closeModal: (typeof closeGitPushModal === 'function') ? closeGitPushModal : function () {},
+        refreshList: function (b) { try { loadGitPushStatus(b || branch); } catch (e) {} },
         onNeedHeal: function (r, retry) { try { gitOpenHealConfirm(r, retry); } catch (e) {} }
       });
       return;
@@ -1628,8 +1649,9 @@ function gitDoPull(files, branch, withBackup) {
         }
       }
       if (gitPullSubmit) { gitPullSubmit.disabled = false; gitPullSubmit.textContent = '确认拉取'; }
-    } else {
-      if (gitPullSubmit) { gitPullSubmit.disabled = false; gitPullSubmit.textContent = '重试拉取'; }
+      /* 拉取成功后重查远端并刷新列表（已同步的不再列出）；稍延迟让成功态可读 */
+      try { setTimeout(function(){ try{ loadGitPullDiff(r.branch || branch); }catch(e){} }, 1200); } catch (e) {}
+    } else {      if (gitPullSubmit) { gitPullSubmit.disabled = false; gitPullSubmit.textContent = '重试拉取'; }
       var info = gitErrorInfo((r && r.code) || '', (r && (r.error || (r.failed && r.failed.length ? '部分文件拉取失败' : ''))) || '');
       if (gitPullStatus) {
         gitPullStatus.className = 'git-status-msg err';
@@ -1669,14 +1691,16 @@ function gitCheckDirtyThenPull(files, branch) {
       return;
     }
     var dirty = {};
+    var dirtyCode = {};
     try {
       (sr.projects || []).forEach(function(p) {
         (p.protos || []).forEach(function(pr) {
-          (pr.files || []).forEach(function(f) { if (f && f.path) dirty[f.path] = 1; });
+          (pr.files || []).forEach(function(f) { if (f && f.path) { dirty[f.path] = 1; dirtyCode[f.path] = f.code || ''; } });
         });
       });
     } catch (e) {}
-    var overlap = (files || []).filter(function(p) { return dirty[p]; });
+    /* 本地已删文件不算脏：拉取即用远端恢复，无需覆盖确认 */
+    var overlap = (files || []).filter(function(p) { return dirty[p] && dirtyCode[p] !== 'del'; });
     if (!overlap.length) { gitDoPull(files, branch, false); return; }
     gitPendingPullCover = { files: files, branch: branch, overlap: overlap };
     var t = $('gitPullCoverConfirmText');
@@ -1688,7 +1712,7 @@ function gitCheckDirtyThenPull(files, branch) {
   }).catch(function() { gitDoPull(files, branch, false); });
 }
 (function bindGitPullCover() {
-  var b = $('btnGitPullCoverBackup'), g = $('btnGitPullCoverGotoPush'), c = $('btnGitPullCoverCancel'), x = $('gitPullCoverConfirmClose');
+  var b = $('btnGitPullCoverBackup'), o = $('btnGitPullCoverOverwrite'), c = $('btnGitPullCoverCancel'), x = $('gitPullCoverConfirmClose');
   if (b) b.onclick = function() {
     var pend = gitPendingPullCover;
     gitCloseMask('gitPullCoverConfirmMask');
@@ -1696,12 +1720,12 @@ function gitCheckDirtyThenPull(files, branch) {
     gitPendingPullCover = null;
     gitDoPull(pend.files, pend.branch, true);
   };
-  if (g) g.onclick = function() {
+  if (o) o.onclick = function() {
     var pend = gitPendingPullCover;
     gitCloseMask('gitPullCoverConfirmMask');
+    if (!pend) return;
     gitPendingPullCover = null;
-    try { closeGitPullModal(); } catch (e) {}
-    try { openGitPushModal(); } catch (e) {}
+    gitDoPull(pend.files, pend.branch, false);
   };
   function cancel() { gitCloseMask('gitPullCoverConfirmMask'); gitPendingPullCover = null; }
   if (c) c.onclick = cancel;

@@ -680,26 +680,24 @@
    <span>Git 上传发布</span>
    <span class="modal-x" id="gitPushClose" title="关闭">✕</span>
   </div>
-   <div class="modal-body">
-    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; padding:6px 10px; background:#F8FAFC; border:1px solid var(--line); border-radius:6px;">
-     <span style="font-size:12px; font-weight:700; color:var(--ink); white-space:nowrap;">上传目标分支:</span>
-     <select class="modal-input" id="gitPushBranchSelect" style="flex:1; padding:2px 8px; font-size:12px; height:26px;"></select>
-     <input class="modal-input" id="gitPushBranchCustom" type="text" placeholder="输入分支名" style="flex:1; padding:2px 8px; font-size:12px; height:26px; display:none;">
-     <button class="docs-btn" id="btnGitPushBranchToggle" type="button" style="font-size:11px; padding:2px 8px; height:26px;">自定义</button>
-    </div>
-    <div class="git-hint-weak" id="gitPushBranchHint">仅选择本次远端分支，不切换本地。上次使用分支见下拉默认选中项。</div>
-    <div class="git-field-hint" id="gitPushBranchRuleHint" style="display:none;"></div>
-   <div class="modal-row" style="display:flex; flex-direction:row; align-items:center; justify-content:space-between; margin-bottom:8px;">
-     <span class="modal-hint" id="gitPushHint">勾选本次需要发布的原型文件（支持跨项目选择与自动补齐沙箱层级）。</span>
-     <div style="display:inline-flex; gap:6px; position:relative;">
-      <button class="docs-btn" id="btnGitPushSelectAll" type="button" style="font-size:11px; padding:2px 6px;">全选 ▾</button>
-      <button class="docs-btn" id="btnGitPushClearAll" type="button" style="font-size:11px; padding:2px 6px;">清空</button>
-      <div class="git-select-menu" id="gitPushSelectMenu" style="display:none;">
-       <button class="git-menu-item" id="btnGitPushSelectCurrent" type="button">仅全选当前项目</button>
-       <button class="git-menu-item" id="btnGitPushSelectVisible" type="button">全选全部可见（含异项目，需确认）</button>
+    <div class="modal-body">
+     <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0; max-width:360px; padding:6px 10px; background:#F8FAFC; border:1px solid var(--line); border-radius:6px;">
+       <span style="font-size:12px; font-weight:700; color:var(--ink); white-space:nowrap;">上传目标分支:</span>
+       <select class="modal-input" id="gitPushBranchSelect" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px;"></select>
+       <input class="modal-input" id="gitPushBranchCustom" type="text" placeholder="输入分支名" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px; display:none;">
+       <button class="docs-btn" id="btnGitPushBranchToggle" type="button" style="font-size:11px; padding:2px 8px; height:26px; flex:none;">自定义</button>
+      </div>
+      <div style="display:inline-flex; gap:6px; position:relative; margin-left:auto; flex:none;">
+       <button class="docs-btn" id="btnGitPushSelectAll" type="button" style="font-size:11px; padding:2px 6px;">全选 ▾</button>
+       <button class="docs-btn" id="btnGitPushClearAll" type="button" style="font-size:11px; padding:2px 6px;">清空</button>
+       <div class="git-select-menu" id="gitPushSelectMenu" style="display:none;">
+        <button class="git-menu-item" id="btnGitPushSelectCurrent" type="button">仅全选当前项目</button>
+        <button class="git-menu-item" id="btnGitPushSelectVisible" type="button">全选全部可见（含异项目，需确认）</button>
+       </div>
       </div>
      </div>
-   </div>
+     <div class="git-field-hint" id="gitPushBranchRuleHint" style="display:none;"></div>
    <div class="git-tree-list" id="gitPushTreeList">
     <div style="color:var(--faint); padding:16px; text-align:center;">正在比对本地变更…</div>
    </div>
@@ -729,27 +727,25 @@
    <span>Git 拉取同步</span>
    <span class="modal-x" id="gitPullClose" title="关闭">✕</span>
   </div>
-   <div class="modal-body">
-    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; padding:6px 10px; background:#F8FAFC; border:1px solid var(--line); border-radius:6px;">
-     <span style="font-size:12px; font-weight:700; color:var(--ink); white-space:nowrap;">拉取来源分支:</span>
-     <select class="modal-input" id="gitPullBranchSelect" style="flex:1; padding:2px 8px; font-size:12px; height:26px;"></select>
-     <input class="modal-input" id="gitPullBranchCustom" type="text" placeholder="输入分支名" style="flex:1; padding:2px 8px; font-size:12px; height:26px; display:none;">
-     <button class="docs-btn" id="btnGitPullBranchToggle" type="button" style="font-size:11px; padding:2px 8px; height:26px;">自定义</button>
-     <button class="docs-btn" id="btnGitPullBranchRefresh" type="button" style="font-size:11px; padding:2px 8px; height:26px;">刷新</button>
-    </div>
-    <div class="git-hint-weak" id="gitPullBranchHint">仅选择本次远端分支，不切换本地。上次使用分支见下拉默认选中项。</div>
-    <div class="git-field-hint" id="gitPullBranchRuleHint" style="display:none;"></div>
-   <div class="modal-row" style="display:flex; flex-direction:row; align-items:center; justify-content:space-between; margin-bottom:8px;">
-     <span class="modal-hint" id="gitPullHint">勾选需要从远程同步的文件，拉取后将自动在本地创建对应项目与原型。</span>
-     <div style="display:inline-flex; gap:6px; position:relative;">
-      <button class="docs-btn" id="btnGitPullSelectAll" type="button" style="font-size:11px; padding:2px 6px;">全选 ▾</button>
-      <button class="docs-btn" id="btnGitPullClearAll" type="button" style="font-size:11px; padding:2px 6px;">清空</button>
-      <div class="git-select-menu" id="gitPullSelectMenu" style="display:none;">
-       <button class="git-menu-item" id="btnGitPullSelectCurrent" type="button">仅全选当前项目</button>
-       <button class="git-menu-item" id="btnGitPullSelectVisible" type="button">全选全部可见（含异项目，需确认）</button>
+    <div class="modal-body">
+     <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0; max-width:360px; padding:6px 10px; background:#F8FAFC; border:1px solid var(--line); border-radius:6px;">
+       <span style="font-size:12px; font-weight:700; color:var(--ink); white-space:nowrap;">拉取来源分支:</span>
+       <select class="modal-input" id="gitPullBranchSelect" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px;"></select>
+       <input class="modal-input" id="gitPullBranchCustom" type="text" placeholder="输入分支名" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px; display:none;">
+       <button class="docs-btn" id="btnGitPullBranchToggle" type="button" style="font-size:11px; padding:2px 8px; height:26px; flex:none;">自定义</button>
+       <button class="docs-btn" id="btnGitPullBranchRefresh" type="button" style="font-size:11px; padding:2px 8px; height:26px; flex:none;">刷新</button>
+      </div>
+      <div style="display:inline-flex; gap:6px; position:relative; margin-left:auto; flex:none;">
+       <button class="docs-btn" id="btnGitPullSelectAll" type="button" style="font-size:11px; padding:2px 6px;">全选 ▾</button>
+       <button class="docs-btn" id="btnGitPullClearAll" type="button" style="font-size:11px; padding:2px 6px;">清空</button>
+       <div class="git-select-menu" id="gitPullSelectMenu" style="display:none;">
+        <button class="git-menu-item" id="btnGitPullSelectCurrent" type="button">仅全选当前项目</button>
+        <button class="git-menu-item" id="btnGitPullSelectVisible" type="button">全选全部可见（含异项目，需确认）</button>
+       </div>
       </div>
      </div>
-   </div>
+     <div class="git-field-hint" id="gitPullBranchRuleHint" style="display:none;"></div>
    <div class="git-tree-list" id="gitPullTreeList">
     <div style="color:var(--faint); padding:16px; text-align:center;">正在探测远程仓库更新…</div>
    </div>
@@ -863,9 +859,9 @@
     <div class="modal-row"><span class="modal-hint">建议先备份；覆盖后本地修改不可直接撤销。</span></div>
    </div>
    <div class="modal-foot" style="flex-wrap:wrap; gap:8px;">
-    <button class="docs-btn primary" id="btnGitPullCoverBackup" type="button">自动备份后拉取</button>
-    <button class="docs-btn" id="btnGitPullCoverGotoPush" type="button">先去上传本地修改</button>
-    <button class="docs-btn" id="btnGitPullCoverCancel" type="button">取消</button>
+     <button class="docs-btn primary" id="btnGitPullCoverBackup" type="button">自动备份后拉取</button>
+     <button class="docs-btn" id="btnGitPullCoverOverwrite" type="button" style="color:#DC2626" title="不备份，直接用远端版本覆盖本地文件">以远端为准覆盖本地</button>
+     <button class="docs-btn" id="btnGitPullCoverCancel" type="button">取消</button>
    </div>
   </div>
  </div>

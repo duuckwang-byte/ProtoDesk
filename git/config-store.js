@@ -98,13 +98,14 @@ function _writeRawConfig(all) {
 /** 同步读取凭据（文件解密优先，其次内存）。返回 {username, token, persisted} */
 function _readCredentialsSync(projectName) {
   const key = _key(projectName);
+  const readOne = (k) => {
   // 1. 加密文件
   try {
     const { credPath } = resolvePaths();
     if (fs.existsSync(credPath)) {
       try {
         const raw = JSON.parse(fs.readFileSync(credPath, 'utf8'));
-        const ent = raw && raw.entries && raw.entries[key];
+        const ent = raw && raw.entries && raw.entries[k];
         if (ent && (ent.usernameEnc || ent.tokenEnc)) {
           const ss = getSafeStorage();
           if (ss) {
@@ -119,14 +120,25 @@ function _readCredentialsSync(projectName) {
     }
   } catch (e) {}
   // 2. 内存
-  if (_memCreds.has(key)) {
-    const m = _memCreds.get(key) || {};
+  if (_memCreds.has(k)) {
+    const m = _memCreds.get(k) || {};
     return {
       username: String(m.username || ''),
       token: String(m.token || ''),
       persisted: false,
       sessionOnly: !isPersistAvailable()
     };
+  }
+  return null;
+  };
+  const hit = readOne(key);
+  if (hit && (hit.username || hit.token)) return hit;
+  /* 项目无凭证时回退默认（与 remoteUrl/branch 的回退语义一致，避免匿名推送挂死） */
+  if (key !== '__default__') {
+    try {
+      const fb = readOne('__default__');
+      if (fb && (fb.username || fb.token)) return fb;
+    } catch (e) {}
   }
   return { username: '', token: '', persisted: false };
 }

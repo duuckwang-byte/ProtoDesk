@@ -636,10 +636,16 @@ async function gitPushImpl(ev, o) {
 
   // 3. 检查是否有需要新提交的内容
   const stagedCheck = await runGit(paths.SANDBOX_ROOT, ['diff', '--cached', '--name-only']);
-  if (stagedCheck.status === 0 && stagedCheck.stdout && stagedCheck.stdout.trim()) {
+  const stagedList = (stagedCheck.status === 0 && stagedCheck.stdout) ? stagedCheck.stdout.split(/\r?\n/).map(function(s){ return s.trim(); }).filter(Boolean) : [];
+  if (!stagedList.length) {
+    return { ok: false, error: '所选文件暂存为空，未能提交（可能文件不存在或与HEAD无差异）。请检查勾选后再试。' };
+  }
+  {
     const commitRes = await runGit(paths.SANDBOX_ROOT, ['commit', '-m', message]);
     if (commitRes.status !== 0 && commitRes.stdout.indexOf('nothing to commit') < 0) {
-      return { ok: false, error: sanitizeGitError(commitRes.stderr || commitRes.stdout) };
+      const ce = sanitizeGitError(commitRes.stderr || commitRes.stdout) || ('提交失败且git无任何返回（分支[' + branch + ']）');
+      try { gitPushFailLog('commit', commitRes.stderr || commitRes.stdout); } catch (e) {}
+      return { ok: false, error: ce };
     }
   }
 
@@ -656,24 +662,145 @@ async function gitPushImpl(ev, o) {
     if (e && e.code === 'AUTH_URL_BLOCKED') return { ok: false, code: 'AUTH_URL_BLOCKED', error: String(e.message) };
     return { ok: false, error: sanitizeGitError(String((e && e.message) || e)) };
   }
-  if (pushRes.timedOut) return { ok: false, code: 'TIMEOUT', error: sanitizeGitError(pushRes.stderr || pushRes.stdout) };
+  if (pushRes.timedOut) {
+    try { gitPushFailLog('push-timeout', pushRes.stderr || pushRes.stdout); } catch (e) {}
+    return { ok: false, code: 'TIMEOUT', error: sanitizeGitError(pushRes.stderr || pushRes.stdout) || '推送远端35秒无响应且无任何返回，请检查网络/VPN后重试' };
+  }
   if (pushRes.status !== 0) {
     const rawErr = pushRes.stderr || pushRes.stdout;
+    try { gitPushFailLog('push', rawErr); } catch (e) {}
     const needPull = /fetch first|non-fast-forward|Updates were rejected/i.test(rawErr);
-    return {
-      ok: false,
-      needPull,
-      canForce: needPull,
-      error: needPull ? '远程仓库存在不一致的历史版本（如远端被清空或重置）。您可以先执行拉取同步，或点击「强制覆盖上传」将本地沙箱完整发布至远程。' : sanitizeGitError(rawErr)
-    };
+    if (needPull) {
+      return {
+        ok: false,
+        needPull,
+        canForce: needPull,
+        error: '远程仓库存在不一致的历史版本（如远端被清空或重置）。您可以先执行拉取同步，或点击「强制覆盖上传」将本地沙箱完整发布至远程。'
+      };
+    }
+    return { ok: false, error: sanitizeGitError(rawErr) || '推送失败且远端无任何返回，请检查网络/凭证后重试' };
   }
+  /* 推送成功即远端==HEAD：同步追踪，下次状态比对不再把已推文件算成新增 */
+  try { await gitSyncOriginRef(branch); } catch (e) {}
 
-  return { ok: true, message: force ? '强制覆盖发布成功' : '发布成功', filesCount: files.length, branch, forced: force };
+  return { ok: true, message: force ? '强制覆盖发布成功' : '发布成功', filesCount: stagedList.length, branch, forced: force };
   });
 
 }
-async function gitFetchDiffImpl(ev, o) {
-  return withGitLock('read', 'fetch-diff', async () => {
+/* 推送/提交失败落盘（脱敏）：app-<日期>.log，供下次报错时直接定位 */
+function gitPushFailLog(step, raw) {
+  try {
+    const dir = logsDir(); if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const d = new Date(); const p2 = shared.pad2;
+    const ymd = d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+    const hms = p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds());
+    let txt = '';
+    try { txt = gitAuth.redactSecrets(String(raw == null ? '' : raw)).slice(0, 500); } catch (e) { txt = ''; }
+    fs.appendFileSync(path.join(dir, 'app-' + ymd + '.log'), '[' + hms + '][git:push] ' + step + ' failed: ' + txt + '\n', 'utf8');
+  } catch (e) {}
+}
+/* 推送/拉取成功后同步本地 origin/<branch> 追踪到已知远端位置：
+ * 本工具推送走显式 URL、拉取只动 FETCH_HEAD，origin/* 从不自动前进，
+ * 会导致状态比对永远拿旧锚点算“未推送”（已推文件反复显示为新增）。 */
+async function gitSyncOriginRef(branch, sha) {
+  try {
+    const b = String(branch || 'main');
+    if (!isValidBranch(b)) return;
+    let shaOut = String(sha || '').trim();
+    if (!shaOut) {
+      try {
+        const r = await runGit(paths.SANDBOX_ROOT, ['rev-parse', 'HEAD']);
+        if (!r || r.status !== 0) return;
+        shaOut = String(r.stdout || '').trim();
+      } catch (e) { return; }
+    }
+    if (!/^[0-9a-f]{40}$/i.test(shaOut)) return;
+    try { await runGit(paths.SANDBOX_ROOT, ['update-ref', 'refs/remotes/origin/' + b, shaOut]); } catch (e) {}
+  } catch (e) {}
+}
+/* 拉取列表工作区修正（纯函数，可单测）：
+ * diffEntries: 提交比对条目 [{path,project,proto,subPath,code,label}]
+ * remoteSha: {path: blobSha}（远端 FETCH_HEAD 全树）
+ * workHash: {path: sha}（工作区现存文件的哈希）
+ * exists: (relPath) => bool（工作区是否存在）
+ * 规则：工作区缺失但远端有 → 新增（可恢复）；内容与远端一致 → 剔除（已拉取）；其余保留提交标签 */
+function gitPullAdjustEntries(diffEntries, remoteSha, workHash, exists) {
+  const out = [];
+  const seen = {};
+  try {
+    (diffEntries || []).forEach((en) => {
+      if (!en || !en.path || seen[en.path]) return;
+      seen[en.path] = 1;
+      let alive = true;
+      try { alive = !!exists(en.path); } catch (e) { alive = true; }
+      if (!alive) {
+        if (remoteSha && remoteSha[en.path]) {
+          out.push({ path: en.path, project: en.project, proto: en.proto, subPath: en.subPath, code: 'add', label: '新增' });
+        }
+        return;
+      }
+      try {
+        const rs = remoteSha && remoteSha[en.path];
+        const ws = workHash && workHash[en.path];
+        if (rs && ws && String(rs).toLowerCase() === String(ws).toLowerCase()) return;
+      } catch (e) {}
+      out.push(en);
+    });
+    /* 远端有、工作区缺、且提交比对没列出的 → 补新增 */
+    if (remoteSha) {
+      Object.keys(remoteSha).forEach((p) => {
+        if (seen[p]) return;
+        let alive = true;
+        try { alive = !!exists(p); } catch (e) { alive = true; }
+        if (alive) return;
+        const parts = String(p).split('/');
+        const pProject = parts.length > 2 ? parts[0] : (parts.length > 1 ? parts[0] : '默认项目');
+        const pProto = parts.length > 2 ? parts[1] : (parts.length > 1 ? parts[1] : parts[0]);
+        const pSub = parts.length > 2 ? parts.slice(2).join('/') : (parts.length > 1 ? parts.slice(1).join('/') : p);
+        out.push({ path: p, project: pProject, proto: pProto, subPath: pSub, code: 'add', label: '新增' });
+      });
+    }
+  } catch (e) { return diffEntries; }
+  return out;
+}
+/* 工作区修正外壳：批量取远端 blob（1次）+ 工作区 hash（1次），失败回退原列表 */
+async function gitPullAdjustForWorkdir(diffEntries) {
+  try {
+    if (!diffEntries || !diffEntries.length) return diffEntries;
+    const lsR = await runGit(paths.SANDBOX_ROOT, ['ls-tree', '-r', 'FETCH_HEAD']);
+    const remoteSha = {};
+    if (lsR && lsR.status === 0 && lsR.stdout) {
+      lsR.stdout.split('\n').forEach((ln) => {
+        const m = /^(\d+) (\w+) ([0-9a-f]+)\t(.*)$/.exec(ln);
+        if (m && m[2] === 'blob') remoteSha[m[4].replace(/\\/g, '/')] = m[3];
+      });
+    }
+    if (!Object.keys(remoteSha).length) return diffEntries;
+    const existPaths = [];
+    diffEntries.forEach((en) => {
+      try { if (en && en.path && fs.existsSync(path.join(paths.SANDBOX_ROOT, en.path))) existPaths.push(en.path); } catch (e) {}
+    });
+    const workHash = {};
+    if (existPaths.length) {
+      /* hash-object 多文件输出只有 sha 无文件名：按参数顺序逐行回填，行数对不上则整体放弃修正 */
+      try {
+        const hr = await runGit(paths.SANDBOX_ROOT, ['hash-object'].concat(existPaths));
+        if (hr && hr.status === 0 && hr.stdout) {
+          const lines = String(hr.stdout).split('\n').map((s) => String(s || '').trim()).filter(Boolean);
+          if (lines.length === existPaths.length) {
+            for (let hi = 0; hi < lines.length; hi++) {
+              const sha = lines[hi].split(/\s+/)[0] || '';
+              if (/^[0-9a-f]{40}$/i.test(sha)) workHash[existPaths[hi]] = sha;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    const existsFn = (p) => { try { return fs.existsSync(path.join(paths.SANDBOX_ROOT, p)); } catch (e) { return true; } };
+    return gitPullAdjustEntries(diffEntries, remoteSha, workHash, existsFn);
+  } catch (e) { return diffEntries; }
+}
+async function gitFetchDiffImpl(ev, o) {  return withGitLock('read', 'fetch-diff', async () => {
   const projName = (typeof o === 'string' ? o : (o && o.project)) || '';
   const cfg = getProjectGitConfig(projName);
   const branch = (o && o.branch && o.branch.trim()) || cfg.branch || 'main';
@@ -721,12 +848,11 @@ async function gitFetchDiffImpl(ev, o) {
     return { ok: false, error: sanitizeGitError(diffRes.stderr) };
   }
 
-  const tree = {};
-  let totalCount = 0;
   const handledPaths = new Set(); // D-G1 与 git:status 共享去重逻辑（通过 gitHandledPath 工具函数复用）
   // 复用顶层 GIT_STATUS_MAP
 
   const rawLines = diffRes.stdout.split(/\r?\n/).filter(Boolean);
+  const diffEntries = [];
   rawLines.forEach((line) => {
     let stCode = 'add', label = '新增', relPath = '';
     if (hasHead) {
@@ -744,9 +870,7 @@ async function gitFetchDiffImpl(ev, o) {
     const pProto = pathParts.length > 2 ? pathParts[1] : (pathParts.length > 1 ? pathParts[1] : pathParts[0]);
     const pSub = pathParts.length > 2 ? pathParts.slice(2).join('/') : (pathParts.length > 1 ? pathParts.slice(1).join('/') : relPath);
 
-    tree[pProject] = tree[pProject] || {};
-    tree[pProject][pProto] = tree[pProject][pProto] || [];
-    tree[pProject][pProto].push({
+    diffEntries.push({
       path: relPath,
       project: pProject,
       proto: pProto,
@@ -754,6 +878,22 @@ async function gitFetchDiffImpl(ev, o) {
       code: stCode,
       label
     });
+  });
+
+  /* 工作区感知修正：已与远端同内容的不再列（拉过即清）；本地已删但远端有的标新增可恢复 */
+  let finalEntries = diffEntries;
+  try {
+    const adjusted = await gitPullAdjustForWorkdir(diffEntries);
+    if (Array.isArray(adjusted)) finalEntries = adjusted;
+  } catch (e) {}
+
+  const tree = {};
+  let totalCount = 0;
+  finalEntries.forEach((en) => {
+    const pProject = en.project, pProto = en.proto;
+    tree[pProject] = tree[pProject] || {};
+    tree[pProject][pProto] = tree[pProject][pProto] || [];
+    tree[pProject][pProto].push(en);
     totalCount++;
   });
 
@@ -880,6 +1020,13 @@ async function gitPullImpl(ev, o) {
       return { ok: false, error: sanitizeGitError(mergeRes.stderr || mergeRes.stdout), backupPath, branch };
     }
   }
+
+  /* 拉取成功即远端位置==FETCH_HEAD：同步追踪，避免拉回内容被状态比对误算成未推送 */
+  try {
+    const fr = await runGit(paths.SANDBOX_ROOT, ['rev-parse', 'FETCH_HEAD']);
+    const fsha = (fr && fr.status === 0) ? String(fr.stdout || '').trim() : '';
+    if (/^[0-9a-f]{40}$/i.test(fsha)) await gitSyncOriginRef(branch, fsha);
+  } catch (e) {}
 
   return {
     ok: true,
@@ -1014,6 +1161,7 @@ module.exports = {
   gitStatusImpl,
   gitPushImpl,
   gitFetchDiffImpl,
+  gitPullAdjustEntries,
   gitPullImpl,
   gitIsBusyImpl,
   gitCancelImpl,
