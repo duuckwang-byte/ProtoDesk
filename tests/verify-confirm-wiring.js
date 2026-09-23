@@ -282,3 +282,57 @@ testConfirmBehavior().then(() => {
   console.error((e && e.stack) || String(e));
   process.exitCode = 1;
 });
+
+// ---- 10. 上传文件树：仅原型三类文件 + 子页面可折叠（不同步改拉取） ----
+(function testPushTreeFilterFold() {
+  function ex(src, name) {
+    const m = src.match(new RegExp('function\\s+' + name + '\\s*\\([^)]*\\)\\s*\\{'));
+    assert.ok(m, '[提取失败] function ' + name);
+    let i = m.index + m[0].length, depth = 1, q = null;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (q) { if (c === '\\') { i++; continue; } if (c === q) q = null; continue; }
+      if (c === '"' || c === "'" || c === '`') { q = c; continue; }
+      if (c === '{') depth++;
+      if (c === '}') { depth--; if (depth === 0) break; }
+    }
+    return src.slice(m.index, i + 1);
+  }
+  const factory = new Function(ex(paeSrc, 'gitPushVisibleFile') + '\n' + ex(paeSrc, 'gitFilterPushProjects') + '\n' + ex(paeSrc, 'gitSplitProtoFiles') + '\nreturn {gitPushVisibleFile, gitFilterPushProjects, gitSplitProtoFiles};')();
+  // 过滤真值表
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/Q.html'), true, '原型html须显示');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/Q.md'), true, '原型md须显示');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/子页.html'), true, '子页面html须显示');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/links.json'), true, 'links须显示');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/annotations.json'), true, 'annotations须显示');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/最新需求.md'), true, '最新需求须显示');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/.context/history.md'), false, '会话历史md须隐藏');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/.context/toolPrompt.md'), false, '提示词须隐藏');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/.context/ui-spec.md'), false, '规范快照须隐藏');
+  assert.strictEqual(factory.gitPushVisibleFile('P/.pull-backup/a.html'), false, '拉取备份须隐藏');
+  assert.strictEqual(factory.gitPushVisibleFile('P/.heal-backup/a.html'), false, '自愈备份须隐藏');
+  assert.strictEqual(factory.gitPushVisibleFile('.gitignore'), false, '根gitignore须隐藏');
+  assert.strictEqual(factory.gitPushVisibleFile('P/Q/app.js'), false, '其他扩展名须隐藏');
+  assert.strictEqual(factory.gitPushVisibleFile(''), false, '空路径须隐藏');
+  // 整树过滤：空原型/空项目掉落
+  const filtered = factory.gitFilterPushProjects([
+    { project: 'P', isCurrent: true, protos: [
+      { proto: 'Q', files: [{ path: 'P/Q/Q.html' }, { path: 'P/Q/.context/history.md' }] },
+      { proto: '空', files: [{ path: 'P/空/.context/toolPrompt.md' }] }
+    ] }
+  ]);
+  assert.strictEqual(filtered.length, 1, '须剩1个项目');
+  assert.strictEqual(filtered[0].protos.length, 1, '须剩1个原型');
+  assert.deepStrictEqual(filtered[0].protos[0].files.map(f => f.path), ['P/Q/Q.html'], '仅留原型文件');
+  // 主/子拆分
+  const sp = factory.gitSplitProtoFiles('Q', [{ path: 'P/Q/Q.html' }, { path: 'P/Q/Q.md' }, { path: 'P/Q/最新需求.md' }, { path: 'P/Q/links.json' }, { path: 'P/Q/子页.html' }, { path: 'P/Q/其它.md' }]);
+  assert.deepStrictEqual(sp.main.map(f => f.path), ['P/Q/Q.html', 'P/Q/Q.md', 'P/Q/最新需求.md', 'P/Q/links.json'], '主文件常显');
+  assert.deepStrictEqual(sp.sub.map(f => f.path), ['P/Q/子页.html', 'P/Q/其它.md'], '其余进子页面组');
+  // 接线：上传走过滤+折叠，拉取不动
+  assert.ok(/gitFilterPushProjects\(r\.projects\)/.test(paeSrc), '上传须先过滤再渲染');
+  assert.ok(/'push', \{ ?subFold: true ?\}/.test(paeSrc), '上传须开子页面折叠');
+  assert.ok(/git-sub-toggle/.test(paeSrc) && /git-sub-list/.test(paeSrc), '须有折叠行与子列表');
+  const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
+  assert.ok(/\.git-sub-toggle\s*\{/.test(css) && /\.git-sub-list \.git-tree-item/.test(css), '须有折叠样式');
+  console.log('[PASS] 上传文件树过滤与子页面折叠');
+})();

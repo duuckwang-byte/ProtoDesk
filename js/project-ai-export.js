@@ -692,7 +692,55 @@ function gitShowNeedConfigEmpty() {
 }
 
 /* 通用多项目/原型层级 Git 树状列表渲染器 */
-function renderGitTree(containerEl, data, onCountChange, inputName, checkMode) {
+function gitPushVisibleFile(relPath){
+  /* 上传仅显示原型三类文件：html/md/json；隐藏会话历史md、提示词(.context)、备份区与杂项 */
+  var p=String(relPath||'').replace(/\\/g,'/');
+  if(!p) return false;
+  var low=p.toLowerCase();
+  if(/(^|\/)\.context\//.test(low)) return false;
+  if(/(^|\/)\.pull-backup\//.test(low)) return false;
+  if(/(^|\/)\.heal-backup\//.test(low)) return false;
+  if(/(^|\/)\.gitignore$/.test(low)) return false;
+  if(/\.html?$/i.test(p)) return true;
+  if(/\.md$/i.test(p)) return true;
+  if(/(^|\/)links\.json$/i.test(p)) return true;
+  if(/(^|\/)annotations\.json$/i.test(p)) return true;
+  return false;
+}
+function gitFilterPushProjects(projects){
+  var out=[];
+  (projects||[]).forEach(function(proj){
+    var nps=[];
+    (proj.protos||[]).forEach(function(pr){
+      var fs=((pr.files||[]).filter(function(f){ return f&&gitPushVisibleFile(f.path); }));
+      if(fs.length) nps.push({proto:pr.proto, files:fs});
+    });
+    if(nps.length) out.push({project:proj.project, isCurrent:proj.isCurrent, protos:nps});
+  });
+  return out;
+}
+/* 原型内主文件与子页面拆分：主页html/md+最新需求/links/annotations 常显，其余进可折叠子页面组 */
+function gitSplitProtoFiles(protoName, files){
+  var main=[], sub=[];
+  var base=String(protoName||'');
+  (files||[]).forEach(function(f){
+    var p=String((f&&f.path)||'').replace(/\\/g,'/');
+    var name=p.split('/').pop()||'';
+    var stem=name.replace(/\.(html?|md)$/i,'');
+    var low=name.toLowerCase();
+    if(stem===base||low==='最新需求.md'||low==='links.json'||low==='annotations.json') main.push(f);
+    else sub.push(f);
+  });
+  return {main:main, sub:sub};
+}
+function gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx){
+  return '<label class="git-tree-item">'
+    + '<input type="checkbox" name="' + inputName + '"' + (isDefaultChecked ? ' checked' : '') + ' data-path="' + escAttr(f.path) + '" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
+    + '<span class="status-tag ' + escAttr(f.code || 'mod') + '">' + escHtml(f.label || '修改') + '</span>'
+    + '<span class="git-file-name" title="' + escAttr(f.path) + '">' + escHtml(f.subPath || f.path) + '</span>'
+    + '</label>';
+}
+function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, opts) {
   if (!containerEl) return;
   var projects = [];
   if (Array.isArray(data)) {
@@ -746,6 +794,14 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode) {
     protos.forEach(function(pr, prIdx) {
       var files = pr.files || [];
       if (!files.length) return;
+      var subFold = !!(opts && opts.subFold);
+      var mainFiles = files, subFiles = [];
+      if (subFold) {
+        var sp = null;
+        try{ sp = gitSplitProtoFiles(pr.proto, files); }catch(e){ sp = null; }
+        if (sp) { mainFiles = sp.main; subFiles = sp.sub; }
+        if (!mainFiles.length && !subFiles.length) return;
+      }
       html += '<div class="git-tree-group" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
         + '<div class="git-tree-proto">'
         + '<input type="checkbox" class="git-group-chk"' + (isDefaultChecked ? ' checked' : '') + ' data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
@@ -753,13 +809,18 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode) {
         + '<span class="git-tree-proto-count">' + files.length + ' 个文件</span>'
         + '</div>';
 
-      files.forEach(function(f) {
-        html += '<label class="git-tree-item">'
-          + '<input type="checkbox" name="' + inputName + '"' + (isDefaultChecked ? ' checked' : '') + ' data-path="' + escAttr(f.path) + '" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
-          + '<span class="status-tag ' + escAttr(f.code || 'mod') + '">' + escHtml(f.label || '修改') + '</span>'
-          + '<span class="git-file-name" title="' + escAttr(f.path) + '">' + escHtml(f.subPath || f.path) + '</span>'
-          + '</label>';
+      mainFiles.forEach(function(f) {
+        html += gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx);
       });
+      if (subFiles.length) {
+        html += '<div class="git-sub-toggle" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '" title="展开/收起子页面">'
+          + '<span class="git-sub-arrow">▸</span><span>子页面（' + subFiles.length + '）</span></div>'
+          + '<div class="git-sub-list" style="display:none">';
+        subFiles.forEach(function(f) {
+          html += gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx);
+        });
+        html += '</div>';
+      }
       html += '</div>';
     });
     html += '</div>';
@@ -826,6 +887,19 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode) {
         pChk.indeterminate = (pChecked > 0 && pChecked < pTotal);
       }
       updateCounts();
+    };
+  });
+
+  // 4. 子页面组收起/展开（仅 subFold 渲染时存在；收起只隐藏不影响勾选）
+  containerEl.querySelectorAll('.git-sub-toggle').forEach(function(tgl) {
+    tgl.onclick = function() {
+      var grp = tgl.parentElement;
+      var list = grp ? grp.querySelector('.git-sub-list') : null;
+      var arrow = tgl.querySelector('.git-sub-arrow');
+      if (!list) return;
+      var hidden = list.style.display === 'none';
+      list.style.display = hidden ? '' : 'none';
+      if (arrow) arrow.textContent = hidden ? '▾' : '▸';
     };
   });
 
@@ -1026,10 +1100,10 @@ function loadGitPushStatus(targetBranch) {
       return;
     }
     gitShowPushEmptyConfig(false);
-    renderGitTree(gitPushTreeList, r.projects, function(cnt) {
+    renderGitTree(gitPushTreeList, gitFilterPushProjects(r.projects), function(cnt) {
       if (gitPushCount) gitPushCount.textContent = '已选 ' + cnt + ' 项变更';
       if (gitPushSubmit) gitPushSubmit.disabled = (cnt === 0);
-    }, 'gitPushChk', 'push');
+    }, 'gitPushChk', 'push', { subFold: true });
   }).catch(function(e) {
     if (gitPushTreeList) {
       gitPushTreeList.innerHTML = '<div style="color:var(--err);padding:16px;text-align:center;">' + escHtml(String(e && e.message || e)) + '</div>';
