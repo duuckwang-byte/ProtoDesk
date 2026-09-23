@@ -1470,8 +1470,21 @@ function testS5_DraftLsTsAckRuntime() {
   })();
 }
 
-function runAll() {
-  const tests = [
+// ── H1 独立窗切Tab无遮罩：setDocsOpen/setReqOpen在docwin下跳过遮罩与栈 ──
+function testH1_DocwinNoMaskOnTab() {
+  const pae = exportSrc;
+  assert.ok(/function setDocsOpen\(open\)/.test(pae), '缺setDocsOpen');
+  assert.ok(/function setReqOpen\(open\)/.test(pae), '缺setReqOpen');
+  const docsFn = pae.slice(pae.indexOf('function setDocsOpen(open)'), pae.indexOf('function setDocsOpen(open)') + 2200);
+  const reqFn = pae.slice(pae.indexOf('function setReqOpen(open)'), pae.indexOf('function setReqOpen(open)') + 1800);
+  for (const [nm, body] of [['setDocsOpen', docsFn], ['setReqOpen', reqFn]]) {
+    assert.ok(/isDocWinMode|docwin-mode/.test(body), nm + '须判独立窗模式');
+    assert.ok(/MaskStack\.pop\('(docsMask|reqMask)'\)/.test(body), nm + '独立窗须清残留栈顶');
+  }
+  assert.ok(/docsMaskEl\)docsMaskEl\.style\.display='none'/.test(pae.replace(/\s+/g, '')) || /docsMaskEl\.style\.display='none'/.test(pae), '独立窗须隐藏docs遮罩');
+}
+
+function runAll() {  const tests = [
     ['A1 主进程docwin三通道', testA1_DocwinChannels],
     ['A2 镜像中继透传', testA2_MirrorRelay],
     ['A3 关窗通知panel', testA3_CloseNotifyPanel],
@@ -1518,7 +1531,8 @@ function runAll() {
     ['G5 落定三件套', testG5_SettleTrioHeal],
     ['S5 LS+ts+ACK真执行', testS5_DraftLsTsAckRuntime],
     ['D1 无渐变无emoji红线', testD1_NoGradientNoEmoji],
-    ['S3 aiwin判别+按钮+boot真执行', testS3_AiwinRuntime]
+    ['S3 aiwin判别+按钮+boot真执行', testS3_AiwinRuntime],
+    ['H1 独立窗切Tab无遮罩', testH1_DocwinNoMaskOnTab]
   ];
   let passed = 0, failed = 0;
   for (const [title, fn] of tests) {

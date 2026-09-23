@@ -91,21 +91,29 @@ function setSbOpen(open){
  }catch(e){}
 }
 function setDocsOpen(open){
- const isPc = document.body.classList.contains('kind-pc');
- if(!isPc && open){
-  // 移动端为切换显示，非悬浮：不使用遮罩与栈，仅切换内容
-  bodyB.classList.toggle('docs-open',!!open);
-  if(open&&reqOpen)setReqOpen(false);
-  return;
- }
- if(!isPc && !open){
-  bodyB.classList.toggle('docs-open',!!open);
-  closeToc();
-  return;
- }
-  bodyB.classList.toggle('docs-open',!!open);
-  if(docsMaskEl)docsMaskEl.style.display=open?'block':'none';
-  if(open){ if(window.MaskStack) window.MaskStack.push('docsMask', function(){ setDocsOpen(false); }); }else{ if(window.MaskStack) window.MaskStack.pop('docsMask'); }
+  const isPc = document.body.classList.contains('kind-pc');
+  if(!isPc && open){
+   // 移动端为切换显示，非悬浮：不使用遮罩与栈，仅切换内容
+   bodyB.classList.toggle('docs-open',!!open);
+   if(open&&reqOpen)setReqOpen(false);
+   return;
+  }
+  if(!isPc && !open){
+   bodyB.classList.toggle('docs-open',!!open);
+   closeToc();
+   return;
+  }
+   var inDocWin=false;
+   try{ inDocWin=(typeof isDocWinMode==='function')?isDocWinMode():!!(document.body&&document.body.classList.contains('docwin-mode')); }catch(e){}
+   bodyB.classList.toggle('docs-open',!!open);
+   if(!inDocWin){
+    if(docsMaskEl)docsMaskEl.style.display=open?'block':'none';
+    if(open){ if(window.MaskStack) window.MaskStack.push('docsMask', function(){ setDocsOpen(false); }); }else{ if(window.MaskStack) window.MaskStack.pop('docsMask'); }
+   }else{
+    /* 独立窗：面板常驻行内布局，无悬浮无遮罩；顺手清掉可能残留的遮罩/栈顶 */
+    try{ if(docsMaskEl)docsMaskEl.style.display='none'; }catch(e){}
+    try{ if(window.MaskStack) window.MaskStack.pop('docsMask'); }catch(e){}
+   }
   if(open&&reqOpen)setReqOpen(false); /* 与「最新需求」面板互斥 */
   /* PC 目录常驻：随文档弹窗同显隐 */
   try{
@@ -186,8 +194,16 @@ function setReqOpen(open){
   }
   reqOpen=open;
   if(bodyB)bodyB.classList.toggle('req-open',open);
-  if(reqMaskEl)reqMaskEl.style.display=open?'block':'none';
-  if(open){ if(window.MaskStack) window.MaskStack.push('reqMask', function(){ setReqOpen(false); }); }else{ if(window.MaskStack) window.MaskStack.pop('reqMask'); }
+  var inDocWin2=false;
+  try{ inDocWin2=(typeof isDocWinMode==='function')?isDocWinMode():!!(document.body&&document.body.classList.contains('docwin-mode')); }catch(e){}
+  if(!inDocWin2){
+   if(reqMaskEl)reqMaskEl.style.display=open?'block':'none';
+   if(open){ if(window.MaskStack) window.MaskStack.push('reqMask', function(){ setReqOpen(false); }); }else{ if(window.MaskStack) window.MaskStack.pop('reqMask'); }
+  }else{
+   /* 独立窗：面板常驻行内布局，无悬浮无遮罩；顺手清掉可能残留的遮罩/栈顶 */
+   try{ if(reqMaskEl)reqMaskEl.style.display='none'; }catch(e){}
+   try{ if(window.MaskStack) window.MaskStack.pop('reqMask'); }catch(e){}
+  }
   if(open){
    if(bodyB&&bodyB.classList.contains('docs-open'))setDocsOpen(false); /* 与功能说明互斥 */
    exitReqEdit(true);
