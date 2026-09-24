@@ -1,0 +1,419 @@
+{
+  "version": 1,
+  "note": "Wave-D/G Agent工厂化：发现型(needsProtocol)11适配器数据驱动矩阵。bespoke 14仅登记元信息以保26完整，qoder已直驱（stream-json解析+行式模型表），仍由原JS实现；factory仅实例化driver=factory条目，保持registry/engine/detection接口不变。",
+  "defs": [
+    {
+      "id": "opencode",
+      "name": "OpenCode CLI",
+      "bin": "opencode-cli",
+      "fallbackBins": ["opencode"],
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "opencode/deepseek-v4-flash", "label": "DeepSeek V4 Flash" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "json-event-stream",
+      "eventParser": "opencode"
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "bin": "claude",
+      "fallbackBins": ["claude-code"],
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "claude-3-7-sonnet-latest", "label": "Claude 3.7 Sonnet", "default": true },
+        { "id": "claude-3-5-sonnet-latest", "label": "Claude 3.5 Sonnet" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "claude-stream-json"
+    },
+    {
+      "id": "cursor-agent",
+      "name": "Cursor Agent",
+      "bin": "cursor-agent",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "claude-3-7-sonnet", "label": "Claude 3.7 Sonnet", "default": true },
+        { "id": "gpt-4o", "label": "GPT-4o" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "json-event-stream",
+      "eventParser": "cursor-agent"
+    },
+    {
+      "id": "codex",
+      "name": "OpenAI Codex",
+      "bin": "codex",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "gpt-4o", "label": "GPT-4o", "default": true },
+        { "id": "o3-mini", "label": "o3-mini" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "json-event-stream",
+      "eventParser": "codex"
+    },
+    {
+      "id": "deepseek-harness",
+      "name": "DeepSeek Harness",
+      "bin": "dsh",
+      "fallbackBins": [],
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "Default (CLI config)", "default": true }],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "plain"
+    },
+    {
+      "id": "qwen",
+      "name": "Qwen Code",
+      "bin": "qwen",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "qwen3-coder-plus", "label": "qwen3-coder-plus" },
+        { "id": "qwen3-coder-flash", "label": "qwen3-coder-flash" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "plain"
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek TUI",
+      "bin": "deepseek",
+      "fallbackBins": ["codewhale"],
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "deepseek-v4-pro", "label": "deepseek-v4-pro" },
+        { "id": "deepseek-v4-flash", "label": "deepseek-v4-flash" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": false,
+      "streamFormat": "plain"
+    },
+    {
+      "id": "mimo",
+      "name": "MiMo Code",
+      "bin": "mimo",
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true }],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "json-event-stream",
+      "eventParser": "opencode"
+    },
+    {
+      "id": "amp",
+      "name": "Amp",
+      "bin": "amp",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "smart", "label": "Smart (mode)" },
+        { "id": "deep", "label": "Deep (mode)" },
+        { "id": "rush", "label": "Rush (mode)" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "claude-stream-json"
+    },
+    {
+      "id": "codebuddy",
+      "name": "Codebuddy Code",
+      "bin": "codebuddy",
+      "fallbackBins": ["cbc"],
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true }],
+      "driver": "bespoke",
+      "promptViaStdin": true,
+      "streamFormat": "claude-stream-json"
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "bin": "aider",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "sonnet", "label": "sonnet" },
+        { "id": "gpt-4o", "label": "gpt-4o" },
+        { "id": "deepseek/deepseek-chat", "label": "deepseek/deepseek-chat" },
+        { "id": "gemini/gemini-2.0-flash", "label": "gemini/gemini-2.0-flash" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": false,
+      "streamFormat": "plain"
+    },
+    {
+      "id": "grok-build",
+      "name": "Grok Build",
+      "bin": "grok",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "grok-build", "label": "grok-build (xAI · default)" },
+        { "id": "grok-4.3", "label": "grok-4.3 (xAI)" },
+        { "id": "grok-4.20-reasoning", "label": "grok-4.20-reasoning (xAI · deep)" },
+        { "id": "grok-4.20-non-reasoning", "label": "grok-4.20-non-reasoning (xAI · fast)" },
+        { "id": "grok-4.20-multi-agent", "label": "grok-4.20-multi-agent (xAI · orchestration)" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": false,
+      "streamFormat": "plain"
+    },
+    {
+      "id": "antigravity",
+      "name": "Antigravity",
+      "bin": "agy",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)" },
+        { "id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium)" },
+        { "id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)" },
+        { "id": "gemini-3.7-flash-high", "label": "Gemini 3.7 Flash (High)" },
+        { "id": "gemini-3.7-flash-medium", "label": "Gemini 3.7 Flash (Medium)" },
+        { "id": "gemini-3.7-flash-low", "label": "Gemini 3.7 Flash (Low)" },
+        { "id": "gemini-3.6-flash-high", "label": "Gemini 3.6 Flash (High)" },
+        { "id": "gemini-3.6-flash-medium", "label": "Gemini 3.6 Flash (Medium)" },
+        { "id": "gemini-3.6-flash-low", "label": "Gemini 3.6 Flash (Low)" },
+        { "id": "gemini-3.1-pro-high", "label": "Gemini 3.1 Pro (High)" },
+        { "id": "gemini-3.1-pro-low", "label": "Gemini 3.1 Pro (Low)" },
+        { "id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6 (Thinking)" },
+        { "id": "claude-opus-4-6-thinking", "label": "Claude Opus 4.6 (Thinking)" },
+        { "id": "gpt-oss-120b-medium", "label": "GPT-OSS 120B (Medium)" }
+      ],
+      "listModels": {
+        "args": ["models"],
+        "timeoutMs": 10000
+      },
+      "reasoningOptions": [
+        { "id": "default", "label": "默认推荐 (CLI 预设)", "default": true },
+        { "id": "high", "label": "高强度 (High)" },
+        { "id": "medium", "label": "中强度 (Medium)" },
+        { "id": "low", "label": "低强度 (Low)" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": false,
+      "streamFormat": "plain"
+    },
+    {
+      "id": "atomcode",
+      "name": "AtomCode CLI",
+      "bin": "atomcode",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6" },
+        { "id": "claude-sonnet-4-5", "label": "Claude Sonnet 4.5" },
+        { "id": "gpt-5.2", "label": "GPT-5.2" },
+        { "id": "glm-5.2", "label": "GLM-5.2" },
+        { "id": "deepseek-v4", "label": "DeepSeek V4" }
+      ],
+      "driver": "bespoke",
+      "promptViaStdin": false,
+      "streamFormat": "plain"
+    },
+    {
+      "id": "amr",
+      "name": "AMR",
+      "bin": "vela",
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true }],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["agent", "run"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot CLI",
+      "bin": "copilot",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "claude-sonnet-4.6", "label": "Claude Sonnet 4.6" },
+        { "id": "gpt-5.2", "label": "GPT-5.2" }
+      ],
+      "driver": "factory",
+      "buildArgs": { "kind": "model", "args": ["--allow-all-tools", "--output-format", "json"], "modelFlag": "--model" },
+      "promptViaStdin": true,
+      "streamFormat": "plain",
+      "needsProtocol": "copilot-stream-json"
+    },
+    {
+      "id": "devin",
+      "name": "Devin for Terminal",
+      "bin": "devin",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "adaptive", "label": "adaptive" },
+        { "id": "swe", "label": "swe" },
+        { "id": "opus", "label": "opus" },
+        { "id": "sonnet", "label": "sonnet" },
+        { "id": "codex", "label": "codex" },
+        { "id": "gpt", "label": "gpt" },
+        { "id": "gemini", "label": "gemini" }
+      ],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["--permission-mode", "dangerous", "--respect-workspace-trust", "false", "acp"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "bin": "hermes",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "grok-4.3", "label": "grok-4.3 (xAI · default)" },
+        { "id": "grok-4.20-reasoning", "label": "grok-4.20-reasoning (xAI · deep)" },
+        { "id": "grok-4.20-non-reasoning", "label": "grok-4.20-non-reasoning (xAI · fast)" },
+        { "id": "grok-4.20-multi-agent", "label": "grok-4.20-multi-agent (xAI · orchestration)" },
+        { "id": "openai-codex:gpt-5.5", "label": "gpt-5.5 (openai-codex:gpt-5.5)" },
+        { "id": "openai-codex:gpt-5.4", "label": "gpt-5.4 (openai-codex:gpt-5.4)" },
+        { "id": "openai-codex:gpt-5.4-mini", "label": "gpt-5.4-mini (openai-codex:gpt-5.4-mini)" }
+      ],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["acp", "--accept-hooks"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "kilo",
+      "name": "Kilo",
+      "bin": "kilo",
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true }],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["acp"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi CLI",
+      "bin": "kimi",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "kimi-k2-turbo-preview", "label": "kimi-k2-turbo-preview" },
+        { "id": "moonshot-v1-8k", "label": "moonshot-v1-8k" },
+        { "id": "moonshot-v1-32k", "label": "moonshot-v1-32k" }
+      ],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["acp"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "kiro",
+      "name": "Kiro CLI",
+      "bin": "kiro-cli",
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true }],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["acp"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "bin": "pi",
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet 4.5 (anthropic)" },
+        { "id": "anthropic/claude-opus-4-5", "label": "Claude Opus 4.5 (anthropic)" },
+        { "id": "openai/gpt-5", "label": "GPT-5 (openai)" },
+        { "id": "openai/o4-mini", "label": "o4-mini (openai)" },
+        { "id": "google/gemini-2.5-pro", "label": "Gemini 2.5 Pro (google)" },
+        { "id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash (google)" }
+      ],
+      "driver": "factory",
+      "buildArgs": { "kind": "model", "args": ["--mode", "rpc"], "modelFlag": "--model" },
+      "promptViaStdin": true,
+      "streamFormat": "plain",
+      "needsProtocol": "pi-rpc"
+    },
+    {
+      "id": "qoder",
+      "name": "Qoder CLI",
+      "bin": "qodercli",
+      "fallbackBins": ["qoderclicn"],
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "lite", "label": "Lite" },
+        { "id": "efficient", "label": "Efficient" },
+        { "id": "auto", "label": "Auto" },
+        { "id": "performance", "label": "Performance" },
+        { "id": "ultimate", "label": "Ultimate" }
+      ],
+      "driver": "factory",
+      "buildArgs": { "kind": "model-cwd", "args": ["-p", "--output-format", "stream-json", "--yolo"], "modelFlag": "--model", "cwdFlag": "-w" },
+      "promptViaStdin": true,
+      "streamFormat": "qoder-stream-json",
+      "listModels": { "args": ["--list-models"], "timeoutMs": 8000, "lineBased": true, "skipHeader": "MODEL" }
+    },
+    {
+      "id": "reasonix",
+      "name": "DeepSeek Reasonix",
+      "bin": "reasonix",
+      "fallbackBins": ["dsnix"],
+      "versionArgs": ["--version"],
+      "fallbackModels": [
+        { "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true },
+        { "id": "deepseek-v4-pro", "label": "deepseek-v4-pro" },
+        { "id": "deepseek-v4-flash", "label": "deepseek-v4-flash" }
+      ],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["acp"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "trae-cli",
+      "name": "Trae CLI",
+      "bin": "traecli",
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true }],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": ["acp", "serve", "--yolo"] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc"
+    },
+    {
+      "id": "vibe",
+      "name": "Mistral Vibe CLI",
+      "bin": "vibe-acp",
+      "versionArgs": ["--version"],
+      "fallbackModels": [{ "id": "default", "label": "默认推荐模型 (CLI 预设)", "default": true }],
+      "driver": "factory",
+      "buildArgs": { "kind": "static", "args": [] },
+      "promptViaStdin": false,
+      "streamFormat": "plain",
+      "needsProtocol": "acp-json-rpc",
+      "terminal": { "unsupported": "该 CLI 为 ACP 专属通道，无交互式终端；请用对话模式使用" }
+    }
+  ]
+}

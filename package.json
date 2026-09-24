@@ -1,0 +1,67 @@
+{
+  "name": "proto-viewer",
+  "version": "1.0.0",
+  "description": "原型预览工具 · 投融资录入工作流",
+  "main": "main.js",
+  "author": "local",
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "test": "node tests/run-all.js",
+    "test:all": "node tests/run-all.js",
+    "test:ui": "node tests/run.js",
+    "lint": "node tests/lint-guard.js",
+    "lint:eslint": "eslint .",
+    "format:check": "node -e \"var fs=require('fs');var p=JSON.parse(fs.readFileSync('.prettierrc.json','utf8'));console.log('prettier config ok singleQuote='+p.singleQuote+' printWidth='+p.printWidth)\""
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0"
+  },
+  "build": {
+    "appId": "local.proto.viewer",
+    "productName": "原型工具",
+    "asar": true,
+    "files": [
+      "main.js",
+      "main/**",
+      "preload.js",
+      "app.css",
+      "js/**",
+      "!js/**/*.bak",
+      "runtimes/**",
+      "!runtimes/**/*.bak",
+      "providers/**",
+      "!providers/**/*.bak",
+      "platform/**",
+      "!platform/**/*.bak",
+      "git/**",
+      "!git/**/*.bak",
+      "原型+文档.html",
+      "toolPrompt.md",
+      "design-specs/**",
+      "!**/*.bak"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "directories": {
+      "output": "桌面端"
+    }
+  }
+}

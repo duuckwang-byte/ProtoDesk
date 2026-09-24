@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AI 对话框样式演示（静态）</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  body{overflow:auto;background:var(--bg);}
+  .demo-page{max-width:860px;margin:0 auto;padding:28px 20px 80px;}
+  .demo-title{font-size:18px;font-weight:800;margin-bottom:4px;}
+  .demo-sub{font-size:12.5px;color:var(--sub);margin-bottom:20px;}
+  .demo-sec{margin:22px 0;}
+  .demo-label{font-size:11.5px;font-weight:700;color:var(--sub);margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+  .demo-label code{font-family:ui-monospace,Menlo,Consolas,monospace;background:var(--bg-subtle);border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-weight:400;}
+  .demo-shell{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;}
+  .demo-chat{padding:6px 16px 18px;display:flex;flex-direction:column;}
+  .demo-foot-note{font-size:11.5px;color:var(--faint);margin-top:6px;}
+  .err-card-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .ai-foot{border-top:1px solid var(--line);}
+</style>
+</head>
+<body>
+<div class="demo-page">
+  <div class="demo-title">AI 对话框样式演示</div>
+  <div class="demo-sub">静态页面：复用 app.css 真实类名，把各事件渲染态摆出来看效果；交互仅演示（打字机 / 折叠 / 复制 / 发送停止切换）。不连后端。</div>
+
+  <!-- 1 用户消息 -->
+  <div class="demo-sec">
+    <div class="demo-label">用户消息 <code>user</code></div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="ai-msg user"><div class="ai-msg-body">把首页导航栏改成深色，并且登录按钮放到右上角</div></div>
+    </div></div>
+  </div>
+
+  <!-- 2 thinking -->
+  <div class="demo-sec">
+    <div class="demo-label">思考过程 <code>thinking</code>（可折叠）</div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="thinking-box open" id="demoThink">
+        <div class="thinking-header"><div class="thinking-title-left"><div class="thinking-pulse"></div><span class="thinking-title-text">正在思考…</span></div><span class="fold-indicator">▾ 折叠</span></div>
+        <div class="thinking-content">先读 index.html 找到 nav 结构；深色用 #0F172A；登录按钮 absolute 右上；保留 data-pr-id 不动。</div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- 3 tool_call -->
+  <div class="demo-sec">
+    <div class="demo-label">工具调用 <code>tool_call</code>（进行中 / 已完成）</div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="tool-execution-stream">
+        <div class="tool-call-card"><div class="tool-call-left"><span class="tool-icon">◈</span><span class="tool-name">read_file</span><span class="tool-param">商城首页/index.html</span></div><span class="tool-status-tag running">执行中</span></div>
+        <div class="tool-call-card"><div class="tool-call-left"><span class="tool-icon">◈</span><span class="tool-name">edit_file</span><span class="tool-param">index.html · nav 换肤 + 登录按钮右置</span></div><span class="tool-status-tag done">完成</span></div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- 4 answer 流式 -->
+  <div class="demo-sec">
+    <div class="demo-label">AI 回答 <code>answer</code>（流式打字机 + 光标）</div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="ai-msg ai"><div class="ai-msg-body"><span id="demoType"></span><span class="caret"></span></div>
+        <div class="ai-msg-actions"><button type="button" class="ai-copy-btn" data-copy="导航已换成深色，登录按钮已移到右上角。">复制</button></div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- 5 代码块 -->
+  <div class="demo-sec">
+    <div class="demo-label">代码块（可复制）</div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="ai-msg ai"><div class="ai-msg-body">关键改动如下：</div></div>
+      <div class="code-block-wrap"><div class="code-block-head"><span>index.html</span><button type="button" class="code-copy-btn" data-copy="&lt;nav class=&quot;nav-grid dark&quot;&gt;">复制代码</button></div><pre><code>&lt;nav class="nav-grid dark"&gt;
+  &lt;a href="#" class="nav-item"&gt;首页&lt;/a&gt;
+  &lt;a href="#" class="login-btn"&gt;登录&lt;/a&gt;
+&lt;/nav&gt;</code></pre></div>
+    </div></div>
+  </div>
+
+  <!-- 6 折叠长文 -->
+  <div class="demo-sec">
+    <div class="demo-label">折叠长文 <code>ai-msg-fold</code></div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="ai-msg ai"><details class="ai-msg-fold" open><summary>修改说明（3 处）</summary><div class="ai-msg-body">1. nav-grid 加 dark 类；2. login-btn 右置；3. data-pr-id 全部保留。</div></details></div>
+    </div></div>
+  </div>
+
+  <!-- 7 文件变更行 -->
+  <div class="demo-sec">
+    <div class="demo-label">文件变更行（含增删计数）</div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="file-item-row"><div class="file-item-left">商城首页/index.html</div><div class="diff-counts"><span class="add">+18</span><span class="del">−6</span></div></div>
+    </div></div>
+  </div>
+
+  <!-- 8 快照 -->
+  <div class="demo-sec">
+    <div class="demo-label">安全快照 <code>snapshot-card</code></div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="snapshot-card"><span class="snapshot-info">已生成快照 10:42（共 3 份），可一键回滚到修改前。</span><span class="snapshot-actions"><button type="button" class="btn-rollback">一键回滚</button></span></div>
+    </div></div>
+  </div>
+
+  <!-- 9 错误卡 -->
+  <div class="demo-sec">
+    <div class="demo-label">错误卡 <code>error</code>（标题/正文/操作项）</div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="ai-msg-bubble ai-error-card"><div class="err-card-header"><span class="err-icon">!</span><span class="err-title">模型配额耗尽或请求受限 (429)</span></div><div class="err-card-body">当前服务商账户余额不足或并发过高，工作区完好无损。建议切换免费模型或检查额度后重试。</div><div class="err-card-actions"><button type="button" class="docs-btn">切换至免费推荐模型</button><button type="button" class="docs-btn primary">重新发起</button></div></div>
+    </div></div>
+  </div>
+
+  <!-- 10 输入区 -->
+  <div class="demo-sec">
+    <div class="demo-label">底部输入区（含发送/停止切换）</div>
+    <div class="demo-shell">
+      <div class="ai-foot">
+        <textarea class="ai-input" rows="1" placeholder="输入问题，回车发送（Shift+Enter 换行）"></textarea>
+        <div class="ai-foot-actions">
+          <select class="ai-model" style="display:inline-block" title="选择模型"><option>OpenCode · default</option><option>DeepSeek · free</option></select>
+          <button type="button" class="docs-btn" id="demoClear">清空</button>
+          <button type="button" class="docs-btn primary ai-send" id="demoSend">发送</button>
+        </div>
+        <div class="demo-foot-note">点“发送”演示停止态（红闪“停止生成”），再点恢复。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 11 日志行 -->
+  <div class="demo-sec">
+    <div class="demo-label">执行日志行 <code>trace-line</code></div>
+    <div class="demo-shell"><div class="demo-chat">
+      <div class="trace-line"><span class="trace-time">[10:42:01]</span><span class="trace-tag info">[HTTP]</span><span class="trace-text">POST /chat/completions 200 (1.2s)</span></div>
+      <div class="trace-line"><span class="trace-time">[10:42:03]</span><span class="trace-tag success">[FS_SAVE]</span><span class="trace-text">index.html 已写入</span></div>
+      <div class="trace-line"><span class="trace-time">[10:42:03]</span><span class="trace-tag warn">[SCOPE]</span><span class="trace-text">发现沙箱外引用，已提请确认</span></div>
+      <div class="trace-line"><span class="trace-time">[10:42:04]</span><span class="trace-tag error">[PATCH]</span><span class="trace-text">第 2 块定位失败，已跳过</span></div>
+    </div></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // 打字机
+  var full='导航已换成深色 (#0F172A)，登录按钮已移到右上角；data-pr-id 全部保留，可直接预览。';
+  var el=document.getElementById('demoType'), i=0;
+  var timer=setInterval(function(){ i+=2; el.textContent=full.slice(0,i); if(i>=full.length)clearInterval(timer); },40);
+  // 思考折叠
+  var box=document.getElementById('demoThink');
+  box.querySelector('.thinking-header').onclick=function(){
+    var open=box.classList.toggle('open');
+    box.querySelector('.fold-indicator').textContent=open?'\u25BE 折叠':'\u25B8 展开';
+  };
+  // 复制按钮
+  function bindCopy(btn, getText){
+    btn.onclick=function(){
+      var t=getText();
+      function done(){ btn.textContent='已复制'; btn.classList.add('copied'); setTimeout(function(){ btn.textContent=btn.getAttribute('data-label')||'复制'; btn.classList.remove('copied'); },1500); }
+      if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,done); }
+      else{ done(); }
+    };
+  }
+  document.querySelectorAll('.ai-copy-btn[data-copy]').forEach(function(b){ b.setAttribute('data-label',b.textContent); bindCopy(b,function(){ return b.getAttribute('data-copy'); }); });
+  document.querySelectorAll('.code-copy-btn[data-copy]').forEach(function(b){ b.setAttribute('data-label',b.textContent.trim()); bindCopy(b,function(){ return b.getAttribute('data-copy'); }); });
+  // 发送/停止切换
+  var send=document.getElementById('demoSend');
+  send.onclick=function(){
+    if(send.classList.contains('stopping')){ send.classList.remove('stopping'); send.textContent='发送'; }
+    else{ send.classList.add('stopping'); send.textContent='停止生成'; }
+  };
+  document.getElementById('demoClear').onclick=function(){ el.textContent=''; i=0; };
+})();
+</script>
+</body>
+</html>

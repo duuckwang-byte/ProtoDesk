@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型预览 · 投融资录入工作流</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="workbenchNarrowTip" class="workbench-narrow-tip">当前窗口过窄（&lt;600px），建议放大窗口以获得完整体验</div>
+<div class="app">
+ <!-- ═══════ 顶部全局工具栏（横跨全宽，位于菜单栏上方） ═══════ -->
+ <!-- /* P1-6 fix */ 顶部溢出: stage-head 保持40px, flex横滑+省略, 暗色Token已补齐 -->
+ <header class="stage-head">
+  <button class="stage-proj-btn" id="sbProject" title="当前项目，点击切换项目"><i data-ic="folder"></i> <span class="stage-proj-name">项目：—</span></button><!-- icon align fix: i[data-ic] 已在 app.css 统一基线 -->
+  <span class="kind-seg" id="kindSeg" title="若识别有误，可手动切换端别展示">
+   <button id="btnKindMobile" title="按移动端预览">移动</button>
+   <span class="sep"></span>
+   <button id="btnKindPc" title="按 PC 端预览">PC</button>
+  </span>
+  <span class="zoom-wrap" title="内容缩放（百分比），不改变原型宽高；下拉选择预设，或直接输入数字（回车/点击其他区域生效）">
+   <select id="zoomSelect" title="预设缩放">
+    <option value="">预设</option>
+    <option value="50">50%</option>
+    <option value="75">75%</option>
+    <option value="85">85%</option>
+    <option value="90">90%</option>
+    <option value="100">100%</option>
+    <option value="125">125%</option>
+    <option value="150">150%</option>
+   </select>
+   <input id="zoomInput" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="85">
+   <span class="zoom-suf">%</span>
+  </span>
+  <button id="btnLinkMgr" type="button" title="查看与管理本原型的跳转交互" class="docs-btn link-mgr-btn">交互<span id="linkBadge" class="link-badge" style="display:none"></span></button>
+  <button id="btnAnnoMgr" type="button" title="查看与管理本原型的需求标注" class="docs-btn anno-mgr-btn">标注<span id="annoBadgeCount" class="link-badge" style="display:none"></span></button>
+  <button class="docs-btn" id="btnRefresh" title="刷新：重新读取本地最新的原型与功能说明文档">刷新</button>
+  
+  <!-- Git 协同下拉菜单（位于导出按钮左侧） -->
+  <div class="git-dropdown-wrap" id="gitDropdownWrap">
+   <button class="docs-btn git-menu-btn" id="btnGitMenu" title="Git 协同同步选项">Git ▾</button>
+   <div class="git-dropdown-menu" id="gitDropdownMenu" style="display:none">
+    <button class="git-menu-item" id="btnGitPushMenu" title="选择目录或文件上传发布到 Git 仓库">上传发布</button>
+    <button class="git-menu-item" id="btnGitPullMenu" title="从远程 Git 仓库选择性拉取同步更新">拉取同步</button>
+    <button class="git-menu-item" id="btnGitConfigMenu" title="配置 Git 远程仓库地址与访问凭据">仓库设置</button>
+   </div>
+  </div>
+  <button class="docs-btn" id="btnOpenCli" title="打开终端：在当前沙箱目录启动当前使用的本地 CLI 工具">终端</button>
+
+  <!-- 导出悬浮下拉菜单 -->
+  <div class="export-dropdown-wrap" id="exportDropdownWrap">
+   <button class="docs-btn export-menu-btn" id="btnExportMenu" title="导出原型选项">导出 ▾</button>
+   <div class="export-dropdown-menu" id="exportDropdownMenu" style="display:none">
+    <button class="export-menu-item" id="btnExportPureHtml" title="导出当前原型的纯单文件 HTML 源码（供开发直接投喂 AI 生成代码）">导出原型源码</button>
+    <button class="export-menu-item" id="btnExportHtml" title="导出为独立 HTML（含当前原型与功能说明的全部交互）">导出HTML</button>
+   </div>
+  </div>
+  <button class="docs-btn" id="btnSubmitEdit" style="display:none" title="查看待提交修改列表，提交后由大模型统一修改">待提交列表<i class="badge" id="submitBadge" style="display:none">0</i></button>
+ </header>
+ 
+ <!-- ═══════ 主体容器（左侧菜单栏 + 右侧舞台） ═══════ -->
+ <div class="app-body">
+  <!-- ═══════ 左侧源文件列表栏（位于工具栏下方） ═══════ -->
+  <aside class="sb">
+   <div class="sb-head">
+    <span class="sb-title">原型列表</span>
+    <button class="sb-addg" id="btnAddGroup" title="新建文件夹（虚拟分组，不创建真实目录）">新建文件夹</button>
+   </div>
+   <div class="sb-list" id="sbList"></div>
+  </aside>
+  <main class="stage">
+   <div class="stage-frame" id="stageFrame">
+    <div class="phone-holder" id="phoneHolder">
+     <div class="phone-wrap" id="phoneWrap">
+      <iframe id="frame" src="about:blank" sandbox="allow-scripts allow-forms" title="原型预览"></iframe>
+     </div>
+    </div>
+    <div class="docs-panel">
+     <div class="doc-toc" id="docToc" style="display:none"></div>
+     <div class="docs-main">
+      <div class="docs-head">
+       <button class="docs-btn" id="btnToc" title="展开/收起文档目录">目录</button>
+       <button class="docs-btn" id="btnDocWinToggle" title="在独立窗口中打开文档">独立窗口</button>
+       <span class="docs-actions">
+        <span class="doc-export-wrap" id="docExportWrap">
+         <button class="docs-btn" id="btnDocExport" title="导出当前文档为长图/PDF/MD">导出▾</button>
+         <span class="doc-export-menu" id="docExportMenu" style="display:none">
+          <button class="doc-export-item" id="btnDocExportPng" title="导出2x高清长图PNG">高清长图PNG</button>
+          <button class="doc-export-item" id="btnDocExportPdf" title="导出矢量A4 PDF">A4 PDF</button>
+          <button class="doc-export-item" id="btnDocExportMd" title="下载当前文档Markdown">MD文档</button>
+         </span>
+        </span>
+        <button class="docs-btn" id="btnEditDoc" title="编辑当前页面说明">编辑</button>
+       <button class="docs-btn" id="btnCancelDoc" style="display:none" title="放弃本次编辑，恢复为保存的内容">取消</button>
+       <button class="docs-btn primary" id="btnSaveDoc" style="display:none" title="保存当前页面说明">保存</button>
+       </span>
+      </div>
+      <div class="doc-mode-tabs" id="docModeTabs">
+       <button type="button" class="doc-mode-tab on" id="btnDocTabDesc">功能说明</button>
+       <button type="button" class="doc-mode-tab" id="btnDocTabReq">最新需求</button>
+      </div>
+       <div class="doc-search-box" id="docSearchBox" style="display:none">
+       <input class="doc-search-input" id="docSearchInput" type="text" placeholder="搜索文档" spellcheck="false" autocomplete="off" />
+       <span class="doc-search-count" id="docSearchCount">0/0</span>
+       <button class="docs-btn doc-search-btn" id="docSearchPrev" title="上一个(Shift+Enter)">上一个</button>
+       <button class="docs-btn doc-search-btn" id="docSearchNext" title="下一个(Enter)">下一个</button>
+       <button class="docs-btn doc-search-btn" id="docSearchClose" title="关闭(Esc)">✕</button>
+      </div>
+      <div class="docs-body">
+      <div class="doc-title" id="docTitle"></div>
+      <div class="doc-content" id="docContent"></div>
+      <div class="doc-edit" id="docEdit" style="display:none">
+       <div class="doc-edit-tip">支持 Markdown 语法（表格、标题、列表、加粗等）<button type="button" class="doc-shortcut-link" id="btnDocShortcut">快捷键</button></div>
+       <textarea id="docEditArea" spellcheck="false" placeholder="在此编辑该页面的功能说明…"></textarea>
+       </div>
+      </div>
+     </div>
+     </div>
+    </main>
+ </div>
+</div>
+<span class="sb-hotzone" title="打开菜单">
+  <button class="ai-fab" id="btnAddSource">导入原型</button>
+  <button class="ai-fab" id="btnNewProto" title="新建一个原型：先选 PC 端或移动端，再创建独立文件夹沙箱（空 html + md）并支持大模型对话">新建设计</button>
+  <button class="ai-fab" id="aiDesignFab" title="在当前原型沙箱打开大模型对话，继续最近一次的 AI 创作">AI设计</button>
+  <button class="sb-trigger" id="sbTrigger" title="打开/收起菜单栏"><i data-ic="menu"></i></button>
+  <button class="sb-set" id="btnSettings" title="设置"><i data-ic="settings"></i></button>
+</span>
+<span class="doc-hotzone" title="打开功能说明">
+  <button class="docs-fab" id="reqFab" title="打开「最新需求」文档（当前迭代需求，独立 md 文件）">最新需求</button>
+  <button class="docs-fab" id="docsFab" title="打开功能说明">功能说明</button>
+</span>
+<!-- 弹窗遮罩：打开菜单栏 / 功能说明时加载，点击遮罩自动收起对应弹窗 -->
+<div class="sheet-mask" id="sbMask" style="display:none"></div>
+<div class="sheet-mask" id="docsMask" style="display:none"></div>
+<div class="sheet-mask" id="reqMask" style="display:none"></div>
+
+<!-- ═══════ 最新需求面板（独立 md 文档：%APPDATA%/原型工具/最新需求.md，可编辑保存） ═══════ -->
+<div class="req-panel" id="reqPanel">
+ <div class="docs-head">
+  <span>最新需求</span>
+  <span class="docs-actions">
+   <button class="docs-btn" id="btnEditReq" title="编辑最新需求文档">编辑</button>
+   <button class="docs-btn" id="btnCancelReq" style="display:none" title="放弃本次编辑，恢复为保存的内容">取消</button>
+   <button class="docs-btn primary" id="btnSaveReq" style="display:none" title="保存最新需求文档">保存</button>
+  </span>
+ </div>
+ <div class="docs-body">
+  <div class="doc-title">最新需求 · 当前迭代</div>
+  <div class="doc-content" id="reqContent"></div>
+  <div class="doc-edit" id="reqEdit" style="display:none">
+  <div class="doc-edit-tip">支持 Markdown 语法（表格、标题、列表、加粗等）<button type="button" class="doc-shortcut-link" id="btnReqShortcut">快捷键</button></div>
+  <textarea id="reqEditArea" spellcheck="false" placeholder="在此编写当前迭代的需求…"></textarea>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ 编辑模式：悬浮高亮 / 待提交列表抽屉（导出时整块移除） ═══════ -->
+<div id="editBar">
+ <div id="editHover" style="display:none"></div>
+ <div id="editDrawer">
+  <div class="ed-head">待提交修改<i class="badge" id="drawerBadge">0</i><span class="ed-x" id="editDrawerClose" title="关闭">✕</span></div>
+  <div class="ed-body" id="editDrawerBody"></div>
+   <div class="ed-foot"><button class="docs-btn ed-foot-left" id="editQueueSelAll" title="全选/取消全选待提交条目">全选</button><button class="docs-btn" id="editQueueClear" title="清空全部待提交条目">清空</button><button class="docs-btn primary" id="editQueueSubmit" title="把列表统一提交给大模型修改">提交</button></div>
+ </div>
+ <div class="drawer-mask" id="editDrawerMask" style="display:none"></div>
+</div>
+
+<!-- ═══════ 元素标注：画布微光徽标层 + Popover 悬浮卡片 ═══════ -->
+<div id="annoBadgeLayer"></div>
+<div id="annoPopoverCard" class="anno-popover-card" style="display:none">
+  <div class="anno-popover-title" id="popoverAnnoTitle"></div>
+  <div class="anno-popover-content" id="popoverAnnoContent"></div>
+</div>
+
+<!-- ═══════ Ctrl 即时拾取：覆盖层 + 提示条 + 多选批量面板 ═══════ -->
+<div id="selectionOverlay"></div>
+<div class="ctrl-pick-tip" id="ctrlPickTip" role="status">按住 Ctrl 拾取元素，支持连续点击多选</div>
+<div id="pickBar" class="pick-bar" style="display:none">
+  <div class="pick-bar-main">
+    <div class="pick-bar-tags" id="pickBarTags"></div>
+    <textarea class="pick-bar-input" id="pickBarInput" rows="1" placeholder="描述统一修改需求…" spellcheck="false" autocomplete="off"></textarea>
+  </div>
+  <div class="pick-bar-side">
+    <button id="pickBarAnno" class="pick-bar-iconbtn" type="button" title="标注" style="display:none"><i data-ic="target" data-ic-size="15"></i><span class="nm">标注</span></button>
+    <button id="pickBarLink" class="pick-bar-iconbtn" type="button" title="交互" style="display:none"><i data-ic="link" data-ic-size="15"></i><span class="nm">交互</span></button>
+    <button id="pickBarSend" class="pick-bar-send" type="button" title="直接加入待提交列表">发送</button>
+  </div>
+  <div id="pickBarPop" class="pick-bar-pop" style="display:none"></div>
+</div>
+
+<div id="multiEditMask" class="drawer-mask" style="display:none"></div>
+<aside id="multiEditDrawer" class="side-drawer wide" aria-hidden="true">
+  <header class="sd-hd">
+    <b id="multiEditTitle">已选中 3 个元素</b>
+    <span id="multiEditClose" class="sd-x" title="关闭">✕</span>
+  </header>
+  <div class="lm-body">
+    <div class="mode-seg-tab">
+      <button class="seg-tab on" id="tabBatchMode" type="button">批量统一修改</button>
+      <button class="seg-tab" id="tabIndividualMode" type="button">分别独立修改</button>
+    </div>
+    <div class="edit-view" id="viewBatchMode">
+      <div class="sel-chips-list" id="selChipsList"></div>
+      <textarea class="edit-req-input" id="batchReqInput" spellcheck="false" placeholder="输入针对这几个元素的统一修改诉求（例如：统一调大字体至 16px，圆角改为 8px）..."></textarea>
+    </div>
+    <div class="edit-view" id="viewIndividualMode" style="display:none">
+      <div class="individual-items-list" id="individualItemsList"></div>
+    </div>
+  </div>
+  <div class="ed-foot">
+    <button class="docs-btn" id="btnCancelMultiEdit" type="button">清空并关闭</button>
+    <button class="docs-btn primary" id="btnSubmitMultiEdit" type="button">提交给 AI 修改</button>
+  </div>
+</aside>
+
+<!-- ═══════ 元素检查器抽屉（跳转交互 + 修改需求） ═══════ -->
+<div id="linkInspMask" class="drawer-mask" style="display:none"></div>
+<aside id="linkInspector" class="side-drawer">
+  <header class="sd-hd">
+    <div class="sd-hd-title-wrap"><b id="liTitle">元素</b></div>
+    <span id="liClose" class="sd-x" title="关闭">✕</span>
+  </header>
+  <div class="li-sel" id="liSelTip"></div>
+   <div class="li-drawer-content">
+    <!-- 板块1：修改需求（浅橙色卡片，默认展开） -->
+    <section class="li-card req-card open" id="liSecReq">
+      <div class="li-card-hd">
+        <div class="li-card-hd-left">
+          <span class="li-card-icon"><i data-ic="pen"></i></span>
+          <span class="li-card-name">修改需求</span>
+          <span class="state-chip draft">草稿 · 待提交</span>
+        </div>
+        <b class="li-fold">▾</b>
+      </div>
+      <div class="li-card-bd">
+        <textarea id="liReqText" placeholder="描述要把该元素改成什么，加入列表后统一交给大模型…"></textarea>
+        <button id="liReqAdd" class="docs-btn primary li-req-btn" type="button">加入待提交列表</button>
+      </div>
+    </section>
+
+    <!-- 视觉分割指示 -->
+    <div class="li-divider">
+      <span class="li-divider-line"></span>
+      <span class="li-divider-badge">或者</span>
+      <span class="li-divider-line"></span>
+    </div>
+
+    <!-- 板块2：跳转交互（浅绿色卡片，默认收起） -->
+    <section class="li-card jump-card" id="liSecJump">
+      <div class="li-card-hd">
+        <div class="li-card-hd-left">
+          <span class="li-card-icon"><i data-ic="link"></i></span>
+          <span class="li-card-name">跳转交互</span>
+          <span class="state-chip" id="liJumpChip"></span>
+        </div>
+        <b class="li-fold">▾</b>
+      </div>
+      <div class="li-card-bd" id="liJumpBody"></div>
+    </section>
+
+    <!-- 视觉分割指示 -->
+    <div class="li-divider">
+      <span class="li-divider-line"></span>
+      <span class="li-divider-badge">或者</span>
+      <span class="li-divider-line"></span>
+    </div>
+
+    <!-- 板块3：需求标注（浅蓝色卡片，默认收起） -->
+    <section class="li-card anno-card" id="liSecAnno">
+      <div class="li-card-hd">
+        <div class="li-card-hd-left">
+          <span class="li-card-icon"><i data-ic="file-text"></i></span>
+          <span class="li-card-name">需求标注</span>
+          <span class="state-chip draft" id="liAnnoChip">未标注</span>
+        </div>
+        <b class="li-fold">▾</b>
+      </div>
+      <div class="li-card-bd">
+        <div class="insp-field">
+          <label class="li-field-label">标注内容 (支持 Markdown)</label>
+          <textarea class="insp-textarea" id="annoContentInput" placeholder="详细输入前置条件、校验规则、异常提示及跳转分支..."></textarea>
+        </div>
+        <div class="li-actions" style="margin-top:10px">
+          <button class="docs-btn" id="btnAnnoList" type="button">总览</button>
+          <button class="docs-btn" id="btnDeleteAnno" type="button" style="display:none;color:#DC2626">删除</button>
+          <button class="docs-btn primary" id="btnSaveAnno" type="button">保存标注</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</aside>
+
+<!-- ═══════ 跳转管理抽屉 ═══════ -->
+<div id="linkMgrMask" class="drawer-mask" style="display:none"></div>
+<aside id="linkMgrDrawer" class="side-drawer wide">
+  <header class="sd-hd"><b>跳转交互（<span id="lmCount">0</span>）</b><span id="lmClose" class="sd-x">✕</span></header>
+  <div class="lm-body" id="lmBody"></div>
+</aside>
+
+<!-- ═══════ 标注管理抽屉（总览视图） ═══════ -->
+<div id="annoMgrMask" class="drawer-mask" style="display:none"></div>
+<aside id="annoMgrDrawer" class="side-drawer wide" aria-hidden="true">
+  <header class="sd-hd">
+    <b>需求标注（<span id="annoMgrCount">0</span>）</b>
+    <label class="anno-toggle-wrap" title="控制是否在原型画布上显示标注角标">
+      <input type="checkbox" id="chkAnnoVisible" checked>
+      <span class="anno-toggle-slider"></span>
+      <span class="anno-toggle-text">画布显示</span>
+    </label>
+    <span id="annoMgrClose" class="sd-x" title="关闭">✕</span>
+  </header>
+  <div class="lm-body" id="annoMgrBody"></div>
+</aside>
+
+<!-- ═══════ 设置弹窗（升级为 680px 分栏/Tab 现代化布局） ═══════ -->
+<div class="modal-mask" id="settingsMask" style="display:none">
+ <div class="modal settings-modal-v2" id="settingsModal">
+  <div class="settings-head">
+   <span class="settings-title"><i data-ic="settings"></i> 系统设置</span>
+   <span class="modal-x" id="settingsClose">✕</span>
+  </div>
+  <div class="settings-layout">
+   <nav class="settings-nav">
+     <button class="settings-tab-btn active" data-tab="ai" id="tabNavAi" style="justify-content:flex-start;text-align:left"><i data-ic="cpu"></i> Agent设置</button>
+     <button class="settings-tab-btn" data-tab="models" id="tabNavModels" style="justify-content:flex-start;text-align:left"><i data-ic="sliders"></i> 模型管理</button>
+     <button class="settings-tab-btn" data-tab="uispec" id="tabNavUispec" style="justify-content:flex-start;text-align:left"><i data-ic="file-text"></i> 设计规范</button>
+      <button class="settings-tab-btn" data-tab="sandbox" id="tabNavSandbox" style="justify-content:flex-start;text-align:left"><i data-ic="folder"></i> 沙箱</button>
+      <button class="settings-tab-btn" data-tab="shortcut" id="tabNavShortcut" style="justify-content:flex-start;text-align:left"><i data-ic="command"></i> 快捷键</button>
+      <button class="settings-tab-btn" data-tab="about" id="tabNavAbout" style="justify-content:flex-start;text-align:left"><i data-ic="info"></i> 关于软件</button>
+    </nav>
+   <div class="settings-body">
+     <!-- Tab 1: AI 引擎与 API -->
+      <div class="settings-pane active" id="paneSetAi">
+       <div class="set-section-title">AI 调用引擎</div>
+      <div class="set-engine-group" role="tablist" aria-label="AI调用引擎">
+       <label class="set-radio" role="tab" aria-selected="true"><input type="radio" name="aiEngine" value="cli" id="engCli" checked> 本地</label>
+       <label class="set-radio" role="tab" aria-selected="false"><input type="radio" name="aiEngine" value="api" id="engApi"> API</label>
+      </div>
+
+     <!-- CLI 配置区（Iteration5：多 Agent CLI 矩阵卡片流，JS 动态渲染 4 卡片） -->
+     <div class="set-box" id="boxCliCfg">
+       <div class="set-field">
+        <label>本地CLI</label>
+        <div class="ai-agent-matrix" id="aiAgentMatrix"><div class="set-tip">正在探测本地 Agent CLI…</div></div>
+       <div class="set-row" style="margin-top:8px">
+        <button class="docs-btn" id="btnRedetectAgents" title="并发重新探测全部 Agent CLI">重新探测</button>
+       </div>
+      </div>
+      </div>
+
+     <!-- API 直连配置区（Iteration6：多配置卡片矩阵，字段已搬入弹窗，仅保留矩阵） -->
+     <div class="set-box" id="boxApiCfg" style="display:none">
+      <div class="set-tip">多API配置：点卡片设为当前使用，可新增/编辑/删除。地址与密钥等在弹窗中维护。</div>
+      <div class="api-profile-matrix" id="apiProfileMatrix"></div>
+     </div>
+     </div>
+
+    <!-- Tab 2: 模型显示管理 -->
+    <div class="settings-pane" id="paneSetModels" style="display:none">
+     <div class="set-section-title">对话框模型下拉过滤</div>
+     <div class="model-mgr-toolbar">
+       <input class="set-input model-search" id="setModelSearch" placeholder="搜索模型...">
+       <button class="docs-btn" id="btnFetchModels2" title="从当前引擎拉取全部模型，在弹窗中勾选">获取模型</button>
+       <button class="docs-btn" id="btnClearAllModels">清空</button>
+      </div>
+     <div class="model-check-list" id="modelCheckList">加载中…</div>
+     <div class="set-add-model">
+      <input class="set-input" id="newModelInput" placeholder="添加自定义模型 ID (如 claude-3-5-sonnet)">
+      <button class="docs-btn" id="btnAddCustomModel"><i data-ic="plus"></i> 添加</button>
+     </div>
+     </div>
+
+    <!-- Tab: 设计规范（移动/PC 分开展示卡片，每端最多选中一个） -->
+    <div class="settings-pane" id="paneSetUispec" style="display:none">
+     <div class="set-section-title">设计规范（AI 生成原型时遵循）</div>
+      <div class="mode-seg-tab">
+       <button class="seg-tab on" id="uispecSubMobile" type="button">移动端</button>
+       <button class="seg-tab" id="uispecSubPc" type="button">PC 端</button>
+      </div>
+     <div class="uispec-grid" id="uispecCardList"><div class="set-tip">正在读取规范列表…</div></div>
+    </div>
+
+    <!-- Tab 3: 沙箱与环境 -->
+    <div class="settings-pane" id="paneSetSandbox" style="display:none">
+     <div class="set-section-title">沙箱与存储目录</div>
+     <div class="set-field">
+      <label>沙箱根目录：</label>
+      <div class="set-val" id="dirSbx">检测中…</div>
+      <div class="set-tip" id="sbxMeta">项目制沙箱：一个项目一个文件夹（%APPDATA%/原型工具/sandbox/项目名），每个原型拥有独立目录与 HTML/MD。</div>
+     </div>
+     <div class="set-field">
+      <label>项目加载模式：</label>
+      <div class="set-tip" id="libStatus">启动时选择进入特定项目，工作区内原型互相独立。</div>
+     </div>
+    </div>
+
+    <!-- Tab 4: 快捷键 -->
+    <div class="settings-pane" id="paneSetShortcut" style="display:none">
+     <div class="set-section-title">快捷键一览</div>
+      <div class="set-box">
+       <div class="set-field">
+        <label>预览拾取与就地改</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">按住 Ctrl</span><span class="set-shortcut-act">进入拾取态并显示准星，输入框聚焦或带 Shift / Alt 时不进入。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+单击</span><span class="set-shortcut-act">拾取或反选元素，松开后单选进检查器、多选进批量面板。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">松开 Ctrl</span><span class="set-shortcut-act">退出拾取态，有选中则弹出批量面板，失焦同效。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+Shift+单击</span><span class="set-shortcut-act">直接进入就地改浮层而不拾取。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">就地改内 Ctrl+Enter</span><span class="set-shortcut-act">保存本次就地改并写盘静默刷新。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">就地改内 Esc</span><span class="set-shortcut-act">放弃本次就地改，有修改时需确认，点外同效。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">待提交框内 Ctrl+Enter</span><span class="set-shortcut-act">保存该条修改需求。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+滚轮 / 双击舞台</span><span class="set-shortcut-act">舞台内微调内容缩放 / 复位到 100%。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">缩放框 Enter</span><span class="set-shortcut-act">应用百分比缩放，失焦同效。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">预览内 Ctrl+点击穿透</span><span class="set-shortcut-act">带 Ctrl 的点击不触发原型内跳转，留给拾取通道。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">双击侧栏项</span><span class="set-shortcut-act">重命名原型、子页面或会话标题，需沙箱可写盘。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>AI 对话</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Enter</span><span class="set-shortcut-act">发送当前输入，输入法组合中或带 Shift / Ctrl / Cmd 时不发送。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Ctrl+Enter / Cmd+Enter</span><span class="set-shortcut-act">发送当前输入。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Shift+Enter</span><span class="set-shortcut-act">换行不发送。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>文档检索</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">文档面板内 Ctrl+F</span><span class="set-shortcut-act">浮出搜索条并显示命中计数。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">搜索条内 Enter / Shift+Enter</span><span class="set-shortcut-act">下一个 / 上一个命中并定位穿梭。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">搜索条内 Esc</span><span class="set-shortcut-act">关闭搜索条并完整还原文档高亮。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>段落微浮层</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">微浮层内 Ctrl+S</span><span class="set-shortcut-act">保存该段落块。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">微浮层内 Esc</span><span class="set-shortcut-act">关闭微浮层，点外同效。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>通用输入框</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">名称框 Enter</span><span class="set-shortcut-act">确认新建原型名称。</span></div>
+        <div class="set-shortcut-row"><span class="set-shortcut-key">项目框 Enter</span><span class="set-shortcut-act">确认新建项目。</span></div>
+       </div>
+      </div>
+      <div class="set-field">
+       <label>Esc 关闭体系</label>
+       <div class="set-shortcut-list">
+        <div class="set-shortcut-row"><span class="set-shortcut-key">Esc</span><span class="set-shortcut-act">由 MaskStack 关闭当前栈顶弹窗，点遮罩同效，文档面板仅 PC 端响应。</span></div>
+       </div>
+      </div>
+     </div>
+    </div>
+
+    <!-- Tab 5: 关于软件 -->
+    <div class="settings-pane" id="paneSetAbout" style="display:none">
+     <div class="set-section-title">关于 PlanB 原型工具</div>
+     <div class="set-field">
+      <label>当前版本：</label>
+      <span class="set-val" id="verInfo">检测中…</span>
+     </div>
+     <div class="set-tip" style="margin-top:10px;line-height:1.8">
+      PlanB 是一款专注于极速交互、高保真线框原型与需求文档协同设计的 AI Agent 工作台。<br>
+      支持本地优先存储、纯单文件导出分发与 OpenAI 兼容大模型直连。
+     </div>
+     </div>
+    </div>
+   </div>
+    <div class="settings-foot">
+    <span class="settings-save-tip" id="settingsSaveTip" style="display:none;color:var(--ok);font-size:12.5px;font-weight:600;margin-right:auto;"><i data-ic="check"></i> 配置已保存并应用</span>
+    <button class="docs-btn" id="settingsCancel">关闭</button>
+    <button class="docs-btn primary" id="settingsOk">保存并应用</button>
+   </div>
+   </div>
+</div>
+
+<!-- ═══════ API配置弹窗（Iteration6：复用既有字段id，字段节点由boxApiCfg搬入） ═══════ -->
+<div class="modal-mask" id="apiProfileMask" style="display:none">
+ <div class="modal" style="width:520px;max-width:92vw">
+  <div class="modal-head">API配置<span class="modal-x" id="apiProfileClose">✕</span></div>
+  <div class="modal-body">
+   <div class="set-field">
+    <label>API 通信协议规格：</label>
+    <select class="set-select" id="setApiProtocol">
+     <option value="openai">OpenAI 协议（兼容 DeepSeek / SiliconFlow / 百炼 / 官方等）</option>
+     <option value="anthropic">Anthropic Claude 官方协议</option>
+     <option value="google">Google Gemini 官方协议</option>
+     <option value="ollama">本地 Ollama 协议（无需 API Key）</option>
+     <option value="azure">Azure OpenAI 协议</option>
+    </select>
+   </div>
+   <div class="set-field">
+    <label>服务商快速预设：</label>
+    <select class="set-select" id="setApiPreset">
+     <option value="deepseek">DeepSeek 官方 (api.deepseek.com)</option>
+     <option value="ali">阿里百炼 DashScope</option>
+     <option value="siliconflow">硅基流动 SiliconFlow</option>
+     <option value="openrouter">OpenRouter</option>
+     <option value="custom">自定义 API / 企业中转</option>
+    </select>
+   </div>
+   <div class="set-field">
+    <label>服务商名称：</label>
+    <input class="set-input" id="setApiProviderName" placeholder="DeepSeek / 阿里百炼 / 自定义名称">
+   </div>
+   <div class="set-field">
+    <label>API Base URL：</label>
+    <input class="set-input" id="setApiBaseUrl" placeholder="https://api.deepseek.com/v1">
+    <div class="set-tip" id="baseUrlHint">规范端点示例：OpenAI 系以 /v1 结尾，Gemini 系以 /v1beta 结尾，Ollama 本地默认为 http://localhost:11434/v1。</div>
+   </div>
+   <div class="set-field">
+    <label>API Key：</label>
+    <div class="set-input-wrap">
+     <input class="set-input" type="password" id="setApiKey" placeholder="sk-...">
+     <button type="button" class="set-eye-btn" id="setApiEye" title="显示/隐藏密钥"><i data-ic="eye"></i></button>
+    </div>
+   </div>
+   <div class="set-field">
+    <label>默认调用模型（全局默认模型）：</label>
+    <div class="set-row">
+     <input class="set-input" id="setApiModel" placeholder="deepseek-chat" style="flex:1">
+     <button class="docs-btn" id="btnFetchModels" title="调用服务商 /v1/models 自动拉取并填充">拉取模型列表</button>
+    </div>
+    <div class="set-tip" id="fetchModelStatus">支持 /v1/models 动态拉取，去重后自动填充候选。</div>
+   </div>
+   <div class="set-field set-actions">
+    <button class="docs-btn" id="btnTestApi"><i data-ic="zap"></i> 测试连通性</button>
+    <span class="set-status" id="testApiStatus"></span>
+   </div>
+   <div class="byok-test-panel" id="byokTestPanel" style="display:none">
+    <div class="test-status-badge" id="testStatusBadge"></div>
+    <div class="test-message" id="testMessageText"></div>
+   </div>
+   </div>
+  <div class="modal-foot">
+   <button class="docs-btn" id="apiProfileCancel">取消</button>
+   <button class="docs-btn primary" id="apiProfileSave">保存</button>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ 模型获取弹窗：从当前引擎拉取全量模型，勾选后确认 ═══════ -->
+<div class="modal-mask" id="modelFetchMask" style="display:none">
+ <div class="modal" id="modelFetchModal" style="width:520px">
+  <div class="modal-head">获取模型<span class="modal-x" id="modelFetchClose">✕</span></div>
+   <div class="modal-body">
+    <div class="modal-row"><input class="modal-input" id="fetchSearchInput" type="text" placeholder="搜索模型..."></div>
+    <div class="modal-hint">勾选即时生效，无需确认</div>
+    <div class="model-check-list" id="modelFetchList" style="max-height:46vh"></div>
+   </div>
+    <div class="modal-foot">
+     <span class="modal-hint" id="fetchSelectCount" style="margin-right:auto"></span>
+     <button class="docs-btn" id="btnFetchSelectAll">全选</button>
+     <button class="docs-btn" id="btnFetchDeselectAll">取消全选</button>
+     <button class="docs-btn" id="modelFetchCancel">取消</button>
+    <button class="docs-btn primary" id="modelFetchOk">完成</button>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ 新增设计规范：选本地 md + 名称/描述 ═══════ -->
+<div class="modal-mask" id="uispecAddMask" style="display:none">
+ <div class="modal" style="width:440px;max-width:92vw">
+  <div class="modal-head"><span id="uispecAddTitle">新增设计规范</span><span class="modal-x" id="uispecAddClose">✕</span></div>
+   <div class="modal-body">
+    <div class="set-field" id="uispecAddFileRow">
+     <label>规范文件（.md）：</label>
+     <div class="set-row">
+      <span class="set-val" id="uispecAddFileName" style="flex:1">未选择</span>
+      <button class="docs-btn" id="uispecPickFile" type="button">选择文件</button>
+     </div>
+    </div>
+    <div class="set-field">
+     <label>名称：</label>
+     <input class="set-input" id="uispecAddName" type="text" maxlength="60" placeholder="如 移动端B2B规范">
+    </div>
+    <div class="set-field">
+     <label>描述：</label>
+     <input class="set-input" id="uispecAddDesc" type="text" maxlength="120" placeholder="一句话说明适用场景（可空，自动取正文首行）">
+    </div>
+    <div class="set-tip" id="uispecAddTip">将归属到当前 Tab（移动端/PC 端）下展示。</div>
+   </div>
+  <div class="modal-foot">
+   <button class="docs-btn" id="uispecAddCancel">取消</button>
+   <button class="docs-btn primary" id="uispecAddSave">新增</button>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ 导出弹窗：勾选多个原型+文档，合并导出为一个独立 HTML ═══════ -->
+<div class="modal-mask" id="exportMask" style="display:none">
+ <div class="modal" id="exportModal">
+ <div class="modal-head"> 导出原型+文档<span class="modal-x" id="exportClose">✕</span></div>
+ <div class="modal-body">
+  <div class="modal-hint">勾选要合并导出的原型（可多选，默认已勾选当前打开的原型），生成一个独立 HTML：含全部交互与功能说明，可在任意环境离线打开使用，打开后可在左下菜单切换原型。</div>
+  <div class="export-list" id="exportList"></div>
+ </div>
+ <div class="modal-foot">
+  <span class="modal-hint" id="exportCount" style="margin-right:auto"></span>
+  <button class="docs-btn" id="exportCancel">取消</button>
+  <button class="docs-btn primary" id="exportOk">导出</button>
+ </div>
+ </div>
+</div>
+
+<!-- ═══════ 新建设备类型选择弹窗（较大的切换按钮，默认移动端） ═══════ -->
+<div class="modal-mask" id="kindMask" style="display:none">
+ <div class="modal" style="width:380px">
+ <div class="modal-head">新建设计<span class="modal-x" id="kindClose">✕</span></div>
+ <div class="modal-body">
+  <div class="modal-row"><span class="modal-hint">选择要新建的端类型：</span></div>
+  <div class="kind-grid">
+   <button class="kind-opt" id="kindPc" title="PC 端原型（大屏布局）">
+    <span class="kind-ico"><i data-ic="monitor"></i></span>
+    <span class="kind-name">PC 端</span>
+    <span class="kind-sub">大屏幕 · 桌面布局</span>
+   </button>
+   <button class="kind-opt on" id="kindMobile" title="移动端原型（手机竖屏布局）">
+    <span class="kind-ico"><i data-ic="smartphone"></i></span>
+    <span class="kind-name">移动端</span>
+    <span class="kind-sub">手机 · 竖屏布局</span>
+   </button>
+  </div>
+ </div>
+ <div class="modal-foot"><button class="docs-btn" id="kindCancel">取消</button><button class="docs-btn primary" id="kindOk">下一步：输入名称</button></div>
+ </div>
+</div>
+
+<!-- ═══════ 名称输入弹窗：Electron 不支持 window.prompt，新建/改名共用 ═══════ -->
+<div class="modal-mask" id="nameMask" style="display:none">
+ <div class="modal" style="width:340px">
+  <div class="modal-head" id="nameTitle">输入名称<span class="modal-x" id="nameClose">✕</span></div>
+  <div class="modal-body">
+   <div class="modal-row"><span class="modal-label" id="nameLabel">名称</span></div>
+   <div class="modal-row" style="justify-content:flex-start"><span class="modal-hint" id="nameHint"></span></div>
+   <div class="modal-row"><input class="modal-input" id="nameInput" type="text" maxlength="60" placeholder="在此输入名称"></div>
+  </div>
+  <div class="modal-foot"><button class="docs-btn" id="nameCancel">取消</button><button class="docs-btn primary" id="nameOk">确定</button></div>
+ </div>
+</div>
+
+<!-- ═══════ 项目选择弹窗：打开应用时先选择进入哪个项目（一个窗口只展示一个项目） ═══════ -->
+<div class="modal-mask" id="projMask" style="display:none">
+ <div class="modal" style="width:440px">
+  <div class="modal-head">选择项目<span class="modal-x" id="projClose" title="关闭">✕</span></div>
+  <div class="modal-body">
+   <div class="modal-row"><span class="modal-hint" id="projHint">选择一个项目进入；当前窗口仅展示该项目下的原型，可随时切换项目。</span></div>
+   <div class="proj-list" id="projList"></div>
+    <div class="proj-new">
+     <input class="modal-input" id="projNewName" type="text" maxlength="60" placeholder="输入新项目名称" spellcheck="false">
+     <button class="docs-btn" id="projNewBtn" title="新建项目并进入">＋ 新建</button>
+    </div>
+   </div>
+  <div class="modal-foot">
+   <span class="modal-hint" id="projCount" style="margin-right:auto"></span>
+   <button class="docs-btn primary" id="projOk">进入</button>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ 快照历史弹窗：查看/恢复当前原型的 AI 任务前自动快照 ═══════ -->
+<div class="modal-mask" id="snapMask" style="display:none">
+ <div class="modal" style="width:380px">
+  <div class="modal-head">历史版本<span class="modal-x" id="snapClose" title="关闭">✕</span></div>
+  <div class="modal-body">
+   <div class="modal-row"><span class="modal-hint">每次AI任务执行前会自动保存当前原型，最多保留10份，点击恢复可恢复到目标版本。</span></div>
+   <div class="proj-list" id="snapList"></div>
+   <div class="proj-empty" id="snapEmpty" style="display:none">暂无快照（首次 AI 任务后自动生成）</div>
+  </div>
+  <div class="modal-foot"><button class="docs-btn primary" id="snapOk">关闭</button></div>
+ </div>
+</div>
+
+<!-- ═══════ Git 上传发布弹窗（选择性上传目录/文件） ═══════ -->
+<div class="modal-mask" id="gitPushMask" style="display:none">
+ <div class="modal" style="width:600px; max-width:92vw;">
+  <div class="modal-head">
+   <span>Git 上传发布</span>
+   <span class="modal-x" id="gitPushClose" title="关闭">✕</span>
+  </div>
+    <div class="modal-body">
+     <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0; max-width:360px; padding:6px 10px; background:#F8FAFC; border:1px solid var(--line); border-radius:6px;">
+       <span style="font-size:12px; font-weight:700; color:var(--ink); white-space:nowrap;">上传目标分支:</span>
+       <select class="modal-input" id="gitPushBranchSelect" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px;"></select>
+       <input class="modal-input" id="gitPushBranchCustom" type="text" placeholder="输入分支名" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px; display:none;">
+       <button class="docs-btn" id="btnGitPushBranchToggle" type="button" style="font-size:11px; padding:2px 8px; height:26px; flex:none;">自定义</button>
+      </div>
+      <div style="display:inline-flex; gap:6px; position:relative; margin-left:auto; flex:none;">
+       <button class="docs-btn" id="btnGitPushSelectAll" type="button" style="font-size:11px; padding:2px 6px;">全选 ▾</button>
+       <button class="docs-btn" id="btnGitPushClearAll" type="button" style="font-size:11px; padding:2px 6px;">清空</button>
+       <div class="git-select-menu" id="gitPushSelectMenu" style="display:none;">
+        <button class="git-menu-item" id="btnGitPushSelectCurrent" type="button">仅全选当前项目</button>
+        <button class="git-menu-item" id="btnGitPushSelectVisible" type="button">全选全部可见（含异项目，需确认）</button>
+       </div>
+      </div>
+     </div>
+     <div class="git-field-hint" id="gitPushBranchRuleHint" style="display:none;"></div>
+   <div class="git-tree-list" id="gitPushTreeList">
+    <div style="color:var(--faint); padding:16px; text-align:center;">正在比对本地变更…</div>
+   </div>
+   <div class="modal-row" style="margin-top:12px;">
+    <label style="font-size:12px; font-weight:700; color:var(--fg); display:block; margin-bottom:4px;">更新说明（提交备注）</label>
+    <input class="modal-input" id="gitPushMessage" type="text" placeholder="简要描述本次原型与文档的修改内容" spellcheck="false" style="width:100%;">
+   </div>
+    <div class="git-status-msg" id="gitPushStatus" style="display:none;"></div>
+    <div class="modal-row" id="gitPushEmptyConfig" style="display:none; margin-top:8px;">
+     <span class="modal-hint" id="gitPushEmptyConfigText">尚未配置远程仓库，无法上传发布。请先配置全局远端。</span>
+     <button class="docs-btn primary" id="btnGitPushGotoConfig" type="button">去仓库设置</button>
+    </div>
+  </div>
+  <div class="modal-foot">
+   <span class="modal-hint" id="gitPushCount" style="margin-right:auto;">已选 0 项变更</span>
+   <button class="docs-btn" id="btnGitPushForce" type="button" style="display:none; border-color:#FDA29B; color:#B42318; background:#FEF3F2;">强制覆盖上传</button>
+   <button class="docs-btn" id="gitPushCancel">取消</button>
+   <button class="docs-btn primary" id="gitPushSubmit">确认上传</button>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ Git 拉取同步弹窗（选择性拉取目录/文件） ═══════ -->
+<div class="modal-mask" id="gitPullMask" style="display:none">
+ <div class="modal" style="width:600px; max-width:92vw;">
+  <div class="modal-head">
+   <span>Git 拉取同步</span>
+   <span class="modal-x" id="gitPullClose" title="关闭">✕</span>
+  </div>
+    <div class="modal-body">
+     <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0; max-width:360px; padding:6px 10px; background:#F8FAFC; border:1px solid var(--line); border-radius:6px;">
+       <span style="font-size:12px; font-weight:700; color:var(--ink); white-space:nowrap;">拉取来源分支:</span>
+       <select class="modal-input" id="gitPullBranchSelect" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px;"></select>
+       <input class="modal-input" id="gitPullBranchCustom" type="text" placeholder="输入分支名" style="flex:1; min-width:0; padding:2px 8px; font-size:12px; height:26px; display:none;">
+       <button class="docs-btn" id="btnGitPullBranchToggle" type="button" style="font-size:11px; padding:2px 8px; height:26px; flex:none;">自定义</button>
+       <button class="docs-btn" id="btnGitPullBranchRefresh" type="button" style="font-size:11px; padding:2px 8px; height:26px; flex:none;">刷新</button>
+      </div>
+      <div style="display:inline-flex; gap:6px; position:relative; margin-left:auto; flex:none;">
+       <button class="docs-btn" id="btnGitPullSelectAll" type="button" style="font-size:11px; padding:2px 6px;">全选 ▾</button>
+       <button class="docs-btn" id="btnGitPullClearAll" type="button" style="font-size:11px; padding:2px 6px;">清空</button>
+       <div class="git-select-menu" id="gitPullSelectMenu" style="display:none;">
+        <button class="git-menu-item" id="btnGitPullSelectCurrent" type="button">仅全选当前项目</button>
+        <button class="git-menu-item" id="btnGitPullSelectVisible" type="button">全选全部可见（含异项目，需确认）</button>
+       </div>
+      </div>
+     </div>
+     <div class="git-field-hint" id="gitPullBranchRuleHint" style="display:none;"></div>
+   <div class="git-tree-list" id="gitPullTreeList">
+    <div style="color:var(--faint); padding:16px; text-align:center;">正在探测远程仓库更新…</div>
+   </div>
+    <div class="git-status-msg" id="gitPullStatus" style="display:none;"></div>
+    <div class="modal-row" id="gitPullBackupRow" style="display:none; margin-top:8px; align-items:center; gap:8px;">
+     <span class="modal-hint" id="gitPullBackupPath" style="flex:1; word-break:break-all;"></span>
+     <button class="docs-btn" id="btnGitPullOpenBackup" type="button">复制备份路径</button>
+    </div>
+    <div class="modal-row" id="gitPullEmptyConfig" style="display:none; margin-top:8px;">
+     <span class="modal-hint" id="gitPullEmptyConfigText">尚未配置远程仓库，无法拉取同步。请先配置全局远端。</span>
+     <button class="docs-btn primary" id="btnGitPullGotoConfig" type="button">去仓库设置</button>
+    </div>
+    <div id="gitPullProjectSwitchBanner" style="display:none; margin-top:10px; padding:10px 12px; border:1px solid rgba(37,99,235,0.25); border-radius:6px; background:rgba(37,99,235,0.06); font-size:12px; color:var(--fg);">
+     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <span id="gitPullProjectSwitchText">检测到已拉取新项目，本地已自动创建完毕。</span>
+      <button class="docs-btn primary" id="btnGitPullSwitchNow" type="button" style="font-size:12px; padding:2px 10px; white-space:nowrap;">进入该项目查看</button>
+     </div>
+     <div id="gitPullProjectSwitchBtns" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+    </div>
+  </div>
+  <div class="modal-foot">
+   <span class="modal-hint" id="gitPullCount" style="margin-right:auto;">已选 0 项更新</span>
+   <button class="docs-btn" id="gitPullCancel">取消</button>
+   <button class="docs-btn primary" id="gitPullSubmit">确认拉取</button>
+  </div>
+ </div>
+</div>
+
+<!-- ═══════ Git 仓库设置弹窗 ═══════ -->
+<div class="modal-mask" id="gitConfigMask" style="display:none">
+ <div class="modal" style="width:520px; max-width:90vw;">
+  <div class="modal-head">
+   <span>Git 仓库设置</span>
+   <span class="modal-x" id="gitConfigClose" title="关闭">✕</span>
+  </div>
+   <div class="modal-body">
+    <div class="modal-row">
+     <label style="font-size:12px; font-weight:700; color:var(--fg); display:block; margin-bottom:4px;">远程仓库地址 (HTTPS)</label>
+     <input class="modal-input" id="gitRemoteUrl" type="text" placeholder="如 https://codeup.aliyun.com/.../PRFile.git" spellcheck="false" style="width:100%;">
+     <div class="git-field-hint" id="gitRemoteUrlHint" style="display:none;"></div>
+    </div>
+    <div class="modal-row" style="display:flex; gap:12px;">
+     <div style="flex:1;">
+      <label style="font-size:12px; font-weight:700; color:var(--fg); display:block; margin-bottom:4px;">上次使用分支</label>
+      <input class="modal-input" id="gitBranch" type="text" placeholder="main" spellcheck="false" style="width:100%;">
+      <div class="git-field-hint" id="gitBranchHint" style="display:none;"></div>
+     </div>
+     <div style="flex:1;">
+      <label style="font-size:12px; font-weight:700; color:var(--fg); display:block; margin-bottom:4px;">用户名 / 账号 (可选)</label>
+      <input class="modal-input" id="gitUsername" type="text" placeholder="Codeup 用户名或账号" spellcheck="false" style="width:100%;">
+     </div>
+    </div>
+    <div class="modal-row">
+     <label style="font-size:12px; font-weight:700; color:var(--fg); display:block; margin-bottom:4px;">访问令牌 (Personal Access Token) 或 密码</label>
+     <div style="display:flex; gap:8px;">
+      <input class="modal-input" id="gitToken" type="password" placeholder="填写个人访问令牌或密码" spellcheck="false" style="flex:1;">
+      <button class="docs-btn" id="btnGitTokenEye" type="button" style="font-size:12px; padding:0 8px;">显示</button>
+     </div>
+     <div class="git-field-hint" id="gitTokenHint">留空表示不更新已保存凭据。</div>
+    </div>
+   <div class="modal-row" style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+    <button class="docs-btn" id="btnTestGitConn" type="button">测试连通性</button>
+    <span class="set-status" id="testGitStatus" style="font-size:12px;"></span>
+   </div>
+  </div>
+   <div class="modal-foot">
+    <span class="settings-save-tip" id="gitSaveTip" style="display:none;">配置已保存</span>
+    <button class="docs-btn" id="gitConfigCancel">关闭</button>
+    <button class="docs-btn primary" id="gitConfigSave">保存配置</button>
+   </div>
+  </div>
+ </div>
+
+ <!-- ═══════ Git P0 确认与自愈弹窗（第一批整改新增，只增不减） ═══════ -->
+ <div class="modal-mask" id="gitRemoteConfirmMask" style="display:none">
+  <div class="modal" style="width:480px; max-width:90vw;">
+   <div class="modal-head"><span>将改写全局远端，是否继续？</span><span class="modal-x" id="gitRemoteConfirmClose" title="关闭">✕</span></div>
+   <div class="modal-body">
+    <div class="modal-row"><span class="modal-hint">全局单库：全部项目共用一个远端 origin，在此保存会改写全局远端。</span></div>
+    <div class="git-confirm-list" id="gitRemoteConfirmText"></div>
+   </div>
+   <div class="modal-foot">
+    <button class="docs-btn" id="gitRemoteConfirmCancel">取消</button>
+    <button class="docs-btn primary" id="gitRemoteConfirmOk">确认并继续</button>
+   </div>
+  </div>
+ </div>
+
+ <div class="modal-mask" id="gitCrossProjConfirmMask" style="display:none">
+  <div class="modal" style="width:480px; max-width:90vw;">
+   <div class="modal-head"><span>将跨项目推送，是否继续？</span><span class="modal-x" id="gitCrossProjConfirmClose" title="关闭">✕</span></div>
+   <div class="modal-body">
+    <div class="modal-row"><span class="modal-hint">异项目文件将一并推送到同一远端同一分支，不可单独撤回。</span></div>
+    <div class="git-confirm-list" id="gitCrossProjConfirmText"></div>
+    <div class="git-confirm-list" id="gitCrossProjConfirmList"></div>
+    <label class="git-ack-row" id="gitCrossProjConfirmAckRow"><input type="checkbox" id="gitCrossProjConfirmAck">我已知悉将推送异项目文件</label>
+   </div>
+   <div class="modal-foot">
+    <button class="docs-btn" id="gitCrossProjConfirmCancel">取消</button>
+    <button class="docs-btn primary" id="gitCrossProjConfirmOk">确认并继续</button>
+   </div>
+  </div>
+ </div>
+
+ <div class="modal-mask" id="gitPullCoverConfirmMask" style="display:none">
+  <div class="modal" style="width:520px; max-width:92vw;">
+   <div class="modal-head"><span>拉取将覆盖本地未提交修改</span><span class="modal-x" id="gitPullCoverConfirmClose" title="关闭">✕</span></div>
+   <div class="modal-body">
+    <div class="git-confirm-list" id="gitPullCoverConfirmText"></div>
+    <div class="git-confirm-list" id="gitPullCoverConfirmList"></div>
+    <div class="modal-row"><span class="modal-hint">建议先备份；覆盖后本地修改不可直接撤销。</span></div>
+   </div>
+   <div class="modal-foot" style="flex-wrap:wrap; gap:8px;">
+     <button class="docs-btn primary" id="btnGitPullCoverBackup" type="button">自动备份后拉取</button>
+     <button class="docs-btn" id="btnGitPullCoverOverwrite" type="button" style="color:#DC2626" title="不备份，直接用远端版本覆盖本地文件">以远端为准覆盖本地</button>
+     <button class="docs-btn" id="btnGitPullCoverCancel" type="button">取消</button>
+   </div>
+  </div>
+ </div>
+
+ <div class="modal-mask" id="gitHealConfirmMask" style="display:none">
+  <div class="modal" style="width:520px; max-width:92vw;">
+   <div class="modal-head"><span>检测到 Git 沙箱异常，需修复后才能同步</span><span class="modal-x" id="gitHealConfirmClose" title="关闭">✕</span></div>
+   <div class="modal-body">
+    <div class="modal-row"><span class="modal-hint">按单库模型子目录不应含独立仓库，同步前需清理。清理前将自动备份，清理后嵌套库历史将不再可用，总根库历史不受影响。</span></div>
+    <div class="git-confirm-list" id="gitHealConfirmText"></div>
+    <div class="git-confirm-list" id="gitHealNestedList"></div>
+    <div class="modal-row"><span class="modal-hint" id="gitHealBackupPreview"></span></div>
+    <label class="git-ack-row" id="gitHealConfirmAckRow"><input type="checkbox" id="gitHealConfirmAck">我已知悉清理风险并同意备份后修复</label>
+   </div>
+   <div class="modal-foot" style="flex-wrap:wrap; gap:8px;">
+    <button class="docs-btn primary" id="btnGitHealRepair" type="button">备份后修复</button>
+    <button class="docs-btn" id="btnGitHealLater" type="button">暂不处理</button>
+    <button class="docs-btn" id="btnGitHealOpenDir" type="button">打开沙箱目录</button>
+   </div>
+  </div>
+ </div>
+
+ <div class="modal-mask" id="gitForceConfirmMask" style="display:none">
+  <div class="modal" style="width:480px; max-width:90vw;">
+   <div class="modal-head"><span>强制覆盖上传确认</span><span class="modal-x" id="gitForceConfirmClose" title="关闭">✕</span></div>
+   <div class="modal-body">
+    <div class="modal-row"><span class="modal-hint">强制覆盖将改写远端历史，此操作不可恢复。请确认影响面并键入分支名以继续。</span></div>
+    <div class="git-confirm-list" id="gitForceConfirmText"></div>
+    <div class="modal-row">
+     <label style="font-size:12px; font-weight:700; color:var(--fg); display:block; margin-bottom:4px;">键入目标分支名以确认</label>
+     <input class="modal-input" id="gitForceConfirmInput" type="text" placeholder="输入分支名" spellcheck="false" style="width:100%;">
+    </div>
+   </div>
+   <div class="modal-foot">
+    <button class="docs-btn" id="gitForceConfirmCancel">取消</button>
+    <button class="docs-btn primary" id="gitForceConfirmOk">确认强制覆盖</button>
+   </div>
+  </div>
+ </div>
+
+ <div class="modal-mask" id="gitErrorMask" style="display:none">
+  <div class="modal" style="width:520px; max-width:92vw;">
+   <div class="modal-head"><span id="gitErrorTitle">操作失败</span><span class="modal-x" id="gitErrorClose" title="关闭">✕</span></div>
+   <div class="modal-body">
+    <div class="modal-row"><span class="modal-hint" id="gitErrorBody"></span></div>
+    <div class="git-confirm-list" id="gitErrorActions" style="display:none;"></div>
+    <div class="modal-row">
+     <button class="docs-btn" id="btnGitErrorToggleDetail" type="button">查看详情</button>
+     <button class="docs-btn" id="btnGitErrorCopy" type="button">复制详情</button>
+    </div>
+    <pre class="git-error-detail" id="gitErrorDetail" style="display:none;"></pre>
+   </div>
+   <div class="modal-foot" style="flex-wrap:wrap; gap:8px;">
+    <button class="docs-btn" id="btnGitErrorSecondary" type="button" style="display:none;"></button>
+    <button class="docs-btn primary" id="btnGitErrorPrimary" type="button" style="display:none;">重试</button>
+    <button class="docs-btn" id="btnGitErrorGotoConfig" type="button" style="display:none;">去仓库设置</button>
+    <button class="docs-btn" id="btnGitErrorOk" type="button">关闭</button>
+   </div>
+  </div>
+ </div>
+
+<!-- ═══════ 大模型对话弹窗（双 Tab：需求对话 + DSH 运行日志） ═══════ -->
+<div class="ai-mask" id="aiMask" style="display:none">
+ <div class="ai-modal">
+ <div class="ai-head">
+  <div class="ai-tab-header">
+   <button class="ai-tab-btn active" id="tabChatBtn"><i data-ic="message-square"></i> 需求对话</button>
+   <button class="ai-tab-btn" id="tabLogsBtn"><i data-ic="file-text"></i> 执行日志 (Trace)<span class="log-err-dot" id="logErrDot" style="display:none">!</span></button>
+   </div>
+   <button class="docs-btn" id="btnAiWinToggle" title="在独立窗口中打开AI对话">独立窗口</button>
+   <span class="ai-hist" id="aiHistBtn" title="历史版本：每次 AI 任务前自动保存，可一键恢复">历史</span>
+   <span class="ai-cli ok" id="aiSbx" title="当前沙箱（模型工作目录）">沙箱：—</span>
+  <span class="ai-cli warn" id="aiCli">检测中…</span>
+  <span class="agent-pill-badge" id="aiAgentBadge" title="当前主力 Agent（设置中心矩阵切换）"><span class="dot"></span><span id="aiAgentName">OpenCode</span></span>
+  <span class="modal-x" id="aiClose" title="关闭">✕</span>
+  </div>
+  <div class="ai-main" style="display:flex;flex:1;min-height:0;overflow:hidden">
+   <div id="aiSessPanel" class="ai-sess-panel">
+    <div class="ai-sess-head" style="display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid var(--line)">
+     <button id="btnNewSess" class="docs-btn primary" style="flex:1">＋ 新会话</button>
+    </div>
+    <div id="aiSessList" class="ai-sess-list"></div>
+   </div>
+   <div class="ai-body" id="aiBody">
+   <!-- 视图 1：需求对话（挂载点：thinking-box / tool-call-card / file-changes-card / snapshot-card / ai-error-card 由 JS 动态注入 #aiChatView） -->
+    <div class="ai-chat-view" id="aiChatView"></div>
+    <!-- 视图 2：DSH 执行日志 -->
+   <div class="ai-logs-view" id="aiLogsView" style="display:none">
+     <div class="ai-logs-toolbar">
+      <button class="docs-btn" id="btnCopyTrace"><i data-ic="copy"></i> 复制全部日志</button>
+      <button class="docs-btn" id="btnClearTrace"><i data-ic="trash"></i> 清空日志</button>
+      <button class="docs-btn" id="btnToggleAllTrace" title="展开/收起全部任务日志分组">全部展开/收起</button>
+      <label class="logs-autoscroll"><input type="checkbox" id="chkAutoScrollTrace" checked> 自动吸底</label>
+     <span class="logs-count" id="logsCount">0 条记录</span>
+    </div>
+    <div class="ai-logs-console" id="aiLogsConsole"></div>
+   </div>
+   </div>
+  </div>
+  <div class="ai-foot">
+  <textarea class="ai-input" id="aiInput" rows="1" placeholder="输入问题，回车发送（Shift+Enter 换行）"></textarea>
+ <div class="ai-foot-actions">
+  <div class="ai-target-wrap" id="aiTargetWrap" title="选择本次 AI 修改作用的目标 HTML 页面">
+    <span class="ai-target-label">作用页面:</span>
+    <select class="ai-target-select" id="aiTargetPageSelect"></select>
+  </div>
+  <div class="ai-model-cascader" id="aiModelCascader">
+    <button type="button" class="ai-model-btn" id="aiModelBtn" title="选择当前对话使用的模型与思考强度">
+      <span class="ai-model-name-txt" id="aiModelNameTxt">选择模型</span>
+      <span class="ai-model-effort-badge" id="aiModelEffortBadge" style="display:none">默认</span>
+      <svg class="ai-model-arrow" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+    </button>
+    <div class="ai-cascader-popover" id="aiCascaderPopover" style="display:none">
+      <div class="ai-cascader-primary" id="aiCascaderPrimary"></div>
+      <div class="ai-cascader-sub" id="aiCascaderSub" style="display:none">
+        <div class="ai-cascader-sub-title">选择思考强度</div>
+        <div class="ai-cascader-sub-list" id="aiCascaderSubList"></div>
+      </div>
+    </div>
+  </div>
+ <select class="ai-model" id="aiModel" style="display:none" title="选择当前对话使用的模型">
+  <option value="">选择模型…</option>
+ </select>
+  <button class="docs-btn" id="aiClear" title="清空本次对话">清空</button>
+  <button class="docs-btn primary ai-send" id="aiSend">发送</button>
+ </div>
+ </div>
+ </div>
+</div>
+<!-- harn fix: 思考链弹窗 thinkMask 640px 68vh 含 pre#thinkPopupPre -->
+<div id="thinkMask" class="modal-mask" style="display:none"><div class="modal" style="width:640px;max-height:68vh"><div class="modal-head">思考链全文 <span class="modal-x" id="thinkClose">✕</span></div><div class="modal-body"><pre class="tg-output" id="thinkPopupPre" style="max-height:52vh;white-space:pre-wrap;word-break:break-word"></pre></div><div class="modal-foot"><span class="modal-hint" id="thinkPopupMeta"></span><button class="docs-btn primary" id="thinkCopy">复制</button><button class="docs-btn" id="thinkClose2">关闭</button></div></div></div>
+<!-- 弹窗关闭后、任务仍在进行时显示的常驻「停止」浮标（终止只允许用户触发） -->
+<!-- （已移除：不再占用界面右下角） -->
+<!-- 文档编辑快捷键弹窗（MaskStack 模态，Esc/点遮罩关闭） -->
+<div class="modal-mask" id="docShortcutMask" style="display:none">
+ <div class="modal" id="docShortcutModal" style="width:560px;max-width:92vw;">
+  <div class="modal-head"><span>编辑快捷键</span><span class="modal-x" id="docShortcutClose" title="关闭">✕</span></div>
+  <div class="modal-body">
+   <table class="doc-shortcut-table">
+    <tr><th>快捷键</th><th>功能</th></tr>
+    <tr><td>Ctrl+S</td><td>原地保存（不退出编辑）</td></tr>
+    <tr><td>Esc</td><td>放弃本次编辑</td></tr>
+    <tr><td>Tab / Shift+Tab</td><td>缩进 / 减少缩进</td></tr>
+    <tr><td>回车</td><td>列表自动延续，空项回车退出列表</td></tr>
+    <tr><td>Ctrl+V</td><td>粘贴图片并插入引用</td></tr>
+    <tr><td>Ctrl+F</td><td>文档检索</td></tr>
+    <tr><td>Ctrl+B</td><td>粗体</td></tr>
+    <tr><td>Ctrl+I</td><td>斜体</td></tr>
+    <tr><td>Ctrl+Shift+S</td><td>删除线</td></tr>
+    <tr><td>Ctrl+1</td><td>一级标题</td></tr>
+    <tr><td>Ctrl+2</td><td>二级标题</td></tr>
+    <tr><td>Ctrl+3</td><td>三级标题</td></tr>
+    <tr><td>Ctrl+0</td><td>正文（清除标题）</td></tr>
+    <tr><td>Ctrl+Shift+U</td><td>无序列表</td></tr>
+    <tr><td>Ctrl+Shift+O</td><td>有序列表</td></tr>
+    <tr><td>Ctrl+Shift+T</td><td>任务列表</td></tr>
+    <tr><td>Ctrl+T</td><td>表格骨架</td></tr>
+     <tr><td>Ctrl+Shift+I</td><td>插入图片（文件）</td></tr>
+     <tr><td>Ctrl+Shift+P</td><td>图片抽屉</td></tr>
+     <tr><td>Ctrl+Z</td><td>撤销</td></tr>
+     <tr><td>Ctrl+Shift+Z / Ctrl+Y</td><td>重做</td></tr>
+   </table>
+   <div class="modal-hint">编辑框内生效；无选中时插入占位符并选中占位符文本。</div>
+  </div>
+   <div class="modal-foot"><button class="docs-btn primary" id="docShortcutOk" type="button">关闭</button></div>
+  </div>
+ </div>
+
+<!-- 主脚本（Wave-D/G: 16 经典 + 2 ESM = 18；域模块先于门面，顺序勿乱调）
+  文档域4 (markdown-compiler/editor-controller/toc-navigator/mirror-sync) 先于 core-docs 门面；
+  Git域/AI域/导出编译器先于 project-ai-export 门面（SoC委托）；经典同步执行供 vm 门禁兼容。
+  ESM 2 (utils/store) deferred 于经典之后。导出单文件仍经 stripEsmForExport 零模块降级（仅 icons+export-template）。 -->
+<script src="js/icons.js"></script>
+<script src="js/mask-manager.js"></script>
+<script src="js/doc/markdown-compiler.js"></script>
+<script src="js/doc/editor-controller.js"></script>
+<script src="js/doc/toc-navigator.js"></script>
+<script src="js/doc/mirror-sync.js"></script>
+<script src="js/core-docs.js"></script>
+<script src="js/nav-zoom.js"></script>
+<script src="js/sandbox-core.js"></script>
+<script src="js/git-ui/git-domain.js"></script>
+<script src="js/ai/ai-domain.js"></script>
+<script src="js/project-ai-export-compiler.js"></script>
+<script src="js/project-ai-export.js"></script>
+<script id="main-script" src="js/edit-entry.js"></script>
+<script src="js/link-bind.js"></script>
+<script src="js/annotation-core.js"></script>
+<script type="module" src="js/utils.js"></script>
+<script type="module" src="js/store.js"></script>
+</body>
+</html>
