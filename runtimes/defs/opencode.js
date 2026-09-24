@@ -9,8 +9,9 @@ module.exports = {
     { id: 'opencode/deepseek-v4-flash', label: 'DeepSeek V4 Flash' }
   ],
   buildArgs: (_prompt, _images, _extra, options = {}, ctx = {}) => {
+    // V2 兼容：`opencode run` 已删除 --dir（未知旗直接 usage 报错），工作目录由进程 cwd 承载
+    //（engine spawn 时 cwd=沙箱目录，实测 V2 以 cwd 解析项目配置），此处不再拼目录参数。
     const args = ['run', '--format', 'json', '--thinking'];
-    if (ctx.cwd) args.push('--dir', ctx.cwd);
     if (ctx.resumeSessionId && typeof ctx.resumeSessionId === 'string') {
       const sid = ctx.resumeSessionId.trim();
       if (sid.startsWith('ses_')) {

@@ -6,7 +6,7 @@
 
 | 适配器 id | bin | 当前适配器放行旗 | 收紧候选项 | 工作区限定参数 | 收紧风险（无人值守） | 建议 | 状态 |
 |---|---|---|---|---|---|---|---|
-| opencode | opencode-cli (fallback opencode) | 无放行旗（`run --format json --thinking` + `--dir`） | 已是收紧态；可选 `--agent` 换只读 agent / 配置文件 deny 规则 | `--dir`（适配器已用） | 无（默认即审批态） | 保持 | 已安装实测 1.18.31 |
+| opencode | opencode-cli (fallback opencode) | 无放行旗（`run --format json --thinking`，工作区靠进程 cwd） | 已是收紧态；可选 `--agent` 换只读 agent / 配置文件 deny 规则 | 进程 cwd（V2 已删除 `--dir`，拼了直接报 usage） | 无（默认即审批态） | 保持 | 已安装实测 2.0.16 |
 | claude | claude | `--permission-mode bypassPermissions`（全放行） | `--permission-mode acceptEdits / plan / default / auto / dontAsk`，`--allowedTools/--disallowedTools`（按文档） | `--add-dir`（按文档） | 高：切 plan/default 会弹审批挂起；acceptEdits/auto 风险低 | 可试点收紧（先 acceptEdits） | 未安装 / 按文档 |
 | cursor-agent | cursor-agent | `--force`（全放行，`--yolo` 别名） | 去 `--force`；`--mode plan/ask`、`--sandbox enabled`（按文档） | `--workspace`（适配器已用） | 高：去 force 后 `-p` 默认只提议不落地，会“静默不改” | 需自研兜底（先 sandbox，不直去 force） | 未安装 / 按文档 |
 | codex | codex | 非典型全放行：`exec --json --skip-git-repo-check`（仅跳过 git 检查，未加 sandbox 放行） | `--sandbox read-only / workspace-write` + `--ask-for-approval on-request / never`，新版 profiles `:read-only / :workspace / :danger-full-access`（按文档） | `-C`（适配器已用）+ `--add-dir / --cd`（按文档） | 高：`on-request` 在非交互下会挂起；`never + read-only` 才可无人值守 | 保持（要收紧需自研超时/降级兜底） | 未安装 / 按文档 |
