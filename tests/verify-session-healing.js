@@ -29,6 +29,11 @@ console.log('=== 开始执行 Agent 会话隔离与自愈防御自动化测试 =
   assert.ok(sIdx !== -1, '合法 ses_ ID 必须包含 -s 参数');
   assert.strictEqual(argsValid[sIdx + 1], validSes, `'-s' 后面必须紧随合法的 session ID`);
 
+  // 1e: V2 兼容：run 已删除 --dir（未知旗直接 usage 报错），cwd 由进程工作目录承载
+  const argsCwd = opencodeDef.buildArgs('hi', [], [], {}, { cwd: 'C:\\sbx', resumeSessionId: '' });
+  assert.strictEqual(argsCwd.includes('--dir'), false, 'V2 不得再拼 --dir（已废弃，拼了直接报 usage）');
+  assert.deepStrictEqual(argsCwd, ['run', '--format', 'json', '--thinking'], '无模型无会话时应恰为 run --format json --thinking');
+
   console.log('[PASS] 断言 1: OpenCode 适配器参数白名单与防御性校验 100% 通过');
 }
 

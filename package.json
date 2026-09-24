@@ -1,6 +1,6 @@
 {
   "name": "proto-viewer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "原型预览工具 · 投融资录入工作流",
   "main": "main.js",
   "author": "local",
