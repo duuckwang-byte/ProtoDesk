@@ -17,6 +17,10 @@ var MaskStack = (function () {
   }
   function push(id, closeFn, opts) {
     if (!id || typeof closeFn !== 'function') return;
+    /* 任一弹窗/抽屉打开即收掉需求输入条（拾取条不与弹窗共存） */
+    try{
+      if(typeof CTRL_PICK!=='undefined'&&CTRL_PICK&&typeof CTRL_PICK.hideFab==='function')CTRL_PICK.hideFab();
+    }catch(e){}
     // docsMask/reqMask 默认 pcOnly:true（移动端切换显示，不应入栈关闭）
     if (!opts && (id === 'docsMask' || id === 'reqMask' || id === 'docs' || id === 'req')) {
       opts = { pcOnly: true };

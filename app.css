@@ -101,10 +101,6 @@ svg{ vertical-align:middle; margin-top:-1px } /* icon align fix */
 .git-tree-item:last-child{border-bottom:none}
 .git-tree-item:hover{background:var(--bg-subtle) /* P1-6 fix */}
 .git-tree-item input[type="checkbox"]{cursor:pointer}
-.git-sub-toggle{padding:4px 10px 4px 28px;font-size:11.5px;font-weight:600;color:var(--sub);display:flex;align-items:center;gap:6px;cursor:pointer;border-bottom:1px dashed #F0F1F3}
-.git-sub-toggle:hover{color:var(--pri)}
-.git-sub-arrow{font-size:10px;width:12px;flex:none}
-.git-sub-list .git-tree-item{padding-left:42px}
 .git-proto-arrow{font-size:10px;width:12px;flex:none;color:var(--faint)}
 .git-file-name{flex:1;font-family:var(--font-mono, monospace);font-size:11.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .status-tag{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap;flex:none}
@@ -424,7 +420,7 @@ body .sb-foot{padding-bottom:58px}
 
 @keyframes ai-blink{0%{opacity:1}50%{opacity:.15}100%{opacity:1}}
 .ai-foot{flex:none;padding:12px 14px;border-top:1px solid var(--line);background:#F1F5F9 /* 底部整块浅灰：输入框/下拉/发送同区 */;display:flex;flex-direction:column;gap:8px}
-.ai-input{width:100%;height:38px;min-height:38px;max-height:38px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;line-height:20px;font-family:inherit;color:var(--ink);background:var(--panel);resize:none;overflow:hidden;white-space:nowrap;overflow-x:auto;outline:none;transition:border-color .2s}
+.ai-input{width:100%;height:auto;min-height:38px;max-height:120px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;line-height:20px;font-family:inherit;color:var(--ink);background:var(--panel);resize:none;overflow:hidden;overflow-y:hidden;white-space:pre-wrap;word-break:break-word;outline:none;transition:border-color .2s}
 .ai-input:focus{border-color:var(--line);background:var(--panel) /* P1-6 fix */}
 .ai-input[disabled]{background:#E2E8F0;color:var(--faint);cursor:not-allowed}
 .ai-foot-actions{display:flex;align-items:center;gap:8px}
@@ -1413,7 +1409,7 @@ body{font-weight:400;letter-spacing:0}
 .sb-trigger{height:32px;min-width:32px}
 .sb-add,.sb-set{height:32px}
 .settings-tab-btn,.li-req-btn,.agent-fold-bar{height:32px}
-.ai-input{height:32px;min-height:32px;max-height:32px;padding:4px 11px}
+.ai-input{min-height:32px;max-height:120px;padding:4px 11px}
 .modal-input,.set-input{height:32px;padding:4px 11px}
 .set-select,.ai-model{height:32px;padding:0 11px}
 /* radii: controls 6px */

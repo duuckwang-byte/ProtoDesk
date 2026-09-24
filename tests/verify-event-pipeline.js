@@ -757,9 +757,34 @@ function testR15_UiPolish() {
   assert.ok(foot.children.some((c) => c.tagName === 'BUTTON'), '落款含复制钮');
 }
 
+// ========== 运行18: 忙态死锁修复（busy错误分支复位+主从核对自愈） ==========
+function testR18_BusyDeadlock() {
+  const doIdx = pae.indexOf('function aiDoSend');
+  const doSeg = doIdx >= 0 ? pae.slice(doIdx, doIdx + 6000) : '';
+  assert.ok(/r&&r\.error==='busy'/.test(doSeg), '须处理主进程忙回执');
+  const busySeg = doSeg.slice(doSeg.indexOf("r&&r.error==='busy'"), doSeg.indexOf("r&&r.error==='busy'") + 400);
+  assert.ok(/aiSetBusy\(false\)/.test(busySeg), 'busy分支须复位本地忙态（否则输入框永久禁用）');
+  assert.ok(/ai\.isBusy\(\)\.then/.test(doSeg) && /忙态已自动恢复/.test(doSeg), '忙拦截须向主进程核对自愈');
+  const ee = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
+  assert.ok(/hasLiveEl/.test(ee), '覆盖层须区分活元素与远端');
+  assert.ok(/!r && !hasLiveEl/.test(ee), '活元素不得用旧rect兜底（防回滚后幽灵框）');
+  assert.ok(!/if \(!r\) r = it\.rect;/.test(ee), '不得再无条件回退旧rect');
+  assert.ok(/cancelCtrlPickState/.test(pae) || /CTRL_PICK\.clear/.test(pae), '快照恢复须清拾取态');
+}
+
+// ========== 运行19: 输入框自适应高度 ==========
+function testR19_InputAutosize() {
+  assert.ok(/function aiAutosizeInput\(\)/.test(pae), '缺aiAutosizeInput');
+  assert.ok(/aiAutosizeInput\(\);?\s*\}catch/.test(pae) || /try\{\s*aiAutosizeInput\(\)/.test(pae), '须在多处调用自适应');
+  assert.ok(/addEventListener\('input'/.test(pae) && /aiAutosizeInput/.test(pae), '输入事件须触发自适应');
+  assert.ok(/scrollHeight/.test(pae), '自适应须按scrollHeight定高');
+  const docs = fs.readFileSync(path.join(rootDir, 'js', 'core-docs.js'), 'utf8');
+  assert.ok(/aiAutosizeInput/.test(docs), '草稿恢复须同步高度');
+}
+
 function runAll() {
   let p = 0, f = 0;
-  const ts = [['S1 onEvent管线', testS1_OnEventPipeline], ['R1b session落盘', testR1b_SessionOidPersist], ['S2 finish尾', testS2_FinishTail], ['S2b 完成不重写', testS2b_FinishNoRewrite], ['S2c 无followup', testS2c_NoFollowup], ['S2d 落款', testS2d_MsgFoot], ['S3 模式清零', testS3_EditModeZero], ['S4 唯一ESC', testS4_SingleEsc], ['R5 动词映射+计数', testR5_VerbExplore], ['R5c opencode形态', testR5c_OpencodePartShape], ['R7 审计删除+快照', testR7_NoAuditSnap], ['R8 ErrorCard', testR8_ErrorCard], ['R9 思考切分', testR9_ThinkSplit], ['R10 光标/编辑', testR10_CursorEdit], ['S5 done新字段', testS5_DoneFields], ['R12 历史回放', testR12_Replay], ['R13 显示发送分离', testR13_MsgSplit], ['R14 思考入链', testR14_ThinkChain], ['R15 对话框打磨', testR15_UiPolish], ['R16 会话清空与等待行', testR16_SessClearWaiting], ['R17 CLI启动中两阶段', testR17_CliBootWaiting]];
+  const ts = [['S1 onEvent管线', testS1_OnEventPipeline], ['R1b session落盘', testR1b_SessionOidPersist], ['S2 finish尾', testS2_FinishTail], ['S2b 完成不重写', testS2b_FinishNoRewrite], ['S2c 无followup', testS2c_NoFollowup], ['S2d 落款', testS2d_MsgFoot], ['S3 模式清零', testS3_EditModeZero], ['S4 唯一ESC', testS4_SingleEsc], ['R5 动词映射+计数', testR5_VerbExplore], ['R5c opencode形态', testR5c_OpencodePartShape], ['R7 审计删除+快照', testR7_NoAuditSnap], ['R8 ErrorCard', testR8_ErrorCard], ['R9 思考切分', testR9_ThinkSplit], ['R10 光标/编辑', testR10_CursorEdit], ['S5 done新字段', testS5_DoneFields], ['R12 历史回放', testR12_Replay], ['R13 显示发送分离', testR13_MsgSplit], ['R14 思考入链', testR14_ThinkChain], ['R15 对话框打磨', testR15_UiPolish], ['R16 会话清空与等待行', testR16_SessClearWaiting], ['R17 CLI启动中两阶段', testR17_CliBootWaiting], ['R18 忙态死锁与幽灵框', testR18_BusyDeadlock], ['R19 输入框自适应高度', testR19_InputAutosize]];
   for (const [t, fn] of ts) { try { fn(); console.log(`[PASS] ${t}`); p++; } catch (e) { console.error(`[FAIL] ${t}`); console.error(e); f++; } }
   console.log(`SUMMARY passed=${p} failed=${f}\n`);
   if (f) process.exit(1);

@@ -36,3 +36,4 @@ ai-config.json
 *.patch
 scratch_diff.txt
 桌面端-next/
+桌面端-pub/

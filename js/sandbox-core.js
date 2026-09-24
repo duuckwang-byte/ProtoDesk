@@ -93,6 +93,13 @@ function loadSource(src, keepPanels){
     }
   }catch(e){}
   try{ draftTimer=null; }catch(e3){}
+  /* 显式切换原型时收掉需求输入条（拾取属于旧原型；静默刷新不收） */
+  try{
+    if(keepPanels!=='preserve'&&keepPanels!==true&&!(typeof window!=='undefined'&&window.__aiQuietRefresh===true)){
+      if(typeof CTRL_PICK!=='undefined'&&CTRL_PICK&&typeof CTRL_PICK.clear==='function')CTRL_PICK.clear();
+      if(typeof CTRL_PICK!=='undefined'&&CTRL_PICK&&typeof CTRL_PICK.hideFab==='function')CTRL_PICK.hideFab();
+    }
+  }catch(e4){}
   currentSource = src;
   /* Wave-C/F: 切换经 Store 版本化 (快照守卫的 ver 基准; Store 回写 window 保持经典互操作) */
   try { if (typeof window !== 'undefined' && window.Store && window.Store.setCurrentSource) window.Store.setCurrentSource(src); } catch (e) {}
@@ -447,6 +454,13 @@ function loadSubPage(s, subFile){
   if(window.LinkBind) LinkBind.closeInspector();
   if(window.AnnotationEngine && typeof AnnotationEngine.closeAll === 'function') AnnotationEngine.closeAll();
   editHideHover();
+  /* 显式切子页面时收掉需求输入条（静默刷新不收） */
+  try{
+    if(!(typeof window!=='undefined'&&window.__aiQuietRefresh===true)){
+      if(typeof CTRL_PICK!=='undefined'&&CTRL_PICK&&typeof CTRL_PICK.clear==='function')CTRL_PICK.clear();
+      if(typeof CTRL_PICK!=='undefined'&&CTRL_PICK&&typeof CTRL_PICK.hideFab==='function')CTRL_PICK.hideFab();
+    }
+  }catch(e9){}
   loadSourceDocs(s);
   /* 子页面切换同样刷新文档面板（与 loadSource 主页面一致，否则面板滞留旧原型文档） */
   try{ if(typeof loadDesc==='function')loadDesc(); }catch(e){}

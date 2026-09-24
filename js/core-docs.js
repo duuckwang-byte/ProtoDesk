@@ -3951,9 +3951,10 @@ function applyAiDraftText(text){
  try{
   var el=null;
   try{ el=document.getElementById('aiInput'); }catch(e){ el=null; }
-  if(!el) return false;
-  try{ el.value=String(text==null?'':text); }catch(e){ return false; }
-  return true;
+   if(!el) return false;
+   try{ el.value=String(text==null?'':text); }catch(e){ return false; }
+   try{ if(typeof aiAutosizeInput==='function') aiAutosizeInput(); }catch(e){} /* 草稿恢复后同步输入框高度 */
+   return true;
  }catch(e){ return false; }
 }
 /* iter26: 草稿pull+ACK+双保险+历史落定渲染（无渐变）：常驻变量+ts覆盖+localStorage+20次ACK停+pull一次+落定三件套 */

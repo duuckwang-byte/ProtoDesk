@@ -223,6 +223,19 @@ function test2_CssRulesContract() {
     /\.ai-input\[disabled\]\s*\{[^}]*background\s*:\s*#E2E8F0/.test(cssContent),
     `[CSS契约失败] .ai-input 禁用须灰底`
   );
+  // 输入框自适应高度：多行换行+上限120px，不得再锁死固定像素高
+  assert.ok(
+    /\.ai-input\s*\{[^}]*white-space\s*:\s*pre-wrap/.test(cssContent),
+    `[CSS契约失败] .ai-input 须多行换行`
+  );
+  assert.ok(
+    /\.ai-input\s*\{[^}]*max-height\s*:\s*120px/.test(cssContent),
+    `[CSS契约失败] .ai-input 须上限高度`
+  );
+  assert.ok(
+    ![...cssContent.matchAll(/\.ai-input\s*\{([^}]*)\}/g)].some((m) => /(?:^|;)height\s*:\s*\d+px/.test(m[1])),
+    `[CSS契约失败] .ai-input 不得锁死固定像素高`
+  );
   assert.ok(
     /\.ai-model\[disabled\]\s*\{[^}]*background\s*:\s*#E2E8F0/.test(cssContent),
     `[CSS契约失败] .ai-model 禁用须灰底`

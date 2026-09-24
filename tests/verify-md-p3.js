@@ -360,7 +360,7 @@ function test15_SubPageReloadsDoc() {
   assert.ok(/typeof loadDesc==='function'/.test(subBlock) || /loadDesc\(\)/.test(subBlock), '子页面切换须调loadDesc渲染文档面板');
   const mainIdx = sbSrc.indexOf('function loadSource(src, keepPanels)');
   assert.ok(mainIdx >= 0, '须能定位loadSource');
-  const mainBlock = sbSrc.slice(mainIdx, mainIdx + 2500);
+  const mainBlock = sbSrc.slice(mainIdx, mainIdx + 3000);
   assert.ok(mainBlock.includes('loadDesc()'), '主页面切换须调loadDesc（既有行为保持）');
 }
 

@@ -719,20 +719,6 @@ function gitFilterPushProjects(projects){
   });
   return out;
 }
-/* 原型内主文件与子页面拆分：主页html/md+最新需求/links/annotations 常显，其余进可折叠子页面组 */
-function gitSplitProtoFiles(protoName, files){
-  var main=[], sub=[];
-  var base=String(protoName||'');
-  (files||[]).forEach(function(f){
-    var p=String((f&&f.path)||'').replace(/\\/g,'/');
-    var name=p.split('/').pop()||'';
-    var stem=name.replace(/\.(html?|md)$/i,'');
-    var low=name.toLowerCase();
-    if(stem===base||low==='最新需求.md'||low==='links.json'||low==='annotations.json') main.push(f);
-    else sub.push(f);
-  });
-  return {main:main, sub:sub};
-}
 function gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx){
   return '<label class="git-tree-item">'
     + '<input type="checkbox" name="' + inputName + '"' + (isDefaultChecked ? ' checked' : '') + ' data-path="' + escAttr(f.path) + '" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
@@ -740,7 +726,7 @@ function gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx){
     + '<span class="git-file-name" title="' + escAttr(f.path) + '">' + escHtml(f.subPath || f.path) + '</span>'
     + '</label>';
 }
-function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, opts) {
+function renderGitTree(containerEl, data, onCountChange, inputName, checkMode) {
   if (!containerEl) return;
   var projects = [];
   if (Array.isArray(data)) {
@@ -794,14 +780,6 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, o
     protos.forEach(function(pr, prIdx) {
       var files = pr.files || [];
       if (!files.length) return;
-      var subFold = !!(opts && opts.subFold);
-      var mainFiles = files, subFiles = [];
-      if (subFold) {
-        var sp = null;
-        try{ sp = gitSplitProtoFiles(pr.proto, files); }catch(e){ sp = null; }
-        if (sp) { mainFiles = sp.main; subFiles = sp.sub; }
-        if (!mainFiles.length && !subFiles.length) return;
-      }
       html += '<div class="git-tree-group" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
         + '<div class="git-tree-proto" title="收起/展开该原型文件列表">'
         + '<input type="checkbox" class="git-group-chk"' + (isDefaultChecked ? ' checked' : '') + ' data-pidx="' + pIdx + '" data-pridx="' + prIdx + '">'
@@ -811,18 +789,9 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, o
         + '</div>'
         + '<div class="git-proto-body">';
 
-      mainFiles.forEach(function(f) {
+      files.forEach(function(f) {
         html += gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx);
       });
-      if (subFiles.length) {
-        html += '<div class="git-sub-toggle" data-pidx="' + pIdx + '" data-pridx="' + prIdx + '" title="展开/收起子页面">'
-          + '<span class="git-sub-arrow">▸</span><span>子页面（' + subFiles.length + '）</span></div>'
-          + '<div class="git-sub-list" style="display:none">';
-        subFiles.forEach(function(f) {
-          html += gitFileLabelHtml(f, inputName, isDefaultChecked, pIdx, prIdx);
-        });
-        html += '</div>';
-      }
       html += '</div></div>';
     });
     html += '</div>';
@@ -892,20 +861,7 @@ function renderGitTree(containerEl, data, onCountChange, inputName, checkMode, o
     };
   });
 
-  // 4. 子页面组收起/展开（仅 subFold 渲染时存在；收起只隐藏不影响勾选）
-  containerEl.querySelectorAll('.git-sub-toggle').forEach(function(tgl) {
-    tgl.onclick = function() {
-      var grp = tgl.parentElement;
-      var list = grp ? grp.querySelector('.git-sub-list') : null;
-      var arrow = tgl.querySelector('.git-sub-arrow');
-      if (!list) return;
-      var hidden = list.style.display === 'none';
-      list.style.display = hidden ? '' : 'none';
-      if (arrow) arrow.textContent = hidden ? '▾' : '▸';
-    };
-  });
-
-  // 5. 原型整组收起/展开（点行收起下方列表；点勾选框只勾选不折叠）
+  // 4. 原型整组收起/展开（点行收起下方列表；点勾选框只勾选不折叠）
   containerEl.querySelectorAll('.git-tree-proto').forEach(function(hd) {
     hd.onclick = function(ev) {
       try{
@@ -1122,7 +1078,7 @@ function loadGitPushStatus(targetBranch) {
     renderGitTree(gitPushTreeList, gitFilterPushProjects(r.projects), function(cnt) {
       if (gitPushCount) gitPushCount.textContent = '已选 ' + cnt + ' 项变更';
       if (gitPushSubmit) gitPushSubmit.disabled = (cnt === 0);
-    }, 'gitPushChk', 'push', { subFold: true });
+    }, 'gitPushChk', 'push');
   }).catch(function(e) {
     if (gitPushTreeList) {
       gitPushTreeList.innerHTML = '<div style="color:var(--err);padding:16px;text-align:center;">' + escHtml(String(e && e.message || e)) + '</div>';
@@ -5856,7 +5812,7 @@ function sweepStrayMasks(){
   if(aiBusy&&aiStreaming&&aiChatView&&aiStreaming.parentNode!==aiChatView){
     if(aiActiveKey===aiHistKey()){ aiChatView.appendChild(aiStreaming); aiRenderStream(); try{ if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){} }
   }
-  if(aiInputEl)aiInputEl.focus();
+  if(aiInputEl){ aiInputEl.focus(); try{ aiAutosizeInput(); }catch(e){} }
  }
   function closeAi(){
    /* Wave-D/G SoC修复：委托 AiDomain.requestClose（EventBus ai:request-close/ai:closed + Store感知，无裸挂）。 */
@@ -5910,7 +5866,7 @@ function sweepStrayMasks(){
   if(aiBusy&&aiStreaming&&aiChatView&&aiStreaming.parentNode!==aiChatView){
     if(aiActiveKey===aiHistKey()){ aiChatView.appendChild(aiStreaming); aiRenderStream(); try{ if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){} }
   }
-  if(aiInputEl)aiInputEl.focus();
+  if(aiInputEl){ aiInputEl.focus(); try{ aiAutosizeInput(); }catch(e){} }
  }
 
 function aiDetectCurrentPage(){
@@ -5935,7 +5891,18 @@ function aiDoSend(){
   if(!HAS_AI)return;
   var t=(aiInputEl&&aiInputEl.value||'').trim();
   if(!t)return;
-  if(aiBusy){ try{ if(typeof showToast==='function') showToast('上一个任务仍在运行，请先停止后再发送。'); else if(typeof libStatus==='function') libStatus('上一个任务仍在运行，请先停止后再发送。'); }catch(e){} return; }
+  if(aiBusy){
+    try{ if(typeof showToast==='function') showToast('上一个任务仍在运行，请先停止后再发送。'); else if(typeof libStatus==='function') libStatus('上一个任务仍在运行，请先停止后再发送。'); }catch(e){}
+    /* 忙态自愈：回滚/异常后本地忙态可能与主进程脱节，向主进程核对一次，空闲则本地复位 */
+    try{
+      if(window.protoAPI&&window.protoAPI.ai&&typeof window.protoAPI.ai.isBusy==='function'){
+        window.protoAPI.ai.isBusy().then(function(b){
+          if(!b){ try{ aiSetBusy(false); }catch(e){} try{ if(typeof showToast==='function')showToast('忙态已自动恢复，请重新发送。'); }catch(e2){} }
+        }).catch(function(){});
+      }
+    }catch(e){}
+    return;
+  }
    aiEnsureCur();
    /* 发送前防御：若缓存的会话 oid 不属于当前沙箱目录，忽略它（opencode 会卡死） */
    if(aiSession&&aiSession.oid&&!aiOidDirOk(aiSession.oid)){ aiSession.oid=''; aiSaveSesh(); }
@@ -5943,6 +5910,7 @@ function aiDoSend(){
     aiActiveKey=SESS_KEY+'#'+encodeURIComponent(s.id||''); /* 记录发送时所在源：本次运行的事件只回写该源 */
    if(!s)return;
    if(aiInputEl)aiInputEl.value='';
+   try{ aiAutosizeInput(); }catch(e){} /* 发送后清空，回落到一行高 */
    if(!s.lastHash||typeof s.lastHash!=='object') s.lastHash={};
     s.m=s.m||[]; var _uTs=0; try{ _uTs=(typeof aiSessNow==='function')?aiSessNow():Date.now(); }catch(e){ _uTs=Date.now(); }
     try{ if(typeof aiEnsureMsgTs==='function'&&s.m){} }catch(e){}
@@ -5989,7 +5957,11 @@ function aiDoSend(){
    var targetFile = (aiTargetPageSelect && aiTargetPageSelect.value) || (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || '';
    /* 回滚说明：规范注入位置加错（用户出完原型再做），aiDoSend恢复直通原文t；快照helpers保留供导出附录/预读+后续复用 */
     window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, uiKind:((typeof currentSource!=='undefined'&&currentSource&&(currentSource.kind||''))||'mobile'), enableTools:_enk, reasoning:(typeof aiCurReasoning==='function'?(aiCurModel()?aiCurReasoning():''):'')}).then(function(r){
-   if(r&&r.error==='busy'){ aiBubbleError('（已有任务在运行，请稍候）'); }
+    if(r&&r.error==='busy'){
+      /* 主进程忙：本次并未启动任何任务，本地必须复位，否则输入框永久禁用 */
+      try{ aiSetBusy(false); }catch(e){}
+      aiBubbleError('（已有任务在运行，请稍候）');
+    }
    else if(r&&!r.ok){ if(aiStreaming)aiBubbleError(String(r.error||'发送失败')); else aiSetBusy(false); }
   }).catch(function(e){ aiBubbleError('发送失败：'+(e&&e.message||e)); });
 }
@@ -6056,6 +6028,17 @@ if(kindOkEl)kindOkEl.onclick=function(){ closeKindModal(); newPrototype(kindPick
 if(kindCancelEl)kindCancelEl.onclick=closeKindModal;
 if(kindCloseEl)kindCloseEl.onclick=closeKindModal;
 if(aiDesignFab)aiDesignFab.onclick=function(){ openAiDesign(); };
+/* 输入框自适应高度：空时一行，有字随内容长高（上限120px后内部滚动） */
+function aiAutosizeInput(){
+  if(!aiInputEl) return;
+  try{
+    aiInputEl.style.height='auto';
+    var _h=aiInputEl.scrollHeight, _max=120;
+    if(_h>_max){ _h=_max; aiInputEl.style.overflowY='auto'; }
+    else{ aiInputEl.style.overflowY='hidden'; }
+    aiInputEl.style.height=_h+'px';
+  }catch(e){}
+}
 if(HAS_AI){
   aiEnsureCur(); aiSaveSesh();
   if(aiCloseEl)aiCloseEl.onclick=closeAi;
@@ -6071,6 +6054,7 @@ if(HAS_AI){
     if(e.key==='Enter'&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey&&!e.isComposing){ e.preventDefault(); aiDoSend(); return; }
     if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); aiDoSend(); }
   });
+   if(aiInputEl)aiInputEl.addEventListener('input',function(){ try{ aiAutosizeInput(); }catch(e){} });
  window.protoAPI.ai.onEvent(function(ev){
     if(!ev)return;
     if(ev.type==='session'){
@@ -6192,8 +6176,11 @@ if(HAS_AI){
      ev.stopPropagation();
      if(aiBusy){ showToast('AI 正在生成，请先停止再恢复。'); return; }
      if(!window.confirm('将原型「'+friendlyName(currentSource)+'」恢复到 '+fmtTsText(it.ts)+'？\n\n恢复前会自动备份当前状态。'))return;
-      window.protoAPI.snapshot.restore({dir:currentSource.sandboxDir,ts:it.ts}).then(function(rr){
-       if(rr&&rr.ok){ closeSnapPanel(); showToast('已恢复到 '+fmtTsText(it.ts)+'（原状态已备份为 undo 快照）。'); loadSandboxSources(undefined, true); }
+       window.protoAPI.snapshot.restore({dir:currentSource.sandboxDir,ts:it.ts}).then(function(rr){
+        if(rr&&rr.ok){
+          /* 回滚即全新起点：清掉拾取态（旧文档活元素引用已失效，留着会出幽灵高亮） */
+          try{ if(typeof cancelCtrlPickState==='function')cancelCtrlPickState(); else if(window.CTRL_PICK){ window.CTRL_PICK.holding=false; try{window.CTRL_PICK.exit();}catch(e){} try{window.CTRL_PICK.clear();}catch(e2){} } }catch(e){}
+          closeSnapPanel(); showToast('已恢复到 '+fmtTsText(it.ts)+'（原状态已备份为 undo 快照）。'); loadSandboxSources(undefined, true); }
        else reportError('snapshot-restore', new Error(rr&&rr.error||'未知错误'), '恢复失败：'+(rr&&rr.error||'未知错误'));
       }).catch(function(e){ reportError('snapshot-restore', e, '恢复失败：'+((e&&e.message)||e||'未知错误')); });
     };

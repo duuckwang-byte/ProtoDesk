@@ -165,10 +165,13 @@ var CTRL_PICK = {
     if (!CTRL_PICK.selected.length) return;
     CTRL_PICK.selected.forEach(function (it, i) {
       var r = null;
-      if (it.el && it.el.ownerDocument) {
+      var hasLiveEl = !!(it.el && it.el.ownerDocument);
+      if (hasLiveEl) {
         try { r = it.el.getBoundingClientRect(); } catch (e) { r = null; }   /* 实时读取，防滚动/缩放漂移 */
       }
-      if (!r) r = it.rect;                                                    /* 远端拾取用帧回传 rect */
+      /* 有活元素只用实时框（ detached 旧文档读出 0 尺寸即跳过，禁用旧 rect 兜底防幽灵框）；
+       * 纯远端拾取（无 live el）才用帧回传 rect */
+      if (!r && !hasLiveEl) r = it.rect;
       if (!r || (!r.width && !r.height)) return;
       var p = editRectToPage(r);
       var box = document.createElement('div');
@@ -411,6 +414,24 @@ function ctrlPickBuildParts(list){
   return { parts: parts, file: curHtmlNow };
 }
 /* 入列前升级：所涉文件补ID落盘，各部件选择器能换 pr-id 就换（按活元素序号/帧序号+短文案定位），最后静默刷新一次 */
+/* 发送补ID后就地同步活文档：只补 data-pr-id 属性（无视觉变化），免整页重载，原型内弹窗/滚动/输入态不受影响 */
+function prIdPatchLiveDom(parts){
+  var n=0;
+  try{
+    (parts||[]).forEach(function(p){
+      try{
+        if(!p||!p.el||!p.el.ownerDocument) return;
+        var m=String(p.sel||'').match(/\[data-pr-id="([^"]+)"\]/);
+        if(!m) return;
+        if(typeof p.el.setAttribute!=='function') return;
+        try{ if(p.el.getAttribute&&p.el.getAttribute('data-pr-id')===m[1]) return; }catch(e){}
+        p.el.setAttribute('data-pr-id', m[1]);
+        n++;
+      }catch(e){}
+    });
+  }catch(e){}
+  return n;
+}
 function prIdUpgradeParts(parts, dir, cb){
   var done=function(ps){ try{ cb(ps||parts); }catch(e){} };
   try{
@@ -460,11 +481,11 @@ function prIdUpgradeParts(parts, dir, cb){
         Object.keys(injDocs).forEach(function(f){ if(injDocs[f].injected!==injDocs[f].src) writes.push(f); });
         var after=function(){
           try{ codeEditLoading(false); }catch(e){}
-          try{
-            var saved=null;
-            try{ saved=(typeof inlineEditCaptureScroll==='function')?inlineEditCaptureScroll():null; }catch(e){}
-            if(typeof inlineEditSilentRefresh==='function')inlineEditSilentRefresh(saved, writes[0]||flist[0]);
-          }catch(e){}
+          if(writes.length){
+            /* 写盘仅补 data-pr-id 属性：就地同步活文档，不重载预览（原型弹窗/页面态保持） */
+            try{ if(typeof prIdPatchLiveDom==='function') prIdPatchLiveDom(parts); }catch(e){}
+          }
+          /* 零写入则什么都不做：此前即使无变化也会刷整页，白白关闭原型内弹窗 */
           done(parts);
         };
         if(!writes.length){ after(); return; }
@@ -2130,11 +2151,9 @@ function editQueueSubmit(){
   /* 只提交选中的条目：没选中的继续留在列表 */
   var _selList=editQueueSelected();
   if(!_selList.length){ alert('请先选中至少一条需求再提交（点击条目切换选中）。'); return; }
-  var srcName=(currentSource&&currentSource.displayName)||(currentSource&&currentSource.name)||'当前原型';
   var mainFile=(currentSource&&(currentSource.mainHtmlFile||currentSource.name))||'';
   var curActive=(typeof editQueueCurHtmlFile==='function'?editQueueCurHtmlFile():(currentSource&&(currentSource.activeSubFile||mainFile)||''));
   var isMulti=!!(currentSource&&((currentSource.subPages&&currentSource.subPages.length)||(currentSource.htmlFiles&&currentSource.htmlFiles.length>1)));
-  var srcFull=srcName+((isMulti&&curActive&&mainFile&&curActive!==mainFile)?' / '+curActive:'');
   function effOf(it){ return it.htmlFile||mainFile||'当前文件'; }
   /* 批量条目展开：batchParts 有值时按部件展开参与拼装（列表仍显示单条） */
   var _workList=[];
@@ -2176,8 +2195,8 @@ function editQueueSubmit(){
     if(s.length>1200) s=s.slice(0,1200)+'\n…（已截断，仅供定位参考）';
     return s;
   }
-  var parts=['改「'+srcFull+'」（共'+_selList.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
-  var dparts=['改「'+srcFull+'」（共'+_selList.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
+  var parts=['修改（共'+_selList.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
+  var dparts=['修改（共'+_selList.length+'条，涉及文件'+htmlFiles.length+'个：'+htmlFiles.join('、')+'）：',''];
   groups.forEach(function(g,i){
     var chips=g.sels.map(function(s){ return '`'+s.sel+'`'+((showPage&&s.page)?'（页面：'+s.page+'）':''); });
     var head='['+(i+1)+'] 所属文件：'+g.file+' ｜ '+chips.join('、')+'：'+g.text;
@@ -2565,7 +2584,7 @@ function pickBarOpenLink(){
   var row=document.createElement('div'); row.className='pick-bar-pop-row';
   if(bound){
     var unbind=document.createElement('button'); unbind.type='button'; unbind.className='pick-bar-btn'; unbind.style.color='#DC2626'; unbind.textContent='解除';
-    unbind.onclick=function(){ try{ window.LinkBind.removeJumpBinding(sel,pg); }catch(e){} pickBarClosePop(); };
+    unbind.onclick=function(){ try{ window.LinkBind.removeJumpBinding(sel,pg); }catch(e){} pickBarClosePop(); try{ CTRL_PICK.clear(); }catch(e2){} try{ CTRL_PICK.hideFab(); }catch(e3){} };
     row.appendChild(unbind);
   }
   var save=document.createElement('button'); save.type='button'; save.className='docs-btn primary'; save.textContent='保存绑定';
@@ -2580,6 +2599,8 @@ function pickBarOpenLink(){
       );
     }catch(e){}
     pickBarClosePop();
+    try{ CTRL_PICK.clear(); }catch(e2){}
+    try{ CTRL_PICK.hideFab(); }catch(e3){}
   };
   row.appendChild(save); pop.appendChild(row);
 }

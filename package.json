@@ -4,7 +4,7 @@
   "description": "原型预览工具 · 投融资录入工作流",
   "main": "main.js",
   "author": "local",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --x64",

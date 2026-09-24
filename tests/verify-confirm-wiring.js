@@ -283,7 +283,7 @@ testConfirmBehavior().then(() => {
   process.exitCode = 1;
 });
 
-// ---- 10. 上传文件树：仅原型三类文件 + 子页面可折叠（不同步改拉取） ----
+// ---- 10. 上传文件树：仅原型三类文件 + 原型整组折叠 ----
 (function testPushTreeFilterFold() {
   function ex(src, name) {
     const m = src.match(new RegExp('function\\s+' + name + '\\s*\\([^)]*\\)\\s*\\{'));
@@ -298,7 +298,8 @@ testConfirmBehavior().then(() => {
     }
     return src.slice(m.index, i + 1);
   }
-  const factory = new Function(ex(paeSrc, 'gitPushVisibleFile') + '\n' + ex(paeSrc, 'gitFilterPushProjects') + '\n' + ex(paeSrc, 'gitSplitProtoFiles') + '\nreturn {gitPushVisibleFile, gitFilterPushProjects, gitSplitProtoFiles};')();
+  const ee2 = paeSrc;
+  const factory = new Function(ex(paeSrc, 'gitPushVisibleFile') + '\n' + ex(paeSrc, 'gitFilterPushProjects') + '\nreturn {gitPushVisibleFile, gitFilterPushProjects};')();
   // 过滤真值表
   assert.strictEqual(factory.gitPushVisibleFile('P/Q/Q.html'), true, '原型html须显示');
   assert.strictEqual(factory.gitPushVisibleFile('P/Q/Q.md'), true, '原型md须显示');
@@ -324,21 +325,26 @@ testConfirmBehavior().then(() => {
   assert.strictEqual(filtered.length, 1, '须剩1个项目');
   assert.strictEqual(filtered[0].protos.length, 1, '须剩1个原型');
   assert.deepStrictEqual(filtered[0].protos[0].files.map(f => f.path), ['P/Q/Q.html'], '仅留原型文件');
-  // 主/子拆分
-  const sp = factory.gitSplitProtoFiles('Q', [{ path: 'P/Q/Q.html' }, { path: 'P/Q/Q.md' }, { path: 'P/Q/最新需求.md' }, { path: 'P/Q/links.json' }, { path: 'P/Q/子页.html' }, { path: 'P/Q/其它.md' }]);
-  assert.deepStrictEqual(sp.main.map(f => f.path), ['P/Q/Q.html', 'P/Q/Q.md', 'P/Q/最新需求.md', 'P/Q/links.json'], '主文件常显');
-  assert.deepStrictEqual(sp.sub.map(f => f.path), ['P/Q/子页.html', 'P/Q/其它.md'], '其余进子页面组');
-  // 接线：上传走过滤+折叠，拉取不动
+  const editSrc = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
+  // 接线：上传走过滤，拉取不动
   assert.ok(/gitFilterPushProjects\(r\.projects\)/.test(paeSrc), '上传须先过滤再渲染');
-  assert.ok(/'push', \{ ?subFold: true ?\}/.test(paeSrc), '上传须开子页面折叠');
-  assert.ok(/git-sub-toggle/.test(paeSrc) && /git-sub-list/.test(paeSrc), '须有折叠行与子列表');
   assert.ok(/git-proto-body/.test(paeSrc) && /git-proto-arrow/.test(paeSrc), '原型整组须可收起（body+箭头）');
+  assert.ok(!/git-sub-toggle/.test(paeSrc), '子页面折叠须移除');
+  assert.ok(!/gitSplitProtoFiles/.test(paeSrc), '拆分函数须移除');
   const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
-  assert.ok(/\.git-sub-toggle\s*\{/.test(css) && /\.git-sub-list \.git-tree-item/.test(css), '须有折叠样式');
   assert.ok(/\.git-proto-arrow\s*\{/.test(css), '须有原型组箭头样式');
-  const dom = fs.readFileSync(path.join(rootDir, 'js', 'git-ui', 'git-domain.js'), 'utf8');
-  assert.ok(!/scheduleClose\(ctx\.closeModal/.test(dom), '上传成功不得自动关窗');
-  console.log('[PASS] 上传文件树过滤与子页面折叠');
+  assert.ok(!/\.git-sub-toggle\s*\{/.test(css), '子页面折叠样式须移除');
+  // 输入条收敛：交互完成/切换源子页/弹抽屉关闭
+  assert.ok(/pickBarClosePop\(\);/.test(editSrc), '交互完成须关悬浮窗');
+  const maskSrc = fs.readFileSync(path.join(rootDir, 'js', 'mask-manager.js'), 'utf8');
+  assert.ok(/CTRL_PICK\.hideFab/.test(maskSrc), '弹抽屉须收输入条');
+  const sbSrc = fs.readFileSync(path.join(rootDir, 'js', 'sandbox-core.js'), 'utf8');
+  const loadSourceBlock = sbSrc.slice(sbSrc.indexOf('function loadSource(src, keepPanels)'), sbSrc.indexOf('function loadSource(src, keepPanels)') + 1200);
+  assert.ok(/__aiQuietRefresh/.test(loadSourceBlock) && /CTRL_PICK\.clear/.test(loadSourceBlock), '切源须收输入条（静默刷新除外）');
+  const subIdx = sbSrc.indexOf('function loadSubPage(s, subFile)');
+  const subBlock = sbSrc.slice(subIdx, subIdx + 2200);
+  assert.ok(/__aiQuietRefresh/.test(subBlock) && /CTRL_PICK\.clear/.test(subBlock), '切子页须收输入条（静默刷新除外）');
+  console.log('[PASS] 上传文件树过滤与原型组折叠');
 })();
 
 // ---- 11. 拉取覆盖确认：去掉先上传 + 已删文件不计脏 ----

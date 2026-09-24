@@ -39,7 +39,7 @@ function test3_SubmitHeaderConsistent() {
   const seg = ee.match(/function editQueueSubmit[\s\S]*?var t=parts\.join/);
   assert.ok(seg, '缺editQueueSubmit拼装');
   const code = seg[0];
-  assert.ok(/srcFull/.test(code), '缺srcFull子页后缀');
+  assert.ok(!/srcFull/.test(code), '头不得再带当前页后缀（多子页提交会误导模型锚定当前页）');
   assert.ok(/所属文件/.test(code), '逐条未拼所属文件');
   assert.ok(/涉及文件清单/.test(code), '缺文件清单');
   assert.ok(/只在所属文件中找/.test(code), '缺跨文件定位约束');
@@ -52,7 +52,7 @@ function test5_CondenseSubmit() {
   const seg = ee.match(/function editQueueSubmit[\s\S]*?var t=parts\.join/);
   assert.ok(seg, '缺editQueueSubmit拼装');
   const code = seg[0];
-  assert.ok(/改「/.test(code) && /共'\+_selList\.length\+'条/.test(code), '缺精简头改「/选中计数N条');
+  assert.ok(/修改（共/.test(code) && /共'\+_selList\.length\+'条/.test(code) && !/改「/.test(code), '头须为“修改（共N条…）”，不得再带当前页名');
   assert.ok(/chips\.join\('、'\)/.test(code), '缺同需求合并选择器并列');
   assert.ok(/showPage/.test(code), '缺单页省略页面行');
   assert.ok(/层级：/.test(code), '缺层级链');
@@ -78,10 +78,34 @@ function test5_CondenseSubmit() {
   assert.ok(/mpl\.ancestors/.test(core) && /mpl\.parentHtml/.test(core), '宿主PICK_MISS白名单缺透传');
 }
 function ee2core() { return fs.readFileSync(path.join(__dirname, '..', 'js', 'sandbox-core.js'), 'utf8'); }
+// 断言6：发送补ID不重载预览（就地补属性，零写入不刷新）
+function test6_SendNoReload() {
+  const seg = ee.match(/function prIdUpgradeParts\(parts, dir, cb\)[\s\S]*?function ensurePickOverlay/);
+  assert.ok(seg, '缺prIdUpgradeParts');
+  const code = seg[0];
+  assert.ok(/prIdPatchLiveDom/.test(code), '补ID后须就地同步活文档');
+  assert.ok(!/inlineEditSilentRefresh/.test(code), '发送链路不得再整页重载（原型弹窗会被关闭）');
+  assert.ok(/function prIdPatchLiveDom\(parts\)/.test(ee), '缺prIdPatchLiveDom');
+  // 行为：只补属性，已有相同ID跳过，无el/无ID不碰
+  const src = ee.match(/function prIdPatchLiveDom\(parts\)[\s\S]*?\n\}/);
+  assert.ok(src, '提不出prIdPatchLiveDom源码');
+  const fn = new Function(src[0] + '\nreturn prIdPatchLiveDom;')();
+  const el1 = { ownerDocument: {}, _a: {}, getAttribute(k) { return this._a[k] || null; }, setAttribute(k, v) { this._a[k] = v; } };
+  const el2 = { ownerDocument: {}, _a: { 'data-pr-id': 'pr-div-1' }, getAttribute(k) { return this._a[k] || null; }, setAttribute(k, v) { this._a[k] = v; this._w = (this._w || 0) + 1; } };
+  const n = fn([
+    { sel: 'div[data-pr-id="pr-div-7"]', el: el1 },
+    { sel: 'div[data-pr-id="pr-div-1"]', el: el2 },
+    { sel: 'div.main', el: el1 },
+    { sel: 'span[data-pr-id="pr-x"]', el: null },
+  ]);
+  assert.strictEqual(n, 1, '应只补1个');
+  assert.strictEqual(el1._a['data-pr-id'], 'pr-div-7', '活元素须补上ID');
+  assert.ok(!el2._w, '已有相同ID不得重写');
+}
 // 断言4：单文件原型零回归 + 规范同步
 function test4_SingleFileZeroRegression() {
   assert.ok(/isMulti/.test(ee), '缺isMulti单文件回退');
-  assert.ok(/srcName\+\(\(isMulti&&curActive&&mainFile&&curActive!==mainFile\)\?' \/ '\+curActive:''\)/.test(ee), '单文件应回退原单名');
+  assert.ok(!/srcFull/.test(ee), '提交头不得再拼当前页后缀（单文件/多文件一致走“修改（共N条…）”）');
   assert.ok(/一原型文件夹可含多 HTML/.test(tp), 'toolPrompt未同步多HTML约束');
   assert.ok(/所属文件/.test(tp) || /只改该文件/.test(tp), 'toolPrompt未约束按文件修改');
 }
@@ -94,6 +118,7 @@ function runAllAssertions() {
     ['断言3 提交头与逐条文件一致', test3_SubmitHeaderConsistent],
     ['断言4 单文件原型零回归', test4_SingleFileZeroRegression],
     ['断言5 精简拼装与层级父级', test5_CondenseSubmit],
+    ['断言6 发送补ID不重载预览', test6_SendNoReload],
   ];
   for (const [title, fn] of tests) {
     try { fn(); console.log(`[PASS] ${title}`); passed++; }
