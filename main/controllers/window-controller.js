@@ -16,6 +16,29 @@ function appHtmlPath() {
   try { return path.join(app.getAppPath(), '原型+文档.html'); } catch (e) { return '原型+文档.html'; }
 }
 
+/* F12 / Ctrl+Shift+I 开关 DevTools（各窗口独立，detached 模式不挤布局；before-input-event 先于页面按键，不干扰拾取/Ctrl+F 等） */
+function attachDevToolsShortcut(win) {
+  try {
+    if (!win || !win.webContents || typeof win.webContents.on !== 'function') return false;
+    if (win.webContents.__devToolsShortcutBound) return true;
+    win.webContents.__devToolsShortcutBound = true;
+    win.webContents.on('before-input-event', function (event, input) {
+      try {
+        if (!input || input.type !== 'keyDown') return;
+        var isF12 = (input.key === 'F12');
+        var k = String(input.key || '').toLowerCase();
+        var isToggle = !!((input.control || input.meta) && input.shift && k === 'i');
+        if (!isF12 && !isToggle) return;
+        try {
+          if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+          else win.webContents.openDevTools({ mode: 'detach' });
+        } catch (e) {}
+      } catch (e) {}
+    });
+    return true;
+  } catch (e) { return false; }
+}
+
 /**
  * 窗口域 8 通道契约 (docwin:open/close/toggle, aiwin:open/close/toggle, doc:mirror-push/back).
  * 工厂 createDocWindow/createAiWindow 与路由同置本层 (Electron 生命周期使然).
@@ -51,6 +74,7 @@ function createDocWindow(opts) {
     }
   });
   try { shared.docWin.setMenuBarVisibility(false); } catch (e) {}
+  try { attachDevToolsShortcut(shared.docWin); } catch (e) {}
   shared.docWin.on('closed', () => {
     shared.docWin = null;
     try { if (shared.mainWin && !shared.mainWin.isDestroyed()) shared.mainWin.webContents.send('doc:mirror', { kind: 'mode', mode: 'panel' }); } catch (e) {}
@@ -88,6 +112,7 @@ function createAiWindow(opts) {
     }
   });
   try { shared.aiWin.setMenuBarVisibility(false); } catch (e) {}
+  try { attachDevToolsShortcut(shared.aiWin); } catch (e) {}
   shared.aiWin.on('closed', () => {
     shared.aiWin = null;
     try { if (shared.mainWin && !shared.mainWin.isDestroyed()) shared.mainWin.webContents.send('doc:mirror', { kind: 'ai-mode', mode: 'ai-panel' }); } catch (e) {}
@@ -222,4 +247,4 @@ function registerWindowController() {
   /* handlers self-register at require time (above); kept for symmetry with other controllers */
 }
 
-module.exports = { registerWindowController };
+module.exports = { registerWindowController, attachDevToolsShortcut };

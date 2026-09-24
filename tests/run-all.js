@@ -8,6 +8,7 @@ const NODE = process.execPath;
 
 const SUITES = [
   ['pack', 'check-pack.js'],
+  ['lint-guard', 'lint-guard.js'],
   ['git-security', 'verify-git-security.js'],
   ['static-verify', 'static-verify.js'],
   ['platform', 'verify-platform.js'],
@@ -36,6 +37,7 @@ const SUITES = [
   ['ctrl-release', 'verify-ctrl-release.js'],
   ['history', 'verify-history.js'],
   ['sandbox-guard', 'verify-sandbox-guard.js'],
+  ['groups', 'verify-groups.js'],
   ['antigravity-lock', 'verify-antigravity-lock.js'],
   ['agy-stream', 'verify-agy-stream.js'],
   ['task-wiring', 'verify-task-wiring.js'],

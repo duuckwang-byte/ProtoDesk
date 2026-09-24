@@ -249,8 +249,8 @@ function saveReqEditDocs(){
      docContentEl.innerHTML=renderMd(reqText||'# 最新需求\n\n（暂无内容）');
      libStatus('最新需求文档已保存。');
    }
-   else{ alert('保存失败：'+(r&&r.error||'未知错误')); }
-  }).catch(function(e){ alert('保存失败：'+(e&&e.message||e)); });
+    else{ try{ showToast('保存失败：'+(r&&r.error||'未知错误')); }catch(e){} }
+   }).catch(function(e){ try{ showToast('保存失败：'+(e&&e.message||e)); }catch(e2){} });
 }
 function enterReqEdit(){
   if(reqEditing)return;
@@ -282,8 +282,8 @@ function saveReqEdit(){
      if(reqContentEl) reqContentEl.innerHTML=renderMd(reqText||'# 最新需求\n\n（暂无内容）');
      libStatus('最新需求文档已保存。');
    }
-   else{ alert('保存失败：'+(r&&r.error||'未知错误')); }
-  }).catch(function(e){ alert('保存失败：'+(e&&e.message||e)); });
+    else{ try{ showToast('保存失败：'+(r&&r.error||'未知错误')); }catch(e){} }
+   }).catch(function(e){ try{ showToast('保存失败：'+(e&&e.message||e)); }catch(e2){} });
 }
 if(reqFabEl)reqFabEl.onclick=toggleReqPane;
 if(reqMaskEl)reqMaskEl.addEventListener('click',function(){ setReqOpen(false); });
@@ -304,7 +304,7 @@ function addSourceFromFile(name, content, folder){
 if(btnAddSourceEl)btnAddSourceEl.onclick=function(){
   window.protoAPI.pickTextFile({title:'选择原型 HTML 文件',filters:[{name:'HTML 原型',extensions:['html','htm']}]}).then(function(r){
     if(!r)return;
-    if(r.error){ alert('读取文件失败：'+r.error); return; }
+    if(r.error){ try{ showToast('读取文件失败：'+r.error); }catch(e){} return; }
     /* 导入成功：复制进本地沙箱（当前项目），之后打开的都是沙箱副本（HTML+同名MD一起进沙箱） */
     window.protoAPI.sandbox.adopt({name:r.name, content:r.content||'', srcPath:r.path||'', project:currentProject}).then(function(res){
       if(res&&res.ok){
@@ -1818,7 +1818,7 @@ async function exportCurrentPureHtml() {
   // P1-2 fix: 重新从沙箱读取最新内容，避免导出旧内存（NF-02）
   try{ const r=await window.protoAPI.sandbox.read(currentSource.sandboxDir, currentSource.mainHtmlFile||currentSource.name); if(r&&r.ok) currentSource.content=r.content; }catch(e){}
   closeExportDropdown();
-  if (!currentSource || !currentSource.content) { alert('当前原型无源码内容'); return; }
+  if (!currentSource || !currentSource.content) { try{ showToast('当前原型无源码内容'); }catch(e){} return; }
   var blob = new Blob([currentSource.content], { type: 'text/html;charset=utf-8' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -2623,8 +2623,11 @@ function deleteApiProfile(id){
  var idx=-1;
  for(var i=0;i<((curAiConfig&&curAiConfig.apiProfiles)||[]).length;i++){ if(curAiConfig.apiProfiles[i]&&curAiConfig.apiProfiles[i].id===id){ idx=i; break; } }
  if(idx<0)return;
- var isActive=(curAiConfig.activeApiProfileId===id);
- try{ if(!confirm('确定删除该API配置吗？'))return; }catch(e){ return; }
+  var isActive=(curAiConfig.activeApiProfileId===id);
+  try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除API配置',message:'确定删除该API配置吗？',okText:'删除',danger:true},function(ok){ if(ok)deleteApiProfileGo(idx,isActive); }); return; } }catch(e){}
+  deleteApiProfileGo(idx,isActive);
+ }
+ function deleteApiProfileGo(idx,isActive){
  curAiConfig.apiProfiles.splice(idx,1);
  if(isActive){
   curAiConfig.activeApiProfileId=curAiConfig.apiProfiles.length?curAiConfig.apiProfiles[0].id:null;
@@ -2777,9 +2780,11 @@ function uispecDeleteSpec(id){
   var target=null;
   (uispecItems||[]).forEach(function(it){ if(it&&String(it.id)===String(id))target=it; });
   var nm=(target&&(target.name||target.id))||id;
-  try{
-    if(!window.confirm('删除设计规范「'+nm+'」？\n将同时删除对应的 md 文件，该操作不可恢复。'))return;
-  }catch(e){ return; }
+  try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除设计规范',message:'删除设计规范「'+nm+'」？\n将同时删除对应的 md 文件，该操作不可恢复。',okText:'删除',danger:true},function(ok){ if(ok)uispecDeleteSpecGo(id,target); }); return; } }catch(e){}
+  uispecDeleteSpecGo(id,target);
+ }
+ function uispecDeleteSpecGo(id,target){
+  if(!id)return;
   if(!(window.protoAPI&&window.protoAPI.spec&&window.protoAPI.spec.remove)){ try{ showToast('仅桌面端支持删除规范'); }catch(e){} return; }
   window.protoAPI.spec.remove({ id:id }).then(function(r){
     if(!r||!r.ok){ try{ showToast('删除失败：'+((r&&r.error)||'未知错误')); }catch(e){} return; }
@@ -3194,7 +3199,7 @@ if(btnClearTrace)btnClearTrace.onclick=function(){
 };
 if(btnCopyTrace)btnCopyTrace.onclick=function(){
   var total=aiTraceCountTotal();
-  if(!total){ alert('暂无日志可复制'); return; }
+  if(!total){ try{ showToast('暂无日志可复制'); }catch(e){} return; }
   var out=[];
   for(var gi=0;gi<aiTraceGroups.length;gi++){
     var g=aiTraceGroups[gi];
@@ -3207,13 +3212,13 @@ if(btnCopyTrace)btnCopyTrace.onclick=function(){
     if(g.output)out.push('[OUTPUT] '+g.output);
   }
   var full=out.join('\n');
-  /* Wave-B: 剪贴板收敛3/5（Trace日志复制改走 Utils，保留alert回显） */
-  try{ if(typeof window!=='undefined'&&window.Utils&&window.Utils.copyToClipboard){ window.Utils.copyToClipboard(full,''); alert('已复制全部 Trace 日志'); return; } }catch(e){}
+  /* Wave-B: 剪贴板收敛3/5（Trace日志复制改走 Utils，toast 回显） */
+  try{ if(typeof window!=='undefined'&&window.Utils&&window.Utils.copyToClipboard){ window.Utils.copyToClipboard(full,''); try{ showToast('已复制全部 Trace 日志'); }catch(e){} return; } }catch(e){}
   if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(full).then(function(){ alert('已复制全部 Trace 日志'); });
+    navigator.clipboard.writeText(full).then(function(){ try{ showToast('已复制全部 Trace 日志'); }catch(e){} });
   }else{
     var ta=document.createElement('textarea'); ta.value=full; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-    alert('已复制全部 Trace 日志');
+    try{ showToast('已复制全部 Trace 日志'); }catch(e){}
   }
 };
 
@@ -3596,12 +3601,12 @@ function renderSessionList(explicitDir){
    titleSpan.className='ai-sess-title';
    titleSpan.textContent=sess.title||('会话 '+sid.slice(-4));
    titleSpan.title=sess.title||'';
-   titleSpan.ondblclick=function(e){ e.stopPropagation(); var nt=prompt('重命名会话', sess.title||''); if(nt!==null) renameSession(sid, nt, dir); };
+   titleSpan.ondblclick=function(e){ e.stopPropagation(); try{ if(typeof askNamePrompt==='function'){ askNamePrompt({title:'重命名会话',label:'会话名称',value:sess.title||''},function(nt){ if(nt==null||nt==='')return; renameSession(sid, nt, dir); }); } }catch(err){} };
    var closeBtn=document.createElement('span');
    closeBtn.className='sess-close';
    closeBtn.textContent='✕';
    closeBtn.title='删除会话';
-   closeBtn.onclick=function(e){ e.stopPropagation(); if(confirm('删除会话「'+(sess.title||sid)+'」？')) deleteSession(sid, dir); };
+   closeBtn.onclick=function(e){ e.stopPropagation(); try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除会话',message:'删除会话「'+(sess.title||sid)+'」？',okText:'删除',danger:true},function(ok){ if(ok)deleteSession(sid, dir); }); return; } }catch(err){} deleteSession(sid, dir); };
    item.appendChild(titleSpan);
    item.appendChild(closeBtn);
    item.onclick=function(){ setActiveSession(sid, dir); };
@@ -3636,6 +3641,30 @@ function aiWriteSeshFor(key,fn){
 }
 function aiActiveHistKey(){ return aiActiveKey||aiHistKey(); }
 var aiActiveKey=null;
+/* 后台任务重开恢复：对话关闭后任务在主进程继续，流式气泡仍在内存累积；
+ * 重开时 aiRenderBubbles 先清空重绘（流式节点被摘离），按发送时的会话/沙箱核对后挂回。
+ * 旧条件 aiActiveKey===aiHistKey() 恒为假（ai_sessions_v2_#sid vs ai_hist_dir），致进度与结果永不可见。 */
+var aiTaskSessId=null, aiTaskSbxDir=null;
+function aiShouldReattachStream(){
+  try{
+    if(!aiBusy||!aiStreaming) return false;
+    if(!aiTaskSessId||!aiTaskSbxDir) return false;
+    var curDir=''; try{ curDir=aiSbxDir(); }catch(e){}
+    if(curDir!==aiTaskSbxDir) return false;
+    var curSid=''; try{ curSid=(aiSession&&aiSession.id)||''; }catch(e){}
+    if(!curSid||curSid!==aiTaskSessId) return false;
+    if(!aiChatView) return false;
+    if(aiStreaming.parentNode===aiChatView) return false;
+    return true;
+  }catch(e){ return false; }
+}
+function aiReattachStream(){
+  if(!aiShouldReattachStream()) return false;
+  try{ aiChatView.appendChild(aiStreaming); }catch(e){ return false; }
+  try{ aiRenderStream(); }catch(e){}
+  try{ if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
+  return true;
+}
 function aiOidDirOk(oid){ return typeof oid==='string'&&!!oid.trim(); }
 function aiEnsureCur(){
  var dir=aiSbxDir();
@@ -3989,9 +4018,10 @@ function aiBubbleError(msg){
   aiStreaming.appendChild(foot);
    }
  }
- else{ aiAppendMsg(disp,'err'); }
- aiStreaming=null; aiSetBusy(false);
-  var k=aiActiveHistKey();
+   else{ aiAppendMsg(disp,'err'); }
+   aiStreaming=null; aiSetBusy(false);
+   try{ aiTaskSessId=null; aiTaskSbxDir=null; }catch(e){} /* 任务结束：清重开恢复快照 */
+   var k=aiActiveHistKey();
   var _errTs=aiSessNow();
   var _errExtra=[{t:'error', text:disp, ts:_errTs}];
   if(k===aiHistKey()||(k&&k.indexOf(SESS_KEY)===0)){ var s=aiCurSesh(); if(s){ s.m=s.m||[]; s.m.push({r:'a',t:disp,err:true,ts:_errTs}); try{ aiFlushTaskEventsToSess(s,_errExtra); }catch(e){ try{ aiCurTaskEvents=[]; }catch(_e){} } aiSaveSesh(); } else { try{ aiCurTaskEvents=[]; }catch(e){} } }
@@ -5375,8 +5405,9 @@ function finishAiStream(isCancel){
      else{ aiWriteSeshFor(k2,(function(_evts2){ return function(v){ try{ var _b2=(typeof aiCurTaskEvents!=='undefined'&&Array.isArray(aiCurTaskEvents))?aiCurTaskEvents:[]; for(var _c=0;_c<_b2.length;_c++){ try{ if(typeof aiAppendSessEvent==='function') aiAppendSessEvent(v,_b2[_c]); }catch(_e){} } for(var _d=0;_d<_evts2.length;_d++){ try{ if(typeof aiAppendSessEvent==='function') aiAppendSessEvent(v,_evts2[_d]); }catch(_e){} } }catch(_e){} }; })(_extraEvts)); try{ if(typeof aiCurTaskEvents!=='undefined') aiCurTaskEvents=[]; }catch(e){} }
     }catch(e){ try{ if(typeof aiCurTaskEvents!=='undefined') aiCurTaskEvents=[]; }catch(_e){} }
    }
-   aiActiveKey=null;
-   // harn fix: finish后重置滚动抢夺标志并回到最新 thr80 守卫
+    aiActiveKey=null;
+    try{ aiTaskSessId=null; aiTaskSbxDir=null; }catch(e){} /* 任务结束：清重开恢复快照 */
+    // harn fix: finish后重置滚动抢夺标志并回到最新 thr80 守卫
    aiUserScrolledPause=false;
    try{ if(typeof aiUpdateJumpBtn==='function') aiUpdateJumpBtn(); if(aiChatView && aiShouldAutoScroll(aiChatView,80)) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
    try{ if(typeof i5RenderDoneCards==='function') i5RenderDoneCards(isCancel); }catch(e){}
@@ -5808,10 +5839,8 @@ function sweepStrayMasks(){
    aiRenderBubbles();
    // 进入后强制滚动到底部，可手动上滑查看历史
   try{ aiUserScrolledPause=false; if(aiChatView){ aiChatView.scrollTop=aiChatView.scrollHeight; } }catch(e){}
-  /* 弹窗关闭期间任务仍在进行：仅当属于当前沙箱时才恢复流式气泡，避免跨源串扰 */
-  if(aiBusy&&aiStreaming&&aiChatView&&aiStreaming.parentNode!==aiChatView){
-    if(aiActiveKey===aiHistKey()){ aiChatView.appendChild(aiStreaming); aiRenderStream(); try{ if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){} }
-  }
+   /* 弹窗关闭期间任务仍在进行：按发送时会话/沙箱核对后挂回流式气泡（跨源不恢复，防串扰） */
+   try{ aiReattachStream(); }catch(e){}
   if(aiInputEl){ aiInputEl.focus(); try{ aiAutosizeInput(); }catch(e){} }
  }
   function closeAi(){
@@ -5862,10 +5891,8 @@ function sweepStrayMasks(){
    aiLoadModels();
    aiRenderBubbles();
    try{ aiUserScrolledPause=false; if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
-  /* 弹窗关闭期间任务仍在进行：仅当属于当前沙箱时才恢复流式气泡，避免跨源串扰 */
-  if(aiBusy&&aiStreaming&&aiChatView&&aiStreaming.parentNode!==aiChatView){
-    if(aiActiveKey===aiHistKey()){ aiChatView.appendChild(aiStreaming); aiRenderStream(); try{ if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){} }
-  }
+   /* 弹窗关闭期间任务仍在进行：按发送时会话/沙箱核对后挂回流式气泡（跨源不恢复，防串扰） */
+   try{ aiReattachStream(); }catch(e){}
   if(aiInputEl){ aiInputEl.focus(); try{ aiAutosizeInput(); }catch(e){} }
  }
 
@@ -5908,6 +5935,7 @@ function aiDoSend(){
    if(aiSession&&aiSession.oid&&!aiOidDirOk(aiSession.oid)){ aiSession.oid=''; aiSaveSesh(); }
    var s=aiCurSesh();
     aiActiveKey=SESS_KEY+'#'+encodeURIComponent(s.id||''); /* 记录发送时所在源：本次运行的事件只回写该源 */
+    try{ aiTaskSessId=s.id||null; aiTaskSbxDir=aiSbxDir(); }catch(e){} /* 重开恢复用：发送时的会话/沙箱快照 */
    if(!s)return;
    if(aiInputEl)aiInputEl.value='';
    try{ aiAutosizeInput(); }catch(e){} /* 发送后清空，回落到一行高 */
@@ -5993,12 +6021,38 @@ if(nameInputEl)nameInputEl.addEventListener('keydown',function(e){
  if(e.key==='Enter'){ e.preventDefault(); var v=(nameInputEl.value||'').trim(); namePromptDone(v); }
 });
 
+/* ═══════ 通用确认弹窗 askConfirm(opts,cb)：替代原生 window.confirm（原生嵌套循环搞乱 Chromium 焦点）。
+ * opts:{title,message,okText,cancelText,danger}，cb(true/false)。遮罩/Esc/✕/取消一律走 false。 */
+var confirmMaskEl=$('confirmMask'),confirmTitleEl=$('confirmTitle'),confirmMsgEl=$('confirmMsg'),
+    confirmOkEl=$('confirmOk'),confirmCancelEl=$('confirmCancel'),confirmCloseEl=$('confirmClose');
+var confirmCb=null;
+function askConfirm(opts,cb){
+ confirmCb=(typeof cb==='function')?cb:null;
+ var o=(opts&&typeof opts==='object')?opts:{};
+ if(confirmTitleEl)confirmTitleEl.textContent=o.title||'请确认';
+ if(confirmMsgEl)confirmMsgEl.textContent=o.message||'';
+ if(confirmOkEl){ confirmOkEl.textContent=o.okText||'确定'; try{ confirmOkEl.style.color=(o.danger?'#DC2626':''); }catch(e){} }
+ if(confirmCancelEl)confirmCancelEl.textContent=o.cancelText||'取消';
+ if(confirmMaskEl)confirmMaskEl.style.display='flex';
+ if(window.MaskStack) window.MaskStack.push('confirmMask', function(){ confirmDone(false); });
+ try{ if(confirmOkEl)confirmOkEl.focus(); }catch(e){}
+}
+function confirmDone(v){
+ if(window.MaskStack) window.MaskStack.pop('confirmMask');
+ if(confirmMaskEl)confirmMaskEl.style.display='none';
+ var cb=confirmCb; confirmCb=null;
+ if(cb){ try{ cb(!!v); }catch(e){} }
+}
+if(confirmCancelEl)confirmCancelEl.onclick=function(){ confirmDone(false); };
+if(confirmCloseEl)confirmCloseEl.onclick=function(){ confirmDone(false); };
+if(confirmOkEl)confirmOkEl.onclick=function(){ confirmDone(true); };
+
 /* ═══════ 新建原型：创建指定端别的沙箱文件夹（空 html + md），选中它并自动弹出大模型对话 ═══════ */
 var btnNewProtoEl=$('btnNewProto'), aiDesignFab=$('aiDesignFab');
 var kindMaskEl=$('kindMask'),kindPcEl=$('kindPc'),kindMobileEl=$('kindMobile'),kindOkEl=$('kindOk'),kindCancelEl=$('kindCancel'),kindCloseEl=$('kindClose');
 var kindPick='mobile'; /* 新建端类型：默认移动端 */
 function openKindModal(){
-  if(!(window.protoAPI&&window.protoAPI.sandbox)){ alert('新建原型仅桌面端（exe）可用。'); return; }
+  if(!(window.protoAPI&&window.protoAPI.sandbox)){ try{ showToast('新建原型仅桌面端（exe）可用。'); }catch(e){} return; }
   kindPick='mobile'; setKindPick(kindPick);
   if(kindMaskEl)kindMaskEl.style.display='flex';
   if(window.MaskStack) window.MaskStack.push('kindMask', closeKindModal);
@@ -6044,7 +6098,7 @@ if(HAS_AI){
   if(aiCloseEl)aiCloseEl.onclick=closeAi;
    if(aiSendEl)aiSendEl.onclick=aiDoSend;
    if(aiClearEl)aiClearEl.onclick=function(){
-   if(aiBusy){ alert('当前回答进行中，请先点击「停止生成」。'); return; }
+   if(aiBusy){ try{ showToast('当前回答进行中，请先点击「停止生成」。'); }catch(e){} return; }
    if(aiChatView)aiChatView.innerHTML='';
    aiEnsureCur();
    aiSession.m=[]; aiSession.oid=''; try{ aiSession.events=[]; if(aiSession.v!==AI_SESS_V) aiSession.v=AI_SESS_V; }catch(e){} try{ if(typeof aiCurTaskEvents!=='undefined') aiCurTaskEvents=[]; }catch(e){} /* 清空气泡与 opencode 上下文，二者保持一致 */
@@ -6172,10 +6226,10 @@ if(HAS_AI){
     row.innerHTML='<span class="pi-name">'+escHtml(fmtTsText(it.ts))+'</span>';
     var acts=document.createElement('span'); acts.className='pi-acts'; acts.style.display='inline-flex';
     var btn=document.createElement('button'); btn.type='button'; btn.className='docs-btn'; btn.textContent='恢复';
-    btn.onclick=function(ev){
-     ev.stopPropagation();
-     if(aiBusy){ showToast('AI 正在生成，请先停止再恢复。'); return; }
-     if(!window.confirm('将原型「'+friendlyName(currentSource)+'」恢复到 '+fmtTsText(it.ts)+'？\n\n恢复前会自动备份当前状态。'))return;
+     btn.onclick=function(ev){
+      ev.stopPropagation();
+      if(aiBusy){ showToast('AI 正在生成，请先停止再恢复。'); return; }
+      var _doRestore=function(){
        window.protoAPI.snapshot.restore({dir:currentSource.sandboxDir,ts:it.ts}).then(function(rr){
         if(rr&&rr.ok){
           /* 回滚即全新起点：清掉拾取态（旧文档活元素引用已失效，留着会出幽灵高亮） */
@@ -6183,7 +6237,10 @@ if(HAS_AI){
           closeSnapPanel(); showToast('已恢复到 '+fmtTsText(it.ts)+'（原状态已备份为 undo 快照）。'); loadSandboxSources(undefined, true); }
        else reportError('snapshot-restore', new Error(rr&&rr.error||'未知错误'), '恢复失败：'+(rr&&rr.error||'未知错误'));
       }).catch(function(e){ reportError('snapshot-restore', e, '恢复失败：'+((e&&e.message)||e||'未知错误')); });
-    };
+      };
+      try{ if(typeof askConfirm==='function'){ askConfirm({title:'恢复快照',message:'将原型「'+friendlyName(currentSource)+'」恢复到 '+fmtTsText(it.ts)+'？\n\n恢复前会自动备份当前状态。',okText:'恢复'},function(ok){ if(ok)_doRestore(); }); return; } }catch(e){}
+      _doRestore();
+     };
     acts.appendChild(btn); row.appendChild(acts);
     snapListEl.appendChild(row);
    });
@@ -6377,7 +6434,7 @@ function downloadText(name,text){
   a.href=URL.createObjectURL(blob);a.download=name;
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
- }catch(e){ alert('导出失败，请稍后重试'); }
+  }catch(e){ try{ showToast('导出失败，请稍后重试'); }catch(e2){} }
 }
 /* ═══════ html 导出：将所选原型+文档合并导出为独立单文件 HTML（支持多选） ═══════
    单文件内联：app.css + app.js + 全部样式 + 所选原型内容(iframe srcdoc)
@@ -6620,7 +6677,7 @@ function buildExportHtml(chosenList){
         }); /* Promise.all(inlineJobs) 图片内联回填 */
       }); /* Promise.all([reqMapPromise, linksPromise, annotationsPromise]).then */
     });
-  }).catch(function(err){ alert('导出失败：'+(err&&err.message||err)); return null; });
+  }).catch(function(err){ try{ showToast('导出失败：'+(err&&err.message||err)); }catch(e){} return null; });
 }
 /* 导出弹窗：多选要合并导出的原型（默认勾选当前打开的原型） */
 var exportMaskEl=$('exportMask'),exportListEl=$('exportList'),exportCountEl=$('exportCount'),
@@ -6699,7 +6756,7 @@ function renderExportLinkNote(){
 }
 function openExportModal(){
   closeExportDropdown();
-  if(!sources.length){ alert('当前没有可导出的原型，请先添加原型。'); return; }
+  if(!sources.length){ try{ showToast('当前没有可导出的原型，请先添加原型。'); }catch(e){} return; }
   exportListEl.innerHTML='';
   sources.forEach(function(s){
     var lab=document.createElement('label');
@@ -6734,7 +6791,7 @@ function exportModalOk(){
   Array.prototype.forEach.call(exportListEl.querySelectorAll('input:checked'),function(cb){
     for(var i=0;i<sources.length;i++){ if(sources[i].name===cb.value){ arr.push(sources[i]); break; } }
   });
-  if(!arr.length){ alert('请至少勾选一个原型。'); return; }
+  if(!arr.length){ try{ showToast('请至少勾选一个原型。'); }catch(e){} return; }
   closeExportModal();
   var base=arr.length>1?('多原型合并('+arr.length+')'):(String((arr[0]&&(arr[0].displayName||arr[0].name))||'原型').replace(/\.(html?)$/i,''));
   buildExportHtml(arr).then(function(h){
@@ -6855,8 +6912,8 @@ function askProjectRename(p){
   var old=p.name;
   askNamePrompt({ title:'重命名项目', label:'项目名称', hint:'将重命名项目文件夹（含其中全部原型）。', value:old }, function(nm){
    if(nm==null||nm===''||nm===old)return;
-   if(/[\\\/:*?"<>|]|\.\./.test(nm)){ alert('名称含非法字符（不能含 \\ / : * ? \" < > |）。'); return; }
-   if(nm.length>60){ alert('名称过长（≤60字）。'); return; }
+   if(/[\\\/:*?"<>|]|\.\./.test(nm)){ try{ showToast('名称含非法字符（不能含 \\ / : * ? " < > |）。'); }catch(e){} return; }
+   if(nm.length>60){ try{ showToast('名称过长（≤60字）。'); }catch(e){} return; }
    window.protoAPI.sandbox.projectRename({oldName:old,name:nm}).then(function(r){
     if(r&&r.ok){ bootProjectFlow(); } /* 重进项目选择刷新 */
     else reportError('project-rename', new Error(r&&r.error||'未知错误'), '重命名失败：'+(r&&r.error||'未知错误'));
@@ -6864,18 +6921,21 @@ function askProjectRename(p){
   });
  }
 function askProjectRemove(p){
-  if(p.name==='默认项目'){ alert('「默认项目」为旧数据归拢目录，不可删除。'); return; }
-  if(!window.confirm('删除项目「'+p.name+'」将删除其文件夹及其中全部原型，不可恢复。\n\n确定删除？'))return;
-  window.protoAPI.sandbox.projectRemove({name:p.name}).then(function(r){
-   if(r&&r.ok){ bootProjectFlow(); }
-   else reportError('project-remove', new Error(r&&r.error||'未知错误'), '删除失败：'+(r&&r.error||'未知错误'));
-  });
+  if(p.name==='默认项目'){ try{ showToast('「默认项目」为旧数据归拢目录，不可删除。'); }catch(e){} return; }
+  var _doRemove=function(){
+   window.protoAPI.sandbox.projectRemove({name:p.name}).then(function(r){
+    if(r&&r.ok){ bootProjectFlow(); }
+    else reportError('project-remove', new Error(r&&r.error||'未知错误'), '删除失败：'+(r&&r.error||'未知错误'));
+   });
+  };
+  try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除项目',message:'删除项目「'+p.name+'」将删除其文件夹及其中全部原型，不可恢复。\n\n确定删除？',okText:'删除',danger:true},function(ok){ if(ok)_doRemove(); }); return; } }catch(e){}
+  _doRemove();
 }
 function projNew(){
   var v=String(projNewNameEl&&projNewNameEl.value||'').trim();
-  if(!v){ alert('请输入项目名称。'); return; }
-  if(/[\\\/:*?"<>|]|\.\./.test(v)){ alert('名称含非法字符（不能含 \\ / : * ? " < > |）。'); return; }
-  if(v.length>60){ alert('名称过长（≤60字）。'); return; }
+  if(!v){ try{ showToast('请输入项目名称。'); }catch(e){} try{ if(projNewNameEl)projNewNameEl.focus(); }catch(e){} return; }
+  if(/[\\\/:*?"<>|]|\.\./.test(v)){ try{ showToast('名称含非法字符（不能含 \\ / : * ? " < > |）。'); }catch(e){} try{ if(projNewNameEl)projNewNameEl.focus(); }catch(e){} return; }
+  if(v.length>60){ try{ showToast('名称过长（≤60字）。'); }catch(e){} try{ if(projNewNameEl)projNewNameEl.focus(); }catch(e){} return; }
   window.protoAPI.sandbox.projectCreate({name:v}).then(function(r){
    if(r&&r.ok){
      var pn=String(r.name||v);
@@ -6891,6 +6951,7 @@ function enterProject(name){
   safeLSSet('protoLastProject', currentProject);
   closeProjectPicker();
   updateProjectBar();
+  try{ if(typeof loadGroups==='function')loadGroups(); }catch(e){} /* 文件夹按项目隔离：切换即重载本项目分组 */
   loadSandboxSources();
 }
 function updateProjectBar(){
@@ -7047,7 +7108,8 @@ function isElOpen(el) {
      window.MaskStack.register('settingsMask','settingsMask', closeSettings);
      window.MaskStack.register('exportMask','exportMask', closeExportModal);
      window.MaskStack.register('kindMask','kindMask', closeKindModal);
-     window.MaskStack.register('nameMask','nameMask', function(){ namePromptDone(null); });
+      window.MaskStack.register('nameMask','nameMask', function(){ namePromptDone(null); });
+      window.MaskStack.register('confirmMask','confirmMask', function(){ confirmDone(false); });
      window.MaskStack.register('projMask','projMask', closeProjectPicker);
       window.MaskStack.register('snapMask','snapMask', closeSnapPanel);
       window.MaskStack.register('modelFetchMask','modelFetchMask', closeModelFetch);
@@ -7071,7 +7133,8 @@ function isElOpen(el) {
      _bind('settingsMask', closeSettings);
      _bind('exportMask', closeExportModal);
      _bind('kindMask', closeKindModal);
-     _bind('nameMask', function(){ namePromptDone(null); });
+      _bind('nameMask', function(){ namePromptDone(null); });
+      _bind('confirmMask', function(){ confirmDone(false); });
      _bind('projMask', closeProjectPicker);
      _bind('snapMask', closeSnapPanel);
      _bind('modelFetchMask', closeModelFetch);

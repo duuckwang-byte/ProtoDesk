@@ -332,7 +332,8 @@ function testA12_KeysDirtySrc() {
   const closeBody = extractFn(editSrc, 'inlineEditTryClose');
   assert.ok(closeBody.includes('cur!==INLINE_EDIT.initText'), '须按 cur!==initText 判脏（纯文本）');
   assert.ok(!closeBody.includes('cur!==INLINE_EDIT.initHtml'), '不得再按 initHtml 判脏');
-  assert.ok(closeBody.includes("window.confirm('内容已修改，确定放弃本次就地改吗？')"), '脏时须 confirm 确认放弃');
+  assert.ok(!/window\.confirm\(/.test(closeBody), '脏确认不得用原生 confirm（改走 askConfirm，防焦点错乱）');
+  assert.ok(/askConfirm\(/.test(closeBody) && /确定放弃本次就地改吗？/.test(closeBody), '脏时须 askConfirm 确认放弃');
   const saveBody = extractFn(editSrc, 'inlineEditSave');
   assert.ok(saveBody.includes('newText===INLINE_EDIT.initText'), '无变化须按 newText===initText 判定');
   assert.ok(!saveBody.includes('newHtml===INLINE_EDIT.initHtml') && !saveBody.includes('newHtml===INLINE_EDIT.initText'), '不得残留 newHtml 旧变量比较');

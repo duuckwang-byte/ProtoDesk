@@ -466,13 +466,14 @@ var AnnotationEngine = (function () {
 
   function saveCurrentAnno() {
     if (!currentSource || !currentSource.sandboxDir) {
-      alert('该原型未在沙箱中，暂无法保存标注。');
+      try{ if(typeof libStatus==='function')libStatus('该原型未在沙箱中，暂无法保存标注。'); }catch(e){}
       return;
     }
     var contentInp = $('annoContentInput');
     var content = contentInp ? contentInp.value.trim() : '';
     if (!content) {
-      alert('请输入标注内容。');
+      try{ if(typeof libStatus==='function')libStatus('请输入标注内容。'); }catch(e){}
+      try{ if(contentInp)contentInp.focus(); }catch(e){}
       return;
     }
     var title = '';
@@ -586,10 +587,9 @@ var AnnotationEngine = (function () {
       if (CURRENT_ANNOTATIONS[i].id === id) { target = CURRENT_ANNOTATIONS[i]; break; }
     }
     var title = target ? (target.title || (target.elementName ? '【' + target.elementName + '】' : '') || '需求标注') : '需求标注';
-    if (!window.confirm('确定删除标注「' + title + '」吗？')) return;
-
-    var list = CURRENT_ANNOTATIONS.filter(function (a) { return a.id !== id; });
-    saveAnnotations(currentSource.sandboxDir, list);
+    var _doDelAnno=function(){
+     var list = CURRENT_ANNOTATIONS.filter(function (a) { return a.id !== id; });
+     saveAnnotations(currentSource.sandboxDir, list);
 
     if (currentAnnoId === id) {
       currentAnnoId = null;
@@ -606,6 +606,9 @@ var AnnotationEngine = (function () {
     if (typeof libStatus === 'function') {
       libStatus('已删除标注：' + title);
     }
+    };
+    try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除标注',message:'确定删除标注「' + title + '」吗？',okText:'删除',danger:true},function(ok){ if(ok)_doDelAnno(); }); return; } }catch(e){}
+    _doDelAnno();
   }
 
   /* ═══════ 标注管理抽屉与双向联动 ═══════ */

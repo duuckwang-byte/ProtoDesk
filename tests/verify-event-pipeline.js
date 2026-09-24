@@ -192,7 +192,7 @@ function testR1b_SessionOidPersist() {
 function testS2_FinishTail() {
   const idx = pae.indexOf('function finishAiStream');
   assert.ok(idx >= 0, '[静态失败] 缺function finishAiStream');
-  const body = pae.slice(idx, idx + 6000);
+  const body = pae.slice(idx, idx + 7000);
   assert.ok(/function\s+finishAiStream\s*\(\s*isCancel\s*\)/.test(body),
     '[静态失败] finishAiStream签名须为(isCancel)');
   assert.ok(/i5RenderDoneCards\s*\(\s*isCancel\s*\)/.test(body),
@@ -782,9 +782,38 @@ function testR19_InputAutosize() {
   assert.ok(/aiAutosizeInput/.test(docs), '草稿恢复须同步高度');
 }
 
+// ========== 运行20: 后台任务重开恢复（流式气泡挂回） ==========
+function testR20_ReattachStream() {
+  const noComments = pae.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/aiActiveKey===aiHistKey\(\)/.test(noComments), '死条件须删除（两侧键格式永不相等）');
+  assert.ok(/function aiShouldReattachStream\(\)/.test(pae) && /function aiReattachStream\(\)/.test(pae), '缺重开恢复helper');
+  const opens = (pae.match(/try\{ aiReattachStream\(\); \}catch\(e\)\{\}/g) || []).length;
+  assert.strictEqual(opens, 2, `两处open（openAi/openAiDesign）都要挂回，实测${opens}处`);
+  assert.ok(/aiTaskSessId=s\.id\|\|null/.test(pae), '发送时须快照会话ID');
+  assert.ok(/aiTaskSessId=null; aiTaskSbxDir=null/.test(pae), '任务结束须清快照');
+  // 行为：同沙箱同会话+游离节点→挂回；跨沙箱/已挂载/空闲→不挂
+  const srcShould = extract(pae, 'aiShouldReattachStream');
+  const srcRe = extract(pae, 'aiReattachStream');
+  const run = (st) => new Function('aiBusy', 'aiStreaming', 'aiTaskSessId', 'aiTaskSbxDir', 'aiSession', 'aiChatView', 'aiSbxDir', 'aiRenderStream',
+    srcShould + '\n' + srcRe + '\nreturn {s:aiShouldReattachStream(),r:aiReattachStream()};')(
+    st.busy, st.streaming, st.sessId, st.dir, st.session, st.chat, () => st.curDir, () => {});
+  const mkChat = () => ({ kid: null, appendChild(c) { this.kid = c; }, scrollTop: 0, scrollHeight: 100 });
+  const chat1 = mkChat(), detached = { parentNode: {} };
+  const ok = run({ busy: true, streaming: detached, sessId: 's1', dir: 'd1', session: { id: 's1' }, chat: chat1, curDir: 'd1' });
+  assert.strictEqual(ok.s, true, '同源游离须挂回');
+  assert.strictEqual(ok.r, true, '挂回须返回true');
+  assert.strictEqual(chat1.kid, detached, '须appendChild到对话区');
+  const chat2 = mkChat(), attached = { parentNode: chat2 };
+  assert.strictEqual(run({ busy: true, streaming: attached, sessId: 's1', dir: 'd1', session: { id: 's1' }, chat: chat2, curDir: 'd1' }).s, false, '已挂载不得重复挂');
+  assert.strictEqual(run({ busy: true, streaming: detached, sessId: 's1', dir: 'd1', session: { id: 's1' }, chat: mkChat(), curDir: 'd2' }).s, false, '跨沙箱不得挂回（防串扰）');
+  assert.strictEqual(run({ busy: true, streaming: detached, sessId: 's1', dir: 'd1', session: { id: 's9' }, chat: mkChat(), curDir: 'd1' }).s, false, '跨会话不得挂回');
+  assert.strictEqual(run({ busy: false, streaming: detached, sessId: 's1', dir: 'd1', session: { id: 's1' }, chat: mkChat(), curDir: 'd1' }).s, false, '空闲不得挂回');
+  assert.strictEqual(run({ busy: true, streaming: null, sessId: 's1', dir: 'd1', session: { id: 's1' }, chat: mkChat(), curDir: 'd1' }).s, false, '无流式节点不得挂回');
+}
+
 function runAll() {
   let p = 0, f = 0;
-  const ts = [['S1 onEvent管线', testS1_OnEventPipeline], ['R1b session落盘', testR1b_SessionOidPersist], ['S2 finish尾', testS2_FinishTail], ['S2b 完成不重写', testS2b_FinishNoRewrite], ['S2c 无followup', testS2c_NoFollowup], ['S2d 落款', testS2d_MsgFoot], ['S3 模式清零', testS3_EditModeZero], ['S4 唯一ESC', testS4_SingleEsc], ['R5 动词映射+计数', testR5_VerbExplore], ['R5c opencode形态', testR5c_OpencodePartShape], ['R7 审计删除+快照', testR7_NoAuditSnap], ['R8 ErrorCard', testR8_ErrorCard], ['R9 思考切分', testR9_ThinkSplit], ['R10 光标/编辑', testR10_CursorEdit], ['S5 done新字段', testS5_DoneFields], ['R12 历史回放', testR12_Replay], ['R13 显示发送分离', testR13_MsgSplit], ['R14 思考入链', testR14_ThinkChain], ['R15 对话框打磨', testR15_UiPolish], ['R16 会话清空与等待行', testR16_SessClearWaiting], ['R17 CLI启动中两阶段', testR17_CliBootWaiting], ['R18 忙态死锁与幽灵框', testR18_BusyDeadlock], ['R19 输入框自适应高度', testR19_InputAutosize]];
+  const ts = [['S1 onEvent管线', testS1_OnEventPipeline], ['R1b session落盘', testR1b_SessionOidPersist], ['S2 finish尾', testS2_FinishTail], ['S2b 完成不重写', testS2b_FinishNoRewrite], ['S2c 无followup', testS2c_NoFollowup], ['S2d 落款', testS2d_MsgFoot], ['S3 模式清零', testS3_EditModeZero], ['S4 唯一ESC', testS4_SingleEsc], ['R5 动词映射+计数', testR5_VerbExplore], ['R5c opencode形态', testR5c_OpencodePartShape], ['R7 审计删除+快照', testR7_NoAuditSnap], ['R8 ErrorCard', testR8_ErrorCard], ['R9 思考切分', testR9_ThinkSplit], ['R10 光标/编辑', testR10_CursorEdit], ['S5 done新字段', testS5_DoneFields], ['R12 历史回放', testR12_Replay], ['R13 显示发送分离', testR13_MsgSplit], ['R14 思考入链', testR14_ThinkChain], ['R15 对话框打磨', testR15_UiPolish], ['R16 会话清空与等待行', testR16_SessClearWaiting], ['R17 CLI启动中两阶段', testR17_CliBootWaiting], ['R18 忙态死锁与幽灵框', testR18_BusyDeadlock], ['R19 输入框自适应高度', testR19_InputAutosize], ['R20 后台任务重开恢复', testR20_ReattachStream]];
   for (const [t, fn] of ts) { try { fn(); console.log(`[PASS] ${t}`); p++; } catch (e) { console.error(`[FAIL] ${t}`); console.error(e); f++; } }
   console.log(`SUMMARY passed=${p} failed=${f}\n`);
   if (f) process.exit(1);
