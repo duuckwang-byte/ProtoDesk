@@ -133,20 +133,31 @@ function loadSource(src, keepPanels){
 /* ═══════ 虚拟分组（文件夹）：对原型分类整理，不创建真实目录 ═══════
    数据存 localStorage（protoGroups_v1），沙箱磁盘结构不变；
    分组依据 = 源稳定标识（沙箱源用 sandboxDir，其余源用 name） */
-var GROUPS_KEY='protoGroups_v1',GROUPS_FOLD_KEY='protoGroupsFold_v1';
+var GROUPS_KEY='protoGroups_v1',GROUPS_FOLD_KEY='protoGroupsFold_v1'; /* 老版本全局键：仅做一次性迁移用，不再直接读写 */
+function groupsKey(){ try{ return GROUPS_KEY+'__'+encodeURIComponent((typeof currentProject!=='undefined'&&currentProject)||'_default'); }catch(e){ return GROUPS_KEY; } }
+function groupsFoldKey(){ try{ return GROUPS_FOLD_KEY+'__'+encodeURIComponent((typeof currentProject!=='undefined'&&currentProject)||'_default'); }catch(e){ return GROUPS_FOLD_KEY; } }
 var groupsData={list:[],map:{}},groupsFold={};
 function loadGroups(){
- try{ var v=JSON.parse(localStorage.getItem(GROUPS_KEY)||'null');
-  if(v&&Array.isArray(v.list)){
-   groupsData={ list:v.list.map(function(g){ return {id:String(g.id),name:String(g.name||'未命名')}; }),
-                map:(v.map&&typeof v.map==='object')?v.map:{} };
+ try{
+  var gk=groupsKey(), v=null;
+  try{ v=JSON.parse(localStorage.getItem(gk)||'null'); }catch(e){}
+  if(!(v&&Array.isArray(v.list))){
+   /* 一次性迁移：老版本全局文件夹归入当前项目，迁完删全局键 */
+   try{
+    var legacy=JSON.parse(localStorage.getItem(GROUPS_KEY)||'null');
+    if(legacy&&Array.isArray(legacy.list)&&legacy.list.length){ v=legacy; try{ localStorage.removeItem(GROUPS_KEY); }catch(e){} }
+   }catch(e){}
   }
- }catch(e){}
- try{ var f=JSON.parse(localStorage.getItem(GROUPS_FOLD_KEY)||'null'); if(f&&typeof f==='object')groupsFold=f; }catch(e){}
+  if(v&&Array.isArray(v.list)){
+   groupsData={ list:v.list.map(function(g){ return {id:String(g.id),name:String(g.name||'未命名'),parent:(g.parent!=null?String(g.parent):null)}; }),
+                map:(v.map&&typeof v.map==='object')?v.map:{} };
+  }else{ groupsData={list:[],map:{}}; } /* 无本项目数据即清空，不残留上个项目的文件夹 */
+ }catch(e){ try{ groupsData={list:[],map:{}}; }catch(e2){} }
+ try{ var f=JSON.parse(localStorage.getItem(groupsFoldKey())||'null'); groupsFold=(f&&typeof f==='object')?f:{}; }catch(e){ groupsFold={}; }
 }
 function saveGroups(){
- try{ localStorage.setItem(GROUPS_KEY,JSON.stringify(groupsData)); }catch(e){}
- try{ localStorage.setItem(GROUPS_FOLD_KEY,JSON.stringify(groupsFold)); }catch(e){}
+ try{ localStorage.setItem(groupsKey(),JSON.stringify(groupsData)); }catch(e){}
+ try{ localStorage.setItem(groupsFoldKey(),JSON.stringify(groupsFold)); }catch(e){}
 }
 // drag fix
 var ORDER_KEY='protoOrder_v1',SUB_ORDER_KEY='subPageOrder_v1'; // drag fix
@@ -234,15 +245,15 @@ function addGroup(parent){
    value:''},function(nm){
   if(nm==null||nm==='')return;
   nm=String(nm).trim();
-  if(!nm||nm.length>30){ alert('名称不能为空且不超过 30 字。'); return; }
-  groupsData.list.push({id:newGroupId(),name:nm,parent:parent||null}); saveGroups(); renderSourceList();
+   if(!nm||nm.length>30){ try{ showToast('名称不能为空且不超过 30 字。'); }catch(e){} return; }
+   groupsData.list.push({id:newGroupId(),name:nm,parent:parent||null}); saveGroups(); renderSourceList();
  });
 }
 function renameGroup(gid){
  var nm0=groupNameOf(gid); if(!nm0)return;
  askNamePrompt({title:'重命名文件夹',label:'文件夹名称',value:nm0},function(nm){
   if(nm==null)return; nm=String(nm).trim();
-  if(!nm||nm.length>30){ alert('名称不能为空且不超过 30 字。'); return; }
+   if(!nm||nm.length>30){ try{ showToast('名称不能为空且不超过 30 字。'); }catch(e){} return; }
   for(var i=0;i<groupsData.list.length;i++){ if(groupsData.list[i].id===gid){ groupsData.list[i].name=nm; break; } }
   saveGroups(); renderSourceList();
  });
@@ -250,13 +261,16 @@ function renameGroup(gid){
 function delGroup(gid){
  var nm=groupNameOf(gid); if(!nm)return;
  function collect(id){ var out=[id]; groupChildren(id).forEach(function(c){ out=out.concat(collect(c.id)); }); return out; }
- var ids=collect(gid);
- var sub=ids.length-1;
- if(!window.confirm('删除文件夹「'+nm+'」'+(sub>0?'及其下 '+sub+' 个二级文件夹':'')+'？\n\n其中的原型不会被删除，仅移回未分组列表。'))return;
- groupsData.list=groupsData.list.filter(function(g){ return ids.indexOf(g.id)<0; });
- for(var k in groupsData.map){ if(ids.indexOf(groupsData.map[k])>=0)delete groupsData.map[k]; }
- ids.forEach(function(id){ delete groupsFold[id]; });
- saveGroups(); renderSourceList();
+  var ids=collect(gid);
+  var sub=ids.length-1;
+  var _doDelGroup=function(){
+   groupsData.list=groupsData.list.filter(function(g){ return ids.indexOf(g.id)<0; });
+   for(var k in groupsData.map){ if(ids.indexOf(groupsData.map[k])>=0)delete groupsData.map[k]; }
+   ids.forEach(function(id){ delete groupsFold[id]; });
+   saveGroups(); renderSourceList();
+  };
+  try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除文件夹',message:'删除文件夹「'+nm+'」'+(sub>0?'及其下 '+sub+' 个二级文件夹':'')+'？\n\n其中的原型不会被删除，仅移回未分组列表。',okText:'删除',danger:true},function(ok){ if(ok)_doDelGroup(); }); return; } }catch(e){}
+  _doDelGroup();
 }
 function toggleGroupFold(gid){ groupsFold[gid]=!groupsFold[gid]; saveGroups(); renderSourceList(); }
 /* 移入文件夹选择浮层 */
@@ -427,18 +441,21 @@ function renameSubPagePrompt(s, oldFile){
 
 function deleteSubPageConfirm(s, subFile){
   if(!s||!s.sandboxDir){ return; }
-  if(!confirm('确定要删除子页面「' + subFile + '」吗？此操作不可恢复。')) return;
-  if(window.protoAPI&&window.protoAPI.sandbox&&window.protoAPI.sandbox.deleteSubPage){
-    window.protoAPI.sandbox.deleteSubPage({ dir: s.sandboxDir, file: subFile }).then(function(r){
-      if(r&&r.ok){
-        showToast('已删除子页面：' + subFile);
-        if(s.activeSubFile === subFile) s.activeSubFile = '';
-        if(typeof loadSandboxSources==='function') loadSandboxSources(s.displayName, true);
-      } else {
-        showToast('删除失败：' + ((r&&r.error)||'未知错误'));
-      }
-    }).catch(function(e){ showToast('删除失败：' + (e&&e.message||e)); });
-  }
+  var _doDelSub=function(){
+   if(window.protoAPI&&window.protoAPI.sandbox&&window.protoAPI.sandbox.deleteSubPage){
+     window.protoAPI.sandbox.deleteSubPage({ dir: s.sandboxDir, file: subFile }).then(function(r){
+       if(r&&r.ok){
+         showToast('已删除子页面：' + subFile);
+         if(s.activeSubFile === subFile) s.activeSubFile = '';
+         if(typeof loadSandboxSources==='function') loadSandboxSources(s.displayName, true);
+       } else {
+         showToast('删除失败：' + ((r&&r.error)||'未知错误'));
+       }
+     }).catch(function(e){ showToast('删除失败：' + (e&&e.message||e)); });
+   }
+  };
+  try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除子页面',message:'确定要删除子页面「' + subFile + '」吗？此操作不可恢复。',okText:'删除',danger:true},function(ok){ if(ok)_doDelSub(); }); return; } }catch(e){}
+  _doDelSub();
 }
 
 function loadSubPage(s, subFile){
@@ -778,30 +795,33 @@ function removeSource(s){
    防止同名重建时回显旧文档/旧会话 */
 function deleteSource(s){
  if(!s||!s.sandboxDir)return;
- if(!(window.protoAPI&&window.protoAPI.sandbox&&window.protoAPI.sandbox.remove)){ if(typeof showToast==="function") showToast('仅桌面端可删除沙箱原型。'); else alert('仅桌面端可删除沙箱原型。'); return; }
- var nm=friendlyName(s);
- if(!window.confirm('删除原型「'+nm+'」将删除其沙箱文件夹及其中 html/md 文件，不可恢复。\n\n确定删除？'))return;
-  window.protoAPI.sandbox.remove({dir:s.sandboxDir}).then(function(r){
-    if(!r||!r.ok){ reportError('proto-delete', new Error(r&&r.error||'未知错误'), '删除失败：'+(r&&r.error||'未知错误')); return; }
-   try{ localStorage.removeItem(sourceDocKey(s)); }catch(e){}
-   try{ localStorage.removeItem('ai_hist_'+encodeURIComponent(s.sandboxDir)); }catch(e){}
-   delete groupsData.map[groupKeyOf(s)]; saveGroups(); /* 虚拟分组同步清理 */
-   libStatus('已删除原型：'+nm+'（文件夹与文件已删除）。');
-   loadSandboxSources(undefined, true);
-  });
+  if(!(window.protoAPI&&window.protoAPI.sandbox&&window.protoAPI.sandbox.remove)){ try{ showToast('仅桌面端可删除沙箱原型。'); }catch(e){} return; }
+  var nm=friendlyName(s);
+  var _doDelSrc=function(){
+   window.protoAPI.sandbox.remove({dir:s.sandboxDir}).then(function(r){
+     if(!r||!r.ok){ reportError('proto-delete', new Error(r&&r.error||'未知错误'), '删除失败：'+(r&&r.error||'未知错误')); return; }
+    try{ localStorage.removeItem(sourceDocKey(s)); }catch(e){}
+    try{ localStorage.removeItem('ai_hist_'+encodeURIComponent(s.sandboxDir)); }catch(e){}
+    delete groupsData.map[groupKeyOf(s)]; saveGroups(); /* 虚拟分组同步清理 */
+    libStatus('已删除原型：'+nm+'（文件夹与文件已删除）。');
+    loadSandboxSources(undefined, true);
+   });
+  };
+  try{ if(typeof askConfirm==='function'){ askConfirm({title:'删除原型',message:'删除原型「'+nm+'」将删除其沙箱文件夹及其中 html/md 文件，不可恢复。\n\n确定删除？',okText:'删除',danger:true},function(ok){ if(ok)_doDelSrc(); }); return; } }catch(e){}
+  _doDelSrc();
 }
 
 /* ═══════ 重命名沙箱原型：改名文件夹与其中同名 html/md，并在列表中就地更新 ═══════ */
 function renameSource(s){
  if(!s)return;
- if(!(window.protoAPI&&window.protoAPI.sandbox)||!s.sandboxDir){ if(typeof showToast==="function") showToast('仅沙箱中的原型可重命名（桌面端）。'); else alert('仅沙箱中的原型可重命名（桌面端）。'); return; }
+  if(!(window.protoAPI&&window.protoAPI.sandbox)||!s.sandboxDir){ try{ showToast('仅沙箱中的原型可重命名（桌面端）。'); }catch(e){} return; }
  var old=friendlyName(s);
  askNamePrompt({ title:'重命名原型', label:'新名称',
    hint:'将同步重命名该原型文件夹及其中同名 html、md 文件。',
    value:old }, function(nm){
-  if(nm==null||nm===''||nm===old)return;
-  if(/[\\\/:*?"<>|]|\.\./.test(nm)){ alert('名称含非法字符（不能含 \\ / : * ? \" < > |）。'); return; }
-  if(nm.length>60){ alert('名称过长（≤60字）。'); return; }
+   if(nm==null||nm===''||nm===old)return;
+  if(/[\\\/:*?"<>|]|\.\./.test(nm)){ try{ showToast('名称含非法字符（不能含 \\\\ / : * ? \\\" < > |）。'); }catch(e){} return; }
+  if(nm.length>60){ try{ showToast('名称过长（≤60字）。'); }catch(e){} return; }
   window.protoAPI.sandbox.rename({dir:s.sandboxDir,name:nm}).then(function(r){
   if(r&&r.ok){
    var wasCur=(s===currentSource);

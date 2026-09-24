@@ -881,7 +881,7 @@ var LinkBind = (function () {
         var textarea = $('liReqText');
         if (!textarea) return;
         var text = (textarea.value || '').trim();
-        if (!text) { alert('请先输入要调整的内容。'); return; }
+        if (!text) { try{ if(typeof lbToast==='function')lbToast('请先输入要调整的内容。'); }catch(e){} try{ if(textarea)textarea.focus(); }catch(e){} return; }
         /* 同源 live 元素优先；沙箱跨域远端拾取（inspectorEl恒为null）走 editQueueAddRemote，不依赖 live el */
         if (inspectorEl && typeof editQueueAdd === 'function') {
           editQueueAdd(inspectorEl, text);
@@ -889,7 +889,6 @@ var LinkBind = (function () {
           editQueueAddRemote(inspectorRemote, text);
         } else {
           if (typeof lbToast === 'function') lbToast('未能定位目标元素，请重新拾取后再试。');
-          else alert('未能定位目标元素，请重新拾取后再试。');
           return;
         }
         textarea.value = '';
@@ -1113,7 +1112,7 @@ var LinkBind = (function () {
     var saveBtn = $('lmSaveReplace_' + idx);
     if (saveBtn) {
       saveBtn.onclick = function () {
-        if (!selTarget) { alert('请先选择一个目标原型。'); return; }
+        if (!selTarget) { try{ if(typeof lbToast==='function')lbToast('请先选择一个目标原型。'); }catch(e){} return; }
         var tp = selSub;
         link.target = selTarget.displayName;
         link.targetPage = tp;

@@ -138,4 +138,27 @@ const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
   console.log('[PASS] 条目标题字号');
 })();
 
+// ---- 7. 拾取链路禁原生 alert（alert 嵌套循环搞乱 Chromium 焦点，窗内再落不上光标；一律走 toast+回焦） ----
+(function testNoNativeAlertInPickFlows() {
+  const ee2 = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
+  const ae2 = fs.readFileSync(path.join(rootDir, 'js', 'annotation-core.js'), 'utf8');
+  function seg(src, name) {
+    let i = src.indexOf('function ' + name);
+    if (i < 0) i = src.indexOf(name + ': function');
+    assert.ok(i >= 0, '缺 function ' + name);
+    const j = src.indexOf('\nfunction ', i + 10);
+    return j > i ? src.slice(i, j) : src.slice(i, i + 6000);
+  }
+  for (const nm of ['pickBarSendGo', 'pickBarAnnoGo', 'pickBarOpenLink', 'submitBatch', 'editQueueSubmit', 'editQueueAdd', 'editQueueAddRemote', 'editQueueRollback']) {
+    const body = seg(ee2, nm);
+    assert.ok(!/[^_a-zA-Z.$]alert\(/.test(body), nm + ' 不得用原生 alert（改走 libStatus/toast+回焦）');
+  }
+  const saveBody = seg(ae2, 'saveCurrentAnno');
+  assert.ok(!/[^_a-zA-Z.$]alert\(/.test(saveBody), 'saveCurrentAnno 不得用原生 alert');
+  // 空输入提示须回焦输入框
+  assert.ok(/libStatus\('请输入统一修改诉求。'\)/.test(ee2), '空诉求须 toast 提示');
+  assert.ok(/libStatus\('请先在输入框输入标注内容。'\)/.test(ee2), '空标注须 toast 提示');
+  console.log('[PASS] 拾取链路无原生alert');
+})();
+
 console.log('EDITSEL_PASS: 选中提交与刷新三态全绿');

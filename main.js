@@ -32,6 +32,7 @@ const { registerSandboxController } = require('./main/controllers/sandbox-contro
 const { registerAIController } = require('./main/controllers/ai-controller');
 const { registerDocController } = require('./main/controllers/doc-controller');
 require('./main/controllers/window-controller');
+const { attachDevToolsShortcut } = require('./main/controllers/window-controller');
 
 /* 软件包所在目录：文件选择对话框默认目录 */
 const pkgDir = path.dirname(app.getPath('exe'));
@@ -63,6 +64,7 @@ function createWindow() {
   });
   win.on('closed', () => { try { if (shared.mainWin === win) shared.mainWin = null; } catch (e) {} });
   win.setMenuBarVisibility(false);
+  try { attachDevToolsShortcut(win); } catch (e) {} /* F12/Ctrl+Shift+I 开关控制台 */
   win.once('ready-to-show', () => {
     win.maximize();
     win.show();

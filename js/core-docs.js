@@ -336,8 +336,11 @@ function enterEdit(){
   if(restored)showToast('已恢复自动保存的草稿');
   return;
  }
- flushEdit();
- var md=fullDocMd();
+  flushEdit(function(_ok){ if(_ok)enterEditCont(); });
+  return;
+ }
+ function enterEditCont(){
+  var md=fullDocMd();
  recordViewAnchor(md);
  var baseMd=String(md||'');
  var dd=readDraft(false);
@@ -355,8 +358,8 @@ function enterEdit(){
  docEditArea.focus();
  setAreaLine(docEditArea,viewAnchor?viewAnchor.headLine:0);
  try{ bindDocToolbar(document); }catch(e){}
- if(restored2)showToast('已恢复自动保存的草稿');
-}
+  if(restored2)showToast('已恢复自动保存的草稿');
+  }
 function saveEdit(){
  if(reqMode){ saveReqEditDocs(); return; }
  if(!editOn)return;
@@ -442,51 +445,54 @@ function saveDocInPlace(){
  }catch(e){}
 }
 function cancelEdit(){
- if(!editOn)return;
- if(isDocDirty()){
-  if(!window.confirm('当前功能说明有未保存的修改，确定放弃本次编辑吗？'))return;
- }
- if(reqMode){ try{clearDraft(true);}catch(e){} exitEdit(); setReqModeMobile(true); return; }
- try{ clearDraft(false); }catch(e){}
- exitEdit();
- loadDesc();
-}
-/* 返回 true=可继续切换；false=用户取消（调用方须中止）。脏时模态拦截确认。 */
-function flushEdit(){
- if(!editOn)return true;
- if(reqMode){
-  if(isDocDirty()){
-   if(!window.confirm('当前功能说明有未保存的修改，是否保存并离开？'))return false;
-   try{ saveReqEditDocs(); }catch(e){ exitEdit(); }
-   return true;
-  }
-  exitEdit(); return true;
- }
- if(isDocDirty()){
-  if(window.confirm('当前功能说明有未保存的修改，是否保存并离开？')){
-   applyEditText(docEditArea.value);
+  if(!editOn)return;
+  var _goCancel=function(){
+   if(reqMode){ try{clearDraft(true);}catch(e){} exitEdit(); setReqModeMobile(true); return; }
+   try{ clearDraft(false); }catch(e){}
    exitEdit();
-   return true;
+   loadDesc();
+  };
+  if(isDocDirty()){
+   try{ if(typeof askConfirm==='function'){ askConfirm({title:'放弃编辑',message:'当前功能说明有未保存的修改，确定放弃本次编辑吗？',okText:'放弃',danger:true},function(ok){ if(ok)_goCancel(); }); return; } }catch(e){}
+   return; /* askConfirm 缺失时保守不动（与旧异常分支一致） */
   }
-  return false;
- }
- exitEdit();
- return true;
+  _goCancel();
 }
-/* 脏标记守卫对外接口：供切换项目/关闭面板等跨文件流程调用 */
-window.DocGuard={
- isDirty:function(){ try{ return isDocDirty(); }catch(e){ return false; } },
- confirmLeave:function(){
-  try{
-   if(!isDocDirty())return true;
-   if(window.confirm('当前功能说明有未保存的修改，是否保存并离开？')){
-    if(editOn&&!reqMode&&docEditArea){ applyEditText(docEditArea.value); }
-    exitEdit();
-    return true;
+/* 返回经回调：true=可继续切换；false=用户取消（调用方须中止）。脏时弹框确认（异步）。
+ * 旧同步返回值已废弃：直接返回 true/false 仅在无需确认时可信；需确认时返回 undefined 并走回调。 */
+function flushEdit(cb){
+  var done=function(v){ if(typeof cb==='function'){ try{ cb(v); }catch(e){} } return v; };
+  if(!editOn)return done(true);
+  if(reqMode){
+   if(isDocDirty()){
+    try{ if(typeof askConfirm==='function'){ askConfirm({title:'未保存的修改',message:'当前功能说明有未保存的修改，是否保存并离开？',okText:'保存并离开'},function(ok){ if(!ok){ done(false); return; } try{ saveReqEditDocs(); }catch(e){ exitEdit(); } done(true); }); return undefined; } }catch(e){}
+    return done(false);
    }
-   return false;
-  }catch(e){ return true; }
- }
+   exitEdit(); return done(true);
+  }
+  if(isDocDirty()){
+   try{ if(typeof askConfirm==='function'){ askConfirm({title:'未保存的修改',message:'当前功能说明有未保存的修改，是否保存并离开？',okText:'保存并离开'},function(ok){ if(!ok){ done(false); return; } try{ applyEditText(docEditArea.value); }catch(e){} exitEdit(); done(true); }); return undefined; } }catch(e){}
+   return done(false);
+  }
+  exitEdit();
+  return done(true);
+}
+/* 脏标记守卫对外接口：供切换项目/关闭面板等跨文件流程调用（回调式，见 flushEdit） */
+window.DocGuard={
+  isDirty:function(){ try{ return isDocDirty(); }catch(e){ return false; } },
+  confirmLeave:function(cb){
+   try{
+    if(!isDocDirty()){ if(typeof cb==='function'){ try{cb(true);}catch(e){} } return true; }
+    if(editOn&&!reqMode&&docEditArea){
+     if(typeof askConfirm==='function'){ askConfirm({title:'未保存的修改',message:'当前功能说明有未保存的修改，是否保存并离开？',okText:'保存并离开'},function(ok){ if(!ok){ if(typeof cb==='function'){ try{cb(false);}catch(e){} } return; } try{ applyEditText(docEditArea.value); }catch(e){} exitEdit(); if(typeof cb==='function'){ try{cb(true);}catch(e){} } }); return undefined; }
+     if(typeof cb==='function'){ try{cb(false);}catch(e){} }
+     return false;
+    }
+    exitEdit();
+    if(typeof cb==='function'){ try{cb(true);}catch(e){} }
+    return true;
+   }catch(e){ if(typeof cb==='function'){ try{cb(true);}catch(e2){} } return true; }
+  }
 };
 if(btnEditDoc)btnEditDoc.onclick=enterEdit;
 if(btnSaveDoc)btnSaveDoc.onclick=saveEdit;
@@ -1252,8 +1258,11 @@ function removeDocTabStrip(){
 }
 
 function loadDesc(){
- try{ if(typeof reqMode!=='undefined'&&reqMode) reqMode=false; }catch(e){} /* 换源：切回功能说明视图 */
- try{ if(flushEdit()===false)return; }catch(e){} /* 脏标记守卫：用户取消则中止本次切换渲染 */
+  try{ if(typeof reqMode!=='undefined'&&reqMode) reqMode=false; }catch(e){} /* 换源：切回功能说明视图 */
+  try{ flushEdit(function(_ok){ if(_ok)loadDescCont(); }); }catch(e){} /* 脏标记守卫：用户取消则中止本次切换渲染 */
+  return;
+ }
+ function loadDescCont(){
  try{
   if(docTitleEl) docTitleEl.textContent=docTitleFor('功能说明');
   if(docContentEl) docContentEl.innerHTML=renderMd(fullDocMd());
@@ -1262,9 +1271,9 @@ function loadDesc(){
   try{ docContentEl.innerHTML=renderMd(fullDocMd()); }catch(e2){}
  }
  refreshToc();
- try{ ensureTocSpy(); updateTocSpy(); }catch(e){}
- try{ removeDocTabStrip(); }catch(e){}
-}
+   try{ ensureTocSpy(); updateTocSpy(); }catch(e){}
+   try{ removeDocTabStrip(); }catch(e){}
+  }
 function refreshToc(){ if(docTocEl&&tocOpen()) buildToc(); }
 function buildToc(){
  if(!docTocEl)return;
@@ -2285,17 +2294,24 @@ document.addEventListener('click',function(e){
   if(arrow)return; /* 树箭头仅折叠分组，不切换内容，放行 */
   var hit=(t.closest('.sb-item')||t.closest('#sbProject')||t.closest('#projOk')
    ||t.closest('#docsMask')||t.closest('#reqMask')||t.closest('#docsFab')||t.closest('#reqFab'));
-  if(!hit)return;
-  if(window.confirm('当前功能说明有未保存的修改，是否保存并离开？')){
+   if(!hit)return;
+   var _tgt=t;
+   try{ e.preventDefault(); if(e.stopPropagation)e.stopPropagation(); }catch(err){}
    try{
-    if(editOn&&!reqMode&&docEditArea)applyEditText(docEditArea.value);
-    exitEdit();
+    if(typeof askConfirm==='function'){
+     askConfirm({title:'未保存的修改',message:'当前功能说明有未保存的修改，是否保存并离开？',okText:'保存并离开'},function(ok){
+      if(!ok)return;
+      try{
+       if(editOn&&!reqMode&&docEditArea)applyEditText(docEditArea.value);
+       exitEdit();
+      }catch(err){}
+      /* 放行：重放本次点击，让原切换继续（此时已不脏，拦截器直接放行，不循环） */
+      try{ if(_tgt&&_tgt.click)_tgt.click(); }catch(err2){}
+     });
+     return;
+    }
    }catch(err){}
-   /* 放行：让原点击继续触发切换 */
-  }else{
-   e.preventDefault();
-   e.stopPropagation();
-  }
+   /* askConfirm 缺失时保守中止（事件已拦停，不丢用户未保存内容） */
  }catch(err){}
 },true);
 /* 关窗口兜底 */
@@ -3824,31 +3840,33 @@ function switchDocTab(toReq){
   var want=!!toReq;
   try{
    if(typeof flushEdit==='function'){
-    if(flushEdit()===false) return;
-   }else if(window.DocGuard&&typeof window.DocGuard.confirmLeave==='function'){
-    if(!window.DocGuard.confirmLeave()) return;
-   }else{
-    var dirty=false;
-    try{ dirty=(typeof isDocDirty==='function'&&isDocDirty()); }catch(e){}
-    if(dirty){
-     if(!window.confirm('当前功能说明有未保存的修改，是否保存并离开？')) return;
-     try{ if(typeof exitEdit==='function') exitEdit(); }catch(e){}
-    }
+    flushEdit(function(_ok){ if(_ok)switchDocTabReqGuard(want); });
+    return;
    }
   }catch(e){}
-  try{
-   var reqEditingOn=false;
-   try{ reqEditingOn=(typeof reqEditing!=='undefined'&&reqEditing); }catch(e){}
-   if(reqEditingOn){
-    var txt='',orig='';
-    try{ var ae=document.getElementById('reqEditArea'); txt=String((ae&&ae.value)||''); }catch(e){}
-    try{ orig=String((typeof reqText!=='undefined'?reqText:'')||''); }catch(e){}
-    if(txt!==orig){
-     if(!window.confirm('当前最新需求有未保存的修改，是否放弃并切换？')) return;
-    }
-    try{ if(typeof exitReqEdit==='function') exitReqEdit(true); }catch(e){}
+  switchDocTabReqGuard(want);
+  return;
+ }catch(e){}
+ return;
+ function switchDocTabReqGuard(want){
+ try{
+  var reqEditingOn=false;
+  try{ reqEditingOn=(typeof reqEditing!=='undefined'&&reqEditing); }catch(e){}
+  if(reqEditingOn){
+   var txt='',orig='';
+   try{ var ae=document.getElementById('reqEditArea'); txt=String((ae&&ae.value)||''); }catch(e){}
+   try{ orig=String((typeof reqText!=='undefined'?reqText:'')||''); }catch(e){}
+   if(txt!==orig){
+    try{ if(typeof askConfirm==='function'){ askConfirm({title:'未保存的修改',message:'当前最新需求有未保存的修改，是否放弃并切换？',okText:'放弃并切换',danger:true},function(ok2){ if(!ok2)return; try{ if(typeof exitReqEdit==='function')exitReqEdit(true); }catch(e){} switchDocTabCont(want); }); return; } }catch(e){}
+    return;
    }
-  }catch(e){}
+   try{ if(typeof exitReqEdit==='function')exitReqEdit(true); }catch(e){}
+  }
+ }catch(e){}
+ switchDocTabCont(want);
+}
+function switchDocTabCont(want){
+ try{
   var isPc=false;
   try{ isPc=(typeof pcMode==='function'&&pcMode()); }catch(e){}
   try{ if(!isPc&&document.body&&document.body.classList.contains('kind-pc')) isPc=true; }catch(e){}
@@ -3909,6 +3927,7 @@ function switchDocTab(toReq){
   /* PC 目录常驻：tab 切换直接刷新目录内容并保持可见，不隐藏 */
   try{ if(typeof syncTocForTab==='function') syncTocForTab(); }catch(e){}
  }catch(e){}
+ }
 }
 /* PC 目录常驻（与文档弹窗同显隐）：开面板则目录重建并保持可见；
  * 切 tab 只刷新内容不隐藏；仅关面板时一并隐藏。移动端/独立窗保持原行为。 */

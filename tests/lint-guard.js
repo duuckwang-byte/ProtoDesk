@@ -186,6 +186,36 @@ try {
   ok(false, 'E-IPC-FROZEN 校验异常: ' + String((e && e.message) || e));
 }
 
+// 8. E-NODIALOG: 生产代码禁原生弹窗（alert/confirm/prompt 跑嵌套消息循环搞乱 Chromium 焦点，
+//    关后窗内再落不上光标；一律走 toast(showToast/libStatus)/askConfirm/askNamePrompt。
+//    允许：toast 兜底链内的 alert（showToast/inlineEditToast/codeEditToast/Utils.showToast 的最终 fallback））
+{
+  const NODIALOG_SKIP_PREFIX = ['tests/', 'docs/archive/'];
+  const NODIALOG_FILES = files.filter((f) => {
+    const rel = path.relative(ROOT, f).split(path.sep).join('/');
+    return !NODIALOG_SKIP_PREFIX.some((p) => rel.startsWith(p));
+  });
+  const NODIALOG_ALLOW_RE = /(showToast|Toast|Utils\.showToast|fallback|兜底)/;
+  for (const f of NODIALOG_FILES) {
+    const rel = path.relative(ROOT, f).split(path.sep).join('/');
+    let src = '';
+    try {
+      src = fs.readFileSync(f, 'utf8');
+    } catch (e) {
+      continue;
+    }
+    const lines = stripJsStrings(stripComments(src)).split('\n');
+    lines.forEach((ln, idx) => {
+      const m = ln.match(/(^|[^_a-zA-Z.$])(alert|confirm|prompt)\s*\(/);
+      if (!m) return;
+      // 兜底链内的 alert 放行：所在行及前后 4 行含 toast/兜底标记
+      const ctx = lines.slice(Math.max(0, idx - 4), idx + 1).join('\n');
+      if (m[2] === 'alert' && NODIALOG_ALLOW_RE.test(ctx)) return;
+      ok(false, `E-NODIALOG 原生${m[2]}() 禁止 ${rel}:${idx + 1}（改走 toast/askConfirm/askNamePrompt）`);
+    });
+  }
+}
+if (!fails.some((m) => m.startsWith('E-NODIALOG'))) console.log('PASS E-NODIALOG: 生产代码无原生 alert/confirm/prompt（toast 兜底除外）');
 // 7. E-CONFIG: eslint + prettier 配置存在且含关键规则
 try {
   const ecfg = fs.readFileSync(path.join(ROOT, 'eslint.config.js'), 'utf8');

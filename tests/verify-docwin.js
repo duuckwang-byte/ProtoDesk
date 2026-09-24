@@ -1484,6 +1484,52 @@ function testH1_DocwinNoMaskOnTab() {
   assert.ok(/docsMaskEl\)docsMaskEl\.style\.display='none'/.test(pae.replace(/\s+/g, '')) || /docsMaskEl\.style\.display='none'/.test(pae), '独立窗须隐藏docs遮罩');
 }
 
+// ── H2 F12/Ctrl+Shift+I 开关控制台（主窗+doc/ai独立窗） ──
+function testH2_DevToolsShortcut() {
+  assert.ok(mainSrc.includes('function attachDevToolsShortcut('), '缺attachDevToolsShortcut');
+  const fn = extractFn(mainSrc, 'attachDevToolsShortcut');
+  assert.ok(/before-input-event/.test(fn), '须经before-input-event（先于页面按键）');
+  assert.ok(/input\.type\s*!==\s*'keyDown'/.test(fn), '须只响应keyDown（防keyup二次触发）');
+  assert.ok(/input\.key\s*===\s*'F12'/.test(fn), '须支持F12');
+  assert.ok(/control\s*\|\|\s*input\.meta/.test(fn) && /shift/.test(fn), '须支持Ctrl/Shift+I（兼容mac Cmd）');
+  assert.ok(/isDevToolsOpened\(\)/.test(fn) && /closeDevTools\(\)/.test(fn) && /openDevTools\(\{\s*mode:\s*'detach'\s*\}\)/.test(fn), '须开/关切换且detach模式');
+  assert.ok(/__devToolsShortcutBound/.test(fn), '须防重绑定');
+  assert.ok(/attachDevToolsShortcut\(shared\.docWin\)/.test(mainSrc), 'docWin创建须挂载');
+  assert.ok(/attachDevToolsShortcut\(shared\.aiWin\)/.test(mainSrc), 'aiWin创建须挂载');
+  const mainJs = fs.readFileSync(path.join(rootDir, 'main.js'), 'utf8');
+  assert.ok(/attachDevToolsShortcut\(win\)/.test(mainJs), '主窗口创建须挂载');
+  assert.ok(/attachDevToolsShortcut/.test(mainJs) && /require\('.\/main\/controllers\/window-controller'\)/.test(mainJs), 'main.js须从window-controller引入');
+  // 真执行：mock窗口派发按键
+  const run = new Function(fn + '\nreturn attachDevToolsShortcut;')();
+  function mockWin() {
+    const handlers = {};
+    const wc = {
+      on(ev, h) { handlers[ev] = h; },
+      _opened: false,
+      isDevToolsOpened() { return this._opened; },
+      openDevTools() { this._opened = true; },
+      closeDevTools() { this._opened = false; },
+    };
+    return { webContents: wc, fire(input) { handlers['before-input-event']({ preventDefault() {} }, input); } };
+  }
+  const w = mockWin();
+  assert.strictEqual(run(w), true, '挂载须返回true');
+  assert.strictEqual(run(w), true, '重复挂载须幂等true');
+  assert.strictEqual(run(null), false, '空窗口须返回false');
+  w.fire({ type: 'keyDown', key: 'F12' });
+  assert.strictEqual(w.webContents._opened, true, 'F12须打开');
+  w.fire({ type: 'keyUp', key: 'F12' });
+  assert.strictEqual(w.webContents._opened, true, 'keyUp不得二次触发');
+  w.fire({ type: 'keyDown', key: 'F12' });
+  assert.strictEqual(w.webContents._opened, false, 'F12须关闭（切换）');
+  w.fire({ type: 'keyDown', key: 'I', control: true, shift: true });
+  assert.strictEqual(w.webContents._opened, true, 'Ctrl+Shift+I须打开');
+  w.fire({ type: 'keyDown', key: 'a', control: true });
+  assert.strictEqual(w.webContents._opened, true, '普通按键不得影响');
+  w.fire({ type: 'keyDown', key: 'I', meta: true, shift: true });
+  assert.strictEqual(w.webContents._opened, false, 'Cmd+Shift+I须关闭（mac兼容）');
+}
+
 function runAll() {  const tests = [
     ['A1 主进程docwin三通道', testA1_DocwinChannels],
     ['A2 镜像中继透传', testA2_MirrorRelay],
@@ -1532,7 +1578,8 @@ function runAll() {  const tests = [
     ['S5 LS+ts+ACK真执行', testS5_DraftLsTsAckRuntime],
     ['D1 无渐变无emoji红线', testD1_NoGradientNoEmoji],
     ['S3 aiwin判别+按钮+boot真执行', testS3_AiwinRuntime],
-    ['H1 独立窗切Tab无遮罩', testH1_DocwinNoMaskOnTab]
+    ['H1 独立窗切Tab无遮罩', testH1_DocwinNoMaskOnTab],
+    ['H2 F12控制台开关', testH2_DevToolsShortcut]
   ];
   let passed = 0, failed = 0;
   for (const [title, fn] of tests) {

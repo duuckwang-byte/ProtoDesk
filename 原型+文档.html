@@ -637,9 +637,20 @@
    <div class="modal-row" style="justify-content:flex-start"><span class="modal-hint" id="nameHint"></span></div>
    <div class="modal-row"><input class="modal-input" id="nameInput" type="text" maxlength="60" placeholder="在此输入名称"></div>
   </div>
-  <div class="modal-foot"><button class="docs-btn" id="nameCancel">取消</button><button class="docs-btn primary" id="nameOk">确定</button></div>
+ <div class="modal-foot"><button class="docs-btn" id="nameCancel">取消</button><button class="docs-btn primary" id="nameOk">确定</button></div>
+  </div>
  </div>
-</div>
+
+ <!-- ═══════ 通用确认弹窗：替代原生 window.confirm（原生嵌套循环搞乱焦点），删除类操作共用 ═══════ -->
+ <div class="modal-mask" id="confirmMask" style="display:none">
+  <div class="modal" style="width:360px">
+   <div class="modal-head"><span id="confirmTitle">请确认</span><span class="modal-x" id="confirmClose">✕</span></div>
+   <div class="modal-body">
+    <div class="modal-row" style="justify-content:flex-start"><span class="modal-hint" id="confirmMsg" style="white-space:pre-line"></span></div>
+   </div>
+   <div class="modal-foot"><button class="docs-btn" id="confirmCancel">取消</button><button class="docs-btn primary" id="confirmOk">确定</button></div>
+  </div>
+ </div>
 
 <!-- ═══════ 项目选择弹窗：打开应用时先选择进入哪个项目（一个窗口只展示一个项目） ═══════ -->
 <div class="modal-mask" id="projMask" style="display:none">
