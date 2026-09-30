@@ -13,6 +13,7 @@
 2. **技能调用规范**：
    - 修改原型时：使用 prototype-ui skill
    - 修改文档时：使用 PRDskill
+   - 需要使用浏览器（打开网页、检索信息、截图、页面取数）时：使用 tabbit skill
 
 ## 二、工作目录约定与禁止事项
 
@@ -34,3 +35,17 @@
 2. 文件名锁死：企业/政府业务用 `项目详情.html/匹配资金列表.html/资金详情.html`，资金库用 `project_detail.html/fund_detail.html`，禁止混用英文名到中文目录
 3. 统一跳转（代码未提供全局 `navigateTo` 前按此执行）：跨原型用 `parent.postMessage({type:'proto-link',target:{proto,page}},'*')`（见 `link-bind.js` 注入与监听），同原型子页用 `parent.loadSubPage(proto,subFile)`；禁止裸 `location.href` 与 `top.location`（会导致整机空白）。`navigateTo` 薄封装待代码补齐后恢复（跨原型/同原型子页/同文件多视图 `display+pushState/hash` 三分支，`srcdoc` 适配）
 4. 同文件多视图（`item-d1..d8/item-f1..f8`）先本地 `display` 切换+`history.pushState`，再 fallback 到 `navigateTo`
+
+## 五、资料按需读取时机（UI 规范与技能）
+
+1. **UI 设计规范**（本工作目录 `.context/ui-spec.md`）：仅当本轮涉及新建或改动界面样式（布局、配色、字号、组件形态、交互形态）时，动手前必须完整读取该文件并严格遵循；纯文案、纯逻辑、纯数据修改可跳过不读。它只约束界面的视觉呈现与交互形态，不约束代码实现方式（手写 CSS 或引用任意组件库均可，只要视觉结果符合规范）；与用户本次明确需求冲突处，以用户需求为准。
+2. **技能**（见每轮下发的技能映射表）：用户需求命中表内触发关键词时，动手前必须完整读取表中相对地址的技能全文并严格遵循；技能文件读不到就直说，不得臆造；未命中关键词时不读。
+
+## 六、结构化提问契约（question-form）
+
+1. **何时才问**：只有缺了关键信息没法动手时才提问；信息够直接干，不要为确认而提问。
+2. **不准调提问类工具**：需要用户拍板才能动手时，不准调提问类工具（AskUserQuestion / question 类及同类一律不准调），必须输出完整 question-form JSON 块然后停住本轮（不写文件不调工具），等用户回答案后再动手。
+3. **标记写法**：`<question-form id="..." title="...">{"questions":[{"id":"...","label":"...","type":"radio","options":["..."],"required":true}]}</question-form>`；别名 `<ask-question>` 同等效力，解析侧二认一。只认闭合完整的块，裸开标签不算；整轮助手文本拼完再扫。
+4. **字段与题型**：题型只允许 radio/text；字段固定为 id/label/type/options/required；options 元素为文本或 {label,value,description} 对象。
+5. **推荐项**：options 元素可带 recommended:true，或 label 后缀（推荐），二认一即可，默认选中推荐项。
+6. **无人值守默认**：无人值守/后台任务用反话——不要提问，按合理默认完成；用户答案首行 `[form answers — <表单id>]`，之后每题一行 `- <题干>: <选项|（跳过）>`。

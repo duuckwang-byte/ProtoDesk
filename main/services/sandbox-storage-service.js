@@ -162,6 +162,8 @@ function pickInDir(dir, ext, prefer) {
 function sanitizeProtoName(raw) {
   const nm = String(raw || '').trim().replace(/\.(html?|md)$/i, '');
   if (!nm) return null;
+  if (/[.\s]$/.test(nm)) return null; /* Windows 不允许空格/点结尾，renameSync 必抛 */
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(nm)) return null; /* Windows 保留设备名 */
   if (/[\\/:*?"<>|\u0000-\u001f]/.test(nm) || nm.includes('..') || nm.length > 60) return null; // P0-4 fix 正则第三段移入[]并单判..
   return nm;
 }
@@ -1702,6 +1704,37 @@ function sandboxAdoptImpl(ev, o) {
   }
 
 }
+/* 带重试的文件重命名：Windows 下目录/文件被占用（AI 任务、终端、OpenCode 后台服务常驻占用）时
+ * renameSync 直接 EBUSY/EPERM；transient 占用重试几次即可过去，常驻占用则返回人话报错。
+ * @param {string} from 源路径 @param {string} to 目标路径
+ * @param {Object} [opts] {tries?:number, sleepMs?:number, rename?:Function}（rename 可注入，用于测试模拟 EBUSY）
+ * @returns {{ok:boolean, error?:string, code?:string, attempts?:number}} */
+function fsRenameRetry(from, to, opts) {
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  const tries = Math.max(1, Math.min(10, parseInt(o.tries, 10) || 5));
+  const sleepMs = Math.max(0, Math.min(2000, parseInt(o.sleepMs, 10) || 200));
+  const doRename = (typeof o.rename === 'function') ? o.rename : fs.renameSync;
+  let last = null;
+  let used = 0;
+  for (let i = 0; i < tries; i++) {
+    used = i + 1;
+    try {
+      doRename(from, to);
+      return { ok: true, attempts: used };
+    } catch (e) {
+      last = e;
+      const code = String((e && e.code) || '');
+      if (code !== 'EBUSY' && code !== 'EPERM' && code !== 'EACCES') break;
+      if (i < tries - 1 && sleepMs > 0) { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs); } catch (e2) {} }
+    }
+  }
+  const code = String((last && last.code) || '');
+  if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+    return { ok: false, code, attempts: used, error: '目录被其他程序占用，重命名失败：如有 AI 任务/终端正在使用该原型，或 OpenCode 后台服务占用了目录，请先停止后再试' };
+  }
+  return { ok: false, code: code || 'UNKNOWN', attempts: used, error: String((last && last.message) || last) };
+}
+
 function sandboxRenameImpl(ev, o) {
   const o2 = o || {};
   const newName = sanitizeProtoName(o2.name);
@@ -1714,9 +1747,27 @@ function sandboxRenameImpl(ev, o) {
   const oldName = path.basename(oldDir);
   if (oldName === newName) return { ok: true, dir: oldDir, name: oldName };
   const newFolder = path.join(parentDir, newName);
+  const normOld = path.normalize(oldDir);
+  const normNew = path.normalize(newFolder);
+  const caseOnly = normOld.toLowerCase() === normNew.toLowerCase() && normOld !== normNew;
   try {
-    if (fs.existsSync(newFolder)) return { ok: false, error: '同名原型已存在', dir: oldDir };
-    fs.renameSync(oldDir, newFolder);
+    if (fs.existsSync(newFolder) && !caseOnly) return { ok: false, error: '同名原型已存在', dir: oldDir };
+    if (caseOnly) {
+      /* 仅大小写不同：Windows 下 existsSync 恒为真，须经临时目录两步改名 */
+      const tmpFolder = path.join(parentDir, oldName + '.__rename_tmp');
+      if (fs.existsSync(tmpFolder)) return { ok: false, error: '重命名临时目录被占用，请稍后重试', dir: oldDir };
+      try {
+        const r1 = fsRenameRetry(oldDir, tmpFolder);
+        if (!r1.ok) return { ok: false, error: r1.error, dir: oldDir };
+        const r2 = fsRenameRetry(tmpFolder, newFolder);
+        if (!r2.ok) { try { fsRenameRetry(tmpFolder, oldDir); } catch (e3) {} return { ok: false, error: r2.error, dir: oldDir }; }
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e), dir: oldDir };
+      }
+    } else {
+      const r = fsRenameRetry(oldDir, newFolder);
+      if (!r.ok) return { ok: false, error: r.error, dir: oldDir };
+    }
     /* 同步文件夹内与旧名同名的 html/md 文件 */
     for (const ext of ['.html', '.md']) {
       const oldF = path.join(newFolder, oldName + ext);
@@ -2505,6 +2556,7 @@ module.exports = {
   sandboxCreateImpl,
   sandboxAdoptImpl,
   sandboxRenameImpl,
+  fsRenameRetry,
   sandboxRemoveImpl,
   sandboxProjectsImpl,
   projectCreateImpl,

@@ -37,6 +37,7 @@ const SUITES = [
   ['ctrl-release', 'verify-ctrl-release.js'],
   ['history', 'verify-history.js'],
   ['sandbox-guard', 'verify-sandbox-guard.js'],
+  ['rename', 'verify-rename.js'],
   ['groups', 'verify-groups.js'],
   ['antigravity-lock', 'verify-antigravity-lock.js'],
   ['agy-stream', 'verify-agy-stream.js'],
@@ -49,6 +50,7 @@ const SUITES = [
   ['edit-select', 'verify-edit-select.js'],
   ['import-subpage', 'verify-import-subpage.js'],
   ['code-edit', 'verify-code-edit.js'],
+  ['question-form', 'verify-question-form.js'],
 ];
 
 function pad(s, n) {

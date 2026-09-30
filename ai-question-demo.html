@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Question 抽屉演示（静态）</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  body{overflow:auto;background:var(--bg);}
+  .demo-page{max-width:860px;margin:0 auto;padding:28px 20px 80px;}
+  .demo-title{font-size:18px;font-weight:800;margin-bottom:4px;}
+  .demo-sub{font-size:12.5px;color:var(--sub);margin-bottom:20px;}
+  /* 对话框外壳：复用 ai-modal 真实尺寸语义，静态居中 */
+  .demo-modal{margin:0 auto;max-width:720px;}
+  .demo-chat{padding:14px 18px;display:flex;flex-direction:column;gap:10px;}
+  /* 抽屉：对话框内底部区域，非全局遮罩 */
+  .q-drawer{border-top:1px solid var(--line);background:var(--bg-subtle);display:flex;flex-direction:column;max-height:340px;}
+  .q-drawer-head{flex:none;padding:10px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .q-drawer-title{font-size:13.5px;font-weight:700;}
+  .q-drawer-title .n{color:var(--pri);}
+  .q-drawer-body{flex:1;min-height:0;overflow-y:auto;padding:10px 18px;display:flex;flex-direction:column;gap:10px;}
+  .q-drawer-foot{flex:none;padding:10px 18px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:flex-end;gap:10px;background:var(--bg-subtle);}
+  .q-pane{display:none;flex-direction:column;gap:8px;}
+  .q-pane.active{display:flex;}
+  .q-stem{font-size:12.5px;line-height:1.7;color:var(--ink);}
+  /* 选项卡片：复用 model-check-item 布局语义，选中态主色边框 */
+  .q-opt{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:pointer;font-size:12.5px;line-height:1.6;}
+  .q-opt:hover{border-color:var(--pri);}
+  .q-opt.sel{border-color:var(--pri);box-shadow:0 0 0 1px var(--pri) inset;}
+  .q-opt .dot{flex:none;width:14px;height:14px;border-radius:50%;border:2px solid var(--faint);margin-top:3px;}
+  .q-opt.sel .dot{border-color:var(--pri);background:var(--pri);box-shadow:inset 0 0 0 2px #fff;}
+  .q-opt .tx b{display:block;font-weight:700;}
+  .q-opt .tx span{color:var(--sub);}
+  .q-rec{flex:none;font-size:10.5px;font-weight:700;color:var(--pri);background:var(--pri-soft);border-radius:4px;padding:1px 6px;margin-top:3px;white-space:nowrap;}
+  .q-hint{font-size:11.5px;color:var(--faint);}
+</style>
+</head>
+<body>
+<div class="demo-page">
+  <div class="demo-title">Question 抽屉演示</div>
+  <div class="demo-sub">静态页面：复用 <code>app.css</code> 真实类名（ai-modal / ai-tab / modal / docs-btn）；抽屉长在对话框内部底部，不是全局弹窗。交互仅演示选项卡切换与选题。</div>
+
+  <div class="ai-modal demo-modal">
+    <div class="demo-chat">
+      <div class="ai-msg user"><div class="ai-msg-body">d9 成都城发这条按混合诉求规则处理，还有 d1、d8 的企业性质要不要同步隐藏？</div></div>
+      <div class="thinking-box open"><div class="thinking-header"><div class="thinking-title-left"><div class="thinking-pulse"></div><span class="thinking-title-text">正在思考…</span></div><span class="fold-indicator">▾ 折叠</span></div>
+      <div class="thinking-content">两处规则有分叉，停下来问用户再动手。</div></div>
+      <div class="tool-execution-stream"><div class="tool-call-card"><div class="tool-call-left"><span class="tool-icon">?</span><span class="tool-name">question</span><span class="tool-param">2 项待定</span></div><span class="tool-status-tag waiting" id="demoQTag">待选</span></div></div>
+    </div>
+
+    <!-- 抽屉本体 -->
+    <div class="q-drawer">
+      <div class="q-drawer-head">
+        <span class="q-drawer-title">请选择（<span class="n" id="demoQCount">2</span> 项待定）</span>
+        <div class="ai-tab-header" id="demoQTabs">
+          <button type="button" class="ai-tab-btn active" data-pane="qp1">1 成都城发诉求</button>
+          <button type="button" class="ai-tab-btn" data-pane="qp2">2 企业性质</button>
+        </div>
+      </div>
+      <div class="q-drawer-body">
+        <div class="q-pane active" id="qp1">
+          <div class="q-stem">d9「成都城市发展集团」：详情页诉求类型是「政府+招商」，但列表卡片只有「政府」。按你的规则（混合诉求去掉政府）处理时，这一条怎么改？</div>
+          <div class="q-opt sel" data-v="保留纯政府"><span class="dot"></span><div class="tx"><b>保留纯政府</b><span>详情去掉多余的「招商」标签，卡片保持「政府」不变；政府 tab 显示 3 家</span></div><span class="q-rec">推荐</span></div>
+          <div class="q-opt" data-v="严格去掉政府"><span class="dot"></span><div class="tx"><b>严格去掉政府</b><span>详情去掉「政府」只留「招商」，卡片同步改为「招商」；政府 tab 只剩 2 家</span></div></div>
+        </div>
+        <div class="q-pane" id="qp2">
+          <div class="q-stem">d1 北京科技、d8 武汉创新投资去掉「政府」诉求后，它们的「企业性质」字段（诉求含政府才显示）是否同步处理？</div>
+          <div class="q-opt sel" data-v="同步隐藏"><span class="dot"></span><div class="tx"><b>同步隐藏</b><span>从 d1、d8 详情中移除「企业性质」整行，与旧规则保持一致</span></div><span class="q-rec">推荐</span></div>
+          <div class="q-opt" data-v="保留不动"><span class="dot"></span><div class="tx"><b>保留不动</b><span>本轮只改诉求标签，企业性质字段原样保留</span></div></div>
+        </div>
+        <div class="q-hint">提交后答案随本轮会话续跑带回模型；跳过则按推荐自行决定，不断链。</div>
+      </div>
+      <div class="q-drawer-foot">
+        <button type="button" class="docs-btn" id="demoQSkip">跳过</button>
+        <button type="button" class="docs-btn primary" id="demoQSubmit">提交答案</button>
+      </div>
+    </div>
+
+    <div class="ai-foot">
+      <textarea class="ai-input" rows="1" placeholder="输入问题，回车发送（Shift+Enter 换行）"></textarea>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // 选项卡切换
+  var tabs=document.querySelectorAll('#demoQTabs .ai-tab-btn');
+  tabs.forEach(function(t){
+    t.onclick=function(){
+      tabs.forEach(function(x){ x.classList.remove('active'); });
+      t.classList.add('active');
+      document.querySelectorAll('.q-pane').forEach(function(p){ p.classList.remove('active'); });
+      document.getElementById(t.getAttribute('data-pane')).classList.add('active');
+    };
+  });
+  // 单选题
+  document.querySelectorAll('.q-pane').forEach(function(pane){
+    pane.querySelectorAll('.q-opt').forEach(function(o){
+      o.onclick=function(){
+        pane.querySelectorAll('.q-opt').forEach(function(x){ x.classList.remove('sel'); });
+        o.classList.add('sel');
+      };
+    });
+  });
+  function collect(){
+    var out=[];
+    document.querySelectorAll('.q-pane').forEach(function(pane,i){
+      var sel=pane.querySelector('.q-opt.sel');
+      out.push((i+1)+'. '+(sel?sel.getAttribute('data-v'):'未选'));
+    });
+    return out.join('；');
+  }
+  var tag=document.getElementById('demoQTag'), count=document.getElementById('demoQCount');
+  document.getElementById('demoQSubmit').onclick=function(){
+    tag.textContent='已答'; tag.className='tool-status-tag done'; count.textContent='0';
+    this.textContent='已提交'; var self=this; setTimeout(function(){ self.textContent='提交答案'; },1500);
+  };
+  document.getElementById('demoQSkip').onclick=function(){
+    tag.textContent='已跳过'; tag.className='tool-status-tag done'; count.textContent='0';
+  };
+})();
+</script>
+</body>
+</html>

@@ -84,10 +84,14 @@ function extract(src, name) {
   const sec = fn.buildUiSpecSection('mobile', { name: '移动端UI规范', content: '# t\nabc' });
   assert.ok(sec.includes('移动端UI规范'), '指针须含规范名');
   assert.ok(sec.includes('.context/ui-spec.md'), '指针须含沙箱内相对路径');
-  assert.ok(sec.includes('完整读取'), '指针须含必读约束');
   assert.ok(!sec.includes('# t\nabc'), '指针不得含规范正文');
+  assert.ok(sec.includes('toolPrompt.md'), '读取时机须收敛到 toolPrompt（代码不做必读限制）');
+  assert.ok(!/必须完整读取|严格遵循/.test(sec), '代码指针不得再带必读/严格遵循约束');
   assert.ok(sec.includes('不约束代码实现方式'), '须声明 UI 规范非代码规范');
-  assert.ok(sec.includes('以用户需求为准'), '冲突须以用户需求为准');
+  // 读取时机与冲突规则唯一真相源：toolPrompt.md 第五节
+  const tpText = fs.readFileSync(path.join(rootDir, 'toolPrompt.md'), 'utf8');
+  assert.ok(tpText.includes('可跳过不读'), 'toolPrompt 须写明纯文案/逻辑可跳过');
+  assert.ok(tpText.includes('以用户需求为准'), '冲突以用户需求为准须收敛到 toolPrompt');
   const big = fn.buildUiSpecSection('pc', { name: 'X', content: 'z'.repeat(100 * 1024) });
   assert.ok(big.length < 2048, '百KB规范的指针仍须短小，实际 ' + big.length);
   assert.ok(!/截断/.test(big), '指针模式不再截断正文');

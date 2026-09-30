@@ -4,6 +4,8 @@
 // 覆盖：(a) INPUT内按下Ctrl→keydown上报 (b) INPUT内松开Ctrl→keyup必上报释放态
 //       (c) 武装→点选→输入框内释放→宿主openPanel被触发 (d) 模板与内嵌副本两处逐行一致
 //       (e) 任一弹窗打开时宿主/远端均不进入拾取态
+//       (f) pointerdown拾取：禁用输入框/滚动条容器可拾取（click到不了的靠pointerdown），
+//           已消费手势的click须吞掉防双选，右键忽略，target为html/body时走elementFromPoint兜底
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -265,6 +267,161 @@ function mkKey(key, down) {
   const gateCalls = eeSrc.match(/isAnyPopupOpen\(\)/g) || [];
   assert.ok(gateCalls.length >= 3, '门禁定义+两处接线，实际' + gateCalls.length);
   console.log('[PASS] (e) 弹窗互斥门禁');
+}
+
+console.log('=== Ctrl释放链仿真全部通过 (a/b/c/d/e) ===');
+
+// ---------- (f) pointerdown 拾取：click 到不了的元素（禁用输入框/滚动条） ----------
+{
+  // (f0) 静态：双副本须含 pointerdown 监听 + 目标解析 + 坐标兜底 + 防重 + 按键守卫
+  for (const [nm, src] of [['sandbox-agent', agentSrc], ['sandbox-core', coreSrc]]) {
+    assert.ok(src.includes('document.addEventListener("pointerdown"'), nm + '帧模板缺 pointerdown 监听');
+    assert.ok(src.includes('function resolvePickTarget(ev)'), nm + '帧模板缺 resolvePickTarget');
+    assert.ok(src.includes('function sendPick(tt, ev, missMode, missShift)'), nm + '帧模板缺 sendPick');
+    assert.ok(src.includes('elementFromPoint'), nm + '帧模板缺 elementFromPoint 兜底');
+    assert.ok(src.includes('clickSuppress'), nm + '帧模板缺 click 防重');
+    assert.ok(src.includes('ev.button'), nm + '帧模板缺按键守卫（右键须排除）');
+  }
+  console.log('[PASS] (f0) 双副本 pointerdown/解析/兜底/防重/按键守卫齐全');
+
+  // 真实模板运行时：求值 sandboxAgentSource() 产物，伪造 DOM 跑完整拾取流程
+  const innerCode = new Function('sandboxSafeScript', braceExtract(agentSrc, 'sandboxAgentSource') + '\nreturn sandboxAgentSource();')((s) => String(s || ''));
+  function makeFrameRuntime() {
+    const posted = [];
+    const listeners = { window: {}, document: {} };
+    const registry = [];
+    const docEl = { nodeType: 1, tagName: 'HTML', parentElement: null, style: {} };
+    const bodyEl = { nodeType: 1, tagName: 'BODY', parentElement: docEl, style: {} };
+    const fakeDocument = {
+      documentElement: { style: { cursor: '' } },
+      body: bodyEl,
+      activeElement: null,
+      addEventListener: (t, fn) => { (listeners.document[t] = listeners.document[t] || []).push(fn); },
+      elementFromPoint: () => null,
+      getElementById: () => null,
+      querySelectorAll: (sel) => {
+        const m = /\[data-pr-id="([^"]+)"\]/.exec(String(sel || ''));
+        if (!m) return [];
+        return registry.filter((el) => el._prid === m[1]);
+      },
+    };
+    const fakeWindow = {
+      addEventListener: (t, fn) => { (listeners.window[t] = listeners.window[t] || []).push(fn); },
+      parent: { postMessage: (mm) => { posted.push(mm); } },
+    };
+    function mkEl(tag, prid, parent) {
+      const el = {
+        nodeType: 1, tagName: tag, _prid: prid || null, className: '', id: '', textContent: '',
+        parentElement: parent || bodyEl, previousElementSibling: null, ownerDocument: fakeDocument,
+        getAttribute: function (k) {
+          if (k === 'data-pr-id') return this._prid;
+          if (k === 'data-testid') return null;
+          if (k === 'class') return '';
+          return null;
+        },
+        getBoundingClientRect: () => ({ left: 10, top: 20, width: 100, height: 30 }),
+      };
+      registry.push(el);
+      return el;
+    }
+    const sandbox = {
+      window: fakeWindow, document: fakeDocument,
+      location: { hash: '' }, setTimeout: () => 0,
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(innerCode, sandbox, { filename: 'frame-template.js' });
+    const fireDoc = (type, ev) => { (listeners.document[type] || []).forEach((fn) => fn(ev)); };
+    const sendToFrame = (data) => { (listeners.window.message || []).forEach((fn) => fn({ source: fakeWindow.parent, data })); };
+    function mkEv(target, over) {
+      const ev = {
+        target, ctrlKey: false, metaKey: false, shiftKey: false,
+        button: 0, clientX: 50, clientY: 60, _pd: false, _sp: false,
+        preventDefault: function () { this._pd = true; },
+        stopPropagation: function () { this._sp = true; },
+      };
+      if (over) for (const k of Object.keys(over)) ev[k] = over[k];
+      return ev;
+    }
+    return { posted, fireDoc, sendToFrame, mkEv, mkEl, fakeDocument, docEl, bodyEl };
+  }
+
+  // (f1) 武装后 pointerdown 点禁用输入框 → PICK_RESULT（click 永远到不了的靠 pointerdown）
+  {
+    const fr = makeFrameRuntime();
+    const input = fr.mkEl('INPUT', 'pr-input-1');
+    fr.sendToFrame({ type: 'PICK_REQUEST', nonce: 'testnonce1' });
+    assert.ok(fr.fakeDocument.documentElement, '伪造 documentElement 存在');
+    const ev = fr.mkEv(input, { ctrlKey: true, button: 0 });
+    fr.fireDoc('pointerdown', ev);
+    assert.strictEqual(fr.posted.length, 1, '禁用输入框 pointerdown 应上报 1 条');
+    assert.strictEqual(fr.posted[0].type, 'PICK_RESULT', '武装态须为 PICK_RESULT');
+    assert.ok(String(fr.posted[0].payload.selector).includes('pr-input-1'), '选择器须含稳定ID，实际' + fr.posted[0].payload.selector);
+    assert.strictEqual(fr.posted[0].payload.tagName, 'input', 'tagName 须为 input');
+    assert.strictEqual(ev._pd, true, '拾取须 preventDefault（拦聚焦/下拉）');
+    console.log('[PASS] (f1) 武装pointerdown点禁用输入框→PICK_RESULT');
+  }
+
+  // (f2) 未武装 + 按住 Ctrl pointerdown 点滚动容器 → PICK_MISS（滚动条无 click 事件）
+  {
+    const fr = makeFrameRuntime();
+    const box = fr.mkEl('DIV', 'pr-scroll-1');
+    const ev = fr.mkEv(box, { ctrlKey: true, button: 0 });
+    fr.fireDoc('pointerdown', ev);
+    assert.strictEqual(fr.posted.length, 1, '滚动容器 pointerdown 应上报 1 条');
+    assert.strictEqual(fr.posted[0].type, 'PICK_MISS', '未武装须为 PICK_MISS');
+    assert.ok(String(fr.posted[0].payload.selector).includes('pr-scroll-1'), '选择器须含稳定ID');
+    console.log('[PASS] (f2) 未武装Ctrl+pointerdown点滚动容器→PICK_MISS');
+  }
+
+  // (f3) 已消费手势的后续 click 须吞掉（防一次按下选两次）
+  {
+    const fr = makeFrameRuntime();
+    const input = fr.mkEl('INPUT', 'pr-input-2');
+    fr.sendToFrame({ type: 'PICK_REQUEST', nonce: 'testnonce2' });
+    fr.fireDoc('pointerdown', fr.mkEv(input, { ctrlKey: true, button: 0 }));
+    assert.strictEqual(fr.posted.length, 1, 'pointerdown 先上报 1 条');
+    fr.fireDoc('click', fr.mkEv(input, { ctrlKey: true, button: 0 }));
+    assert.strictEqual(fr.posted.length, 1, '紧随的 click 须被吞掉防双选');
+    console.log('[PASS] (f3) 已消费手势的click被吞掉');
+  }
+
+  // (f4) 无 pointerdown 在先的 click 照常上报（旧链路保留）
+  {
+    const fr = makeFrameRuntime();
+    const btn = fr.mkEl('BUTTON', 'pr-btn-1');
+    fr.fireDoc('click', fr.mkEv(btn, { ctrlKey: true, button: 0 }));
+    assert.strictEqual(fr.posted.length, 1, '独立 click 照常上报');
+    assert.strictEqual(fr.posted[0].type, 'PICK_MISS', '未武装须为 PICK_MISS');
+    console.log('[PASS] (f4) 无pointerdown在先的click照常上报');
+  }
+
+  // (f5) 右键 pointerdown 直接忽略（不污染拾取）
+  {
+    const fr = makeFrameRuntime();
+    const input = fr.mkEl('INPUT', 'pr-input-3');
+    const ev = fr.mkEv(input, { ctrlKey: true, button: 2 });
+    fr.fireDoc('pointerdown', ev);
+    assert.strictEqual(fr.posted.length, 0, '右键不得上报');
+    assert.strictEqual(ev._pd, false, '右键不得 preventDefault');
+    console.log('[PASS] (f5) 右键pointerdown被忽略');
+  }
+
+  // (f6) target 为 html 时走 elementFromPoint 兜底；兜底仍是 body 则不上报
+  {
+    const fr = makeFrameRuntime();
+    const box = fr.mkEl('DIV', 'pr-scroll-2');
+    const htmlEl = { nodeType: 1, tagName: 'HTML', ownerDocument: fr.fakeDocument, parentElement: null };
+    fr.fakeDocument.elementFromPoint = () => box;
+    fr.fireDoc('pointerdown', fr.mkEv(htmlEl, { ctrlKey: true, button: 0 }));
+    assert.strictEqual(fr.posted.length, 1, 'html target 应走坐标兜底上报');
+    assert.ok(String(fr.posted[0].payload.selector).includes('pr-scroll-2'), '兜底须选中坐标下元素');
+    const fr2 = makeFrameRuntime();
+    const htmlEl2 = { nodeType: 1, tagName: 'HTML', ownerDocument: fr2.fakeDocument, parentElement: null };
+    fr2.fakeDocument.elementFromPoint = () => fr2.bodyEl;
+    fr2.fireDoc('pointerdown', fr2.mkEv(htmlEl2, { ctrlKey: true, button: 0 }));
+    assert.strictEqual(fr2.posted.length, 0, '兜底为 body 不得上报');
+    console.log('[PASS] (f6) elementFromPoint兜底（命中容器上报/命中body不上报）');
+  }
 }
 
 console.log('=== Ctrl释放链仿真全部通过 (a/b/c/d/e) ===');
