@@ -414,6 +414,131 @@ async function test4_StreamParsers() {
   }
 }
 
+// ---------- 断言5：question-form 后端留痕与降级（子任务C；全部内联 fixture，不依赖他人样本文件） ----------
+async function test5_QuestionForm() {
+  // 5a. 未知 question 体留痕不断链：type 明确为 question → onQuestion（questions+raw）+ onTrace（QUESTION/500字摘要）
+  {
+    const parser = getStreamParser('json-event-stream', 'opencode');
+    const gotQ = [];
+    const gotTrace = [];
+    const chunks = [];
+    const h = {
+      onQuestion: (e) => gotQ.push(e),
+      onTrace: (e) => gotTrace.push(e),
+      onChunk: (e) => chunks.push(e && e.text),
+      onThinking: () => {},
+      onToolCall: () => {},
+      onSession: () => {},
+    };
+    parser.push('{"type":"question","questions":[{"id":"q1","label":"选哪个？","type":"radio","options":["A","B"],"required":true}]}\n', h);
+    assert.strictEqual(gotQ.length, 1, `question 体应触发一次 onQuestion，实际 ${gotQ.length}`);
+    assert.ok(Array.isArray(gotQ[0].questions) && gotQ[0].questions.length === 1, `onQuestion 须带 questions 数组，实际 ${JSON.stringify(gotQ[0])}`);
+    assert.strictEqual(gotQ[0].questions[0].id, 'q1', 'questions 内容应原样透传');
+    assert.ok(gotQ[0].raw && gotQ[0].raw.type === 'question', 'onQuestion 须原样附带 raw');
+    assert.strictEqual(gotTrace.length, 1, `未知体应留痕一条 trace，实际 ${gotTrace.length}`);
+    assert.strictEqual(gotTrace[0].tag, 'QUESTION', `trace tag 应为 QUESTION，实际 ${JSON.stringify(gotTrace[0])}`);
+    assert.ok(String(gotTrace[0].text).includes('q1'), 'trace 摘要须含原始 JSON 内容');
+    assert.ok(String(gotTrace[0].text).length <= 520, `trace 摘要应截断 500 字量级，实际 ${String(gotTrace[0].text).length}`);
+    assert.strictEqual(parser.hasEmittedContent(), false, 'question 到达不应置 emitted（不改变成功/失败判定）');
+    assert.strictEqual(parser.getPendingError(), null, 'question 到达不应记 pendingError');
+    parser.push('{"type":"text","text":"hello-after"}\n', h);
+    assert.ok(chunks.join('').includes('hello-after'), '不断链：后续 text 仍应派发 onChunk');
+    parser.flush(h);
+  }
+
+  // 5a2. 裸 questions 体（无 type）同样留痕；超长摘要截断 500 字
+  {
+    const parser = getStreamParser('json-event-stream', 'opencode');
+    const gotQ = [];
+    const gotTrace = [];
+    const big = 'X'.repeat(2000);
+    const h = {
+      onQuestion: (e) => gotQ.push(e),
+      onTrace: (e) => gotTrace.push(e),
+      onChunk: () => {},
+      onThinking: () => {},
+      onToolCall: () => {},
+      onSession: () => {},
+    };
+    parser.push('{"questions":[{"id":"qb","label":"' + big + '"}]}\n', h);
+    parser.flush(h);
+    assert.strictEqual(gotQ.length, 1, '裸 questions 体应触发 onQuestion');
+    assert.strictEqual(gotTrace.length, 1, '裸 questions 体应留痕 trace');
+    assert.strictEqual(gotTrace[0].tag, 'QUESTION', '裸体 trace tag 应为 QUESTION');
+    assert.ok(String(gotTrace[0].text).length <= 520, `超长摘要须截断，实际 ${String(gotTrace[0].text).length}`);
+  }
+
+  // 5b. 工具包裹形降级提示：AskUserQuestion + input.questions → 工具行保留 + 一句人话提示，不自动转表单
+  {
+    const parser = getStreamParser('json-event-stream', 'opencode');
+    const tools = [];
+    const chunks = [];
+    const gotQ = [];
+    const h = {
+      onQuestion: (e) => gotQ.push(e),
+      onTrace: () => {},
+      onChunk: (e) => chunks.push(e && e.text),
+      onThinking: () => {},
+      onToolCall: (e) => tools.push(e),
+      onSession: () => {},
+    };
+    parser.push('{"type":"tool_use","part":{"type":"tool","tool":"AskUserQuestion","state":{"input":{"questions":[{"id":"q1","label":"确认吗？"}]}}}}\n', h);
+    parser.push('{"type":"tool_use","tool":"question","input":{"questions":[{"id":"q2"}]}}\n', h);
+    parser.flush(h);
+    assert.strictEqual(tools.length, 2, `工具行不应丢失，实际 ${tools.length}`);
+    assert.strictEqual(tools[0].tool, 'AskUserQuestion', `tool 名应保留，实际 ${tools[0].tool}`);
+    assert.strictEqual(gotQ.length, 0, '工具包裹形不得自动转表单（无 onQuestion）');
+    assert.strictEqual(chunks.length, 2, `每次工具提问应各补一句降级提示，实际 ${chunks.length}`);
+    assert.ok(String(chunks[0]).includes('工具提问') && String(chunks[0]).includes('不会自动转成表单'), `提示须为人话降级文案，实际 ${JSON.stringify(chunks[0])}`);
+    assert.strictEqual(parser.getPendingError(), null, '降级路径不应记 pendingError');
+  }
+
+  // 5c. 问卷数据零误伤：明确 text 类型附带 questions 字段 → 正常走 chunk；非提问类工具 input 含 questions → 正常走 tool_call 且无提示
+  {
+    const parser = getStreamParser('json-event-stream', 'opencode');
+    const tools = [];
+    const chunks = [];
+    const gotQ = [];
+    const gotTrace = [];
+    const h = {
+      onQuestion: (e) => gotQ.push(e),
+      onTrace: (e) => gotTrace.push(e),
+      onChunk: (e) => chunks.push(e && e.text),
+      onThinking: () => {},
+      onToolCall: (e) => tools.push(e),
+      onSession: () => {},
+    };
+    parser.push('{"type":"text","text":"问卷数据正文","questions":[{"id":"w1"}]}\n', h);
+    parser.push('{"type":"tool_use","part":{"type":"tool","tool":"read","state":{"input":{"path":"a.html","questions":[{"id":"w2"}]}}}}\n', h);
+    parser.flush(h);
+    assert.ok(chunks.join('').includes('问卷数据正文'), '问卷文本应正常走 onChunk');
+    assert.strictEqual(tools.length, 1, '非提问类工具应正常走 onToolCall');
+    assert.strictEqual(tools[0].tool, 'read', '工具名 read 应保留');
+    assert.strictEqual(gotQ.length, 0, '问卷数据不得触发 onQuestion');
+    assert.strictEqual(gotTrace.length, 0, '问卷数据不得留痕 QUESTION');
+    assert.ok(!chunks.join('').includes('不会自动转成表单'), '问卷数据不得出降级提示');
+  }
+
+  // 5d. onQuestion/onTrace 缺失时 no-op：不抛错不断链
+  {
+    const parser = getStreamParser('json-event-stream', 'opencode');
+    const chunks = [];
+    const h = {
+      onChunk: (e) => chunks.push(e && e.text),
+      onThinking: () => {},
+      onToolCall: () => {},
+      onSession: () => {},
+    };
+    assert.doesNotThrow(() => {
+      parser.push('{"type":"question","questions":[{"id":"q9"}]}\n', h);
+      parser.push('{"type":"text","text":"after-noop"}\n', h);
+      parser.flush(h);
+    }, '缺 onQuestion/onTrace 不得抛错');
+    assert.ok(chunks.join('').includes('after-noop'), 'no-op 后续事件仍应派发');
+    assert.strictEqual(parser.getPendingError(), null, 'no-op 不应记 pendingError');
+  }
+}
+
 async function main() {
   let passed = 0;
   let failed = 0;
@@ -433,6 +558,7 @@ async function main() {
   await run('断言2 并发探测3000ms熔断', test2_DetectionFuse);
   await run('断言3 80KB超大Prompt管道注入', test3_LargePromptStdin);
   await run('断言4 流解析器归一化', test4_StreamParsers);
+  await run('断言5 question-form 后端留痕与降级', test5_QuestionForm);
 
   console.log(`SUMMARY passed=${passed} failed=${failed}`);
   process.exitCode = failed > 0 ? 1 : 0;

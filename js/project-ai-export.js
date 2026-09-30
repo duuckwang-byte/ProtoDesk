@@ -4908,7 +4908,7 @@ function i5AnswerAppendChunk(t){
    aiTlAnswerEl.appendChild(aiTlAnswerBodyEl);
    tl.appendChild(aiTlAnswerEl);
   }
-  aiTlAnswerBodyEl.innerHTML=formatAiTextConclusionOnly(aiTlAnswerText);
+  aiTlAnswerBodyEl.innerHTML=formatAiTextConclusionOnly(qformDisplayText(aiTlAnswerText));
   i5TlMoveCursorTo(aiTlAnswerEl);
  }catch(e){}
  i5TlScroll();
@@ -4917,11 +4917,11 @@ function i5AnswerFinalize(ts){
  try{
   var tl=i5TlEnsureTimeline();
   if(aiTlAnswerEl&&aiTlAnswerBodyEl){
-   aiTlAnswerBodyEl.innerHTML=formatAiTextConclusionOnly(aiTlAnswerText||aiStreamText||'');
+   aiTlAnswerBodyEl.innerHTML=formatAiTextConclusionOnly(qformDisplayText(aiTlAnswerText||aiStreamText||''));
   }else if((aiTlAnswerText||aiStreamText)&&tl){
    aiTlAnswerEl=document.createElement('div'); aiTlAnswerEl.className='answer i5-answer';
    aiTlAnswerBodyEl=document.createElement('div'); aiTlAnswerBodyEl.className='i5-answer-body';
-   aiTlAnswerBodyEl.innerHTML=formatAiTextConclusionOnly(aiTlAnswerText||aiStreamText);
+   aiTlAnswerBodyEl.innerHTML=formatAiTextConclusionOnly(qformDisplayText(aiTlAnswerText||aiStreamText));
    aiTlAnswerEl.appendChild(aiTlAnswerBodyEl);
    tl.appendChild(aiTlAnswerEl);
   }
@@ -5134,7 +5134,10 @@ function i5ReplayTimeline(container, evts, opts){
      expRow=null; expCnt=null; expChips=null;
      answerBuf+=String(e.text||'');
      ensureAnswer();
-     try{ answerBody.innerHTML=formatAiTextConclusionOnly(answerBuf); }catch(ee){ try{ answerBody.textContent=answerBuf; }catch(ee2){} }
+     try{ answerBody.innerHTML=formatAiTextConclusionOnly(qformDisplayText(answerBuf)); }catch(ee){ try{ answerBody.textContent=answerBuf; }catch(ee2){} }
+    }else if(t==='question'||t==='form'){
+     expRow=null; expCnt=null; expChips=null;
+     try{ if(typeof qformReplayOne==='function') qformReplayOne(tl, e); }catch(ee){}
     }else if(t==='error'){
      try{ if(answerBuf&&answerEl) finalizeAnswer(); }catch(ee){}
      expRow=null; expCnt=null; expChips=null;
@@ -5371,6 +5374,7 @@ function finishAiStream(isCancel){
     try{ i5ShellFinalizeAll(true); }catch(e){}
     try{ i5PairedFinalizeAll(true); }catch(e){}
     try{ i5AnswerFinalize(_doneTs); }catch(e){}
+    try{ qformRoundDone(txt); }catch(e){} /* question-form 整轮拼完再扫，闭合块行内渲染加落盘 */
     try{ i5TlRemoveCursor(); }catch(e){}
     try{
      var _tl3=aiStreaming.querySelector('.i5-timeline');
@@ -7303,3 +7307,457 @@ document.addEventListener('keydown', function(e){
   }
 });
 /* FIX: 经典<script>加载，移除ESM export(EXPORT_*经window/全局直用) */
+
+/* ═══════ question-form 行内问答（B-前端）：检测+状态+渲染+提交 ═══════
+ * 契约：<question-form id title>{questions:[{id,label,type:radio|text,options,recommended}]}</question-form>，
+ * 别名 <ask-question> 同等效力。只认闭合完整块，裸开标签不算；整轮拼完再扫（finishAiStream 收尾时）。
+ * 状态：检出后时间线挂待选行（等输入），提交/跳过后翻牌已答/已跳过，只读防重复提交。
+ * 挂载：卡片长在发出它的助手消息内部时间线里，无全局遮罩无新弹窗。
+ * 续跑：答案按契约格式经 aiInputEl + aiDoSend 同款链发送（带本轮 oid 即 -s 续接），无新 IPC。
+ * 落盘：question 事件随 aiCurTaskEvents 入库，重开经 i5ReplayTimeline 重建可答。 */
+var qformSeq = 0;
+var qformLive = {};
+function qformParseAttrs(attrStr){
+  var out = { id: '', title: '' };
+  try{
+    var re = /([\w-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/g;
+    var m;
+    while((m = re.exec(String(attrStr || ''))) !== null){
+      var k = String(m[1] || '').toLowerCase();
+      var v = String(m[2] || '');
+      if(v.length >= 2 && ((v.charAt(0) === '"' && v.charAt(v.length - 1) === '"') || (v.charAt(0) === "'" && v.charAt(v.length - 1) === "'"))) v = v.slice(1, -1);
+      if(k === 'id') out.id = v.trim();
+      else if(k === 'title') out.title = v.trim();
+    }
+  }catch(e){}
+  return out;
+}
+function qformHasRecMark(s){
+  var t = String(s == null ? '' : s);
+  if(/^[\(\uff08]\s*(推荐|recommended)\s*[\)\uff09]/i.test(t)) return true;
+  return /[\(\uff08]\s*(推荐|recommended)\s*[\)\uff09]\s*$/i.test(t);
+}
+function qformStripRecMark(s){
+  var t = String(s == null ? '' : s);
+  t = t.replace(/^[\(\uff08]\s*(推荐|recommended)\s*[\)\uff09]\s*/i, '');
+  t = t.replace(/\s*[\(\uff08]\s*(推荐|recommended)\s*[\)\uff09]\s*$/i, '');
+  return t;
+}
+function qformNormOption(opt, idx){
+  var label = '', value = '', desc = '', rec = false;
+  try{
+    if(opt && typeof opt === 'object'){
+      label = String(opt.label != null ? opt.label : (opt.value != null ? opt.value : ''));
+      value = (opt.value != null && String(opt.value) !== '') ? String(opt.value) : label;
+      desc = String(opt.description != null ? opt.description : (opt.desc != null ? opt.desc : ''));
+      rec = (opt.recommended === true);
+    }else{
+      label = String(opt == null ? '' : opt);
+      value = label;
+    }
+  }catch(e){}
+  if(!rec && (qformHasRecMark(label) || qformHasRecMark(value))) rec = true;
+  label = qformStripRecMark(label).trim() || ('选项' + (idx + 1));
+  value = qformStripRecMark(value).trim() || label;
+  return { label: label, value: value, description: String(desc || ''), recommended: !!rec };
+}
+function qformNormQuestion(q, idx){
+  var src = (q && typeof q === 'object') ? q : { label: String(q == null ? '' : q) };
+  var opts = Array.isArray(src.options) ? src.options : [];
+  var type = String(src.type || '').toLowerCase();
+  if(type !== 'radio' && type !== 'text') type = opts.length ? 'radio' : 'text';
+  var id = String(src.id != null && String(src.id).trim() ? src.id : ('q' + (idx + 1)));
+  var label = String(src.label != null && String(src.label).trim() ? src.label : id);
+  var out = { id: id, label: label, type: type, required: (src.required !== false), options: [] };
+  if(type === 'radio'){
+    for(var i = 0; i < opts.length; i++) out.options.push(qformNormOption(opts[i], i));
+    if(!out.options.length) out.type = 'text';
+  }
+  return out;
+}
+function qformParseBlock(attrStr, bodyStr){
+  var data = null;
+  try{
+    var body = String(bodyStr == null ? '' : bodyStr).trim();
+    try{ data = JSON.parse(body); }
+    catch(e){
+      var a = body.indexOf('{'), b = body.lastIndexOf('}');
+      if(a >= 0 && b > a) data = JSON.parse(body.slice(a, b + 1));
+    }
+  }catch(e2){ data = null; }
+  if(!data || typeof data !== 'object') return null;
+  if(!Array.isArray(data.questions) || !data.questions.length) return null;
+  var attrs = qformParseAttrs(attrStr);
+  var id = String(attrs.id || data.id || data.formId || '').trim();
+  var title = String(attrs.title || data.title || '').trim() || '请确认';
+  var qs = [];
+  for(var i = 0; i < data.questions.length; i++){
+    try{ qs.push(qformNormQuestion(data.questions[i], i)); }catch(e){}
+  }
+  if(!qs.length) return null;
+  return { id: id, title: title, questions: qs };
+}
+function qformFindAll(t){
+  var out = [];
+  try{
+    var s = String(t == null ? '' : t);
+    var re = /<(question-form|ask-question)\b([^>]*)>([\s\S]*?)<\/(question-form|ask-question)\s*>/gi;
+    var m;
+    re.lastIndex = 0;
+    while((m = re.exec(s)) !== null){
+      if(!m[0].length){ re.lastIndex++; continue; }
+      var f = null;
+      try{ f = qformParseBlock(m[2], m[3]); }catch(e){ f = null; }
+      if(f){
+        if(!f.id) f.id = 'qf-' + (out.length + 1);
+        f.tag = String(m[1] || '').toLowerCase();
+        f.start = m.index;
+        f.end = m.index + m[0].length;
+        f.raw = m[0];
+        out.push(f);
+      }
+    }
+  }catch(e){}
+  return out;
+}
+function qformDisplayText(t){
+  var s = String(t == null ? '' : t);
+  try{ s = s.replace(/<(question-form|ask-question)\b[^>]*>[\s\S]*?<\/(question-form|ask-question)\s*>/gi, ''); }catch(e){}
+  try{
+    var low = s.toLowerCase();
+    var i1 = low.lastIndexOf('<question-form');
+    var i2 = low.lastIndexOf('<ask-question');
+    var i = i1 > i2 ? i1 : i2;
+    if(i >= 0) s = s.slice(0, i).replace(/[ \t\r\n]*$/, '');
+  }catch(e){}
+  try{
+    var mt = /<([A-Za-z-]*)$/.exec(s);
+    if(mt){
+      var frag = String(mt[1] || '').toLowerCase();
+      if('question-form'.indexOf(frag) === 0 || 'ask-question'.indexOf(frag) === 0) s = s.slice(0, mt.index).replace(/[ \t\r\n]*$/, '');
+    }
+  }catch(e){}
+  return s;
+}
+function qformDefaultValue(q){
+  try{
+    if(!q || q.type !== 'radio' || !Array.isArray(q.options) || !q.options.length) return '';
+    for(var i = 0; i < q.options.length; i++){ if(q.options[i] && q.options[i].recommended) return String(q.options[i].value); }
+    return String(q.options[0].value);
+  }catch(e){ return ''; }
+}
+function qformBuildAnswer(form, ansMap){
+  var lines = ['[form answers \u2014 ' + String((form && form.id) || '') + ']'];
+  try{
+    var qs = (form && Array.isArray(form.questions)) ? form.questions : [];
+    for(var i = 0; i < qs.length; i++){
+      var v = ansMap ? ansMap[qs[i].id] : null;
+      v = (v == null) ? '' : String(v).trim();
+      if(!v) v = '（跳过）';
+      lines.push('- ' + String(qs[i].label) + ': ' + v);
+    }
+  }catch(e){}
+  return lines.join('\n');
+}
+function qformPaintOpts(boxEl, checkedInput){
+  try{
+    var rows = boxEl.querySelectorAll('.qform-opt');
+    for(var i = 0; i < rows.length; i++){
+      var inp = null;
+      try{ inp = rows[i].querySelector('input'); }catch(e){ inp = null; }
+      if(inp === checkedInput) rows[i].classList.add('sel');
+      else rows[i].classList.remove('sel');
+    }
+  }catch(e){}
+}
+function qformBuildCard(form, opts){
+  var o = opts || {};
+  var state = (o.state === 'answered' || o.state === 'skipped') ? o.state : 'pending';
+  var saved = (o.answers && typeof o.answers === 'object') ? o.answers : {};
+  var wrap = document.createElement('div');
+  wrap.className = 'qform-wrap';
+  var stream = document.createElement('div');
+  stream.className = 'tool-execution-stream';
+  var card0 = document.createElement('div');
+  card0.className = 'tool-call-card';
+  var left = document.createElement('div');
+  left.className = 'tool-call-left';
+  var ic = document.createElement('span');
+  ic.className = 'tool-icon';
+  ic.textContent = '?';
+  var nm = document.createElement('span');
+  nm.className = 'tool-name';
+  nm.textContent = 'question';
+  var pm = document.createElement('span');
+  pm.className = 'tool-param';
+  pm.textContent = String(form.title) + '（' + form.questions.length + ' 项待定，等输入）';
+  left.appendChild(ic);
+  left.appendChild(nm);
+  left.appendChild(pm);
+  var tag = document.createElement('span');
+  tag.className = 'tool-status-tag ' + (state === 'pending' ? 'waiting' : 'done');
+  tag.textContent = state === 'pending' ? '待选' : (state === 'answered' ? '已答' : '已跳过');
+  card0.appendChild(left);
+  card0.appendChild(tag);
+  stream.appendChild(card0);
+  wrap.appendChild(stream);
+  var card = document.createElement('div');
+  card.className = 'qform-card';
+  card.setAttribute('data-qform', String(form.id));
+  card.setAttribute('data-qform-state', state);
+  var title = document.createElement('div');
+  title.className = 'qform-title';
+  title.textContent = String(form.title);
+  var cnt = document.createElement('span');
+  cnt.className = 'qform-count';
+  cnt.textContent = '共 ' + form.questions.length + ' 题';
+  title.appendChild(cnt);
+  card.appendChild(title);
+  var entry = { form: form, state: state, answers: {}, inputs: {}, cardEl: card, tagEl: tag, submitBtn: null, skipBtn: null };
+  for(var qi = 0; qi < form.questions.length; qi++){
+    (function(q){
+      var qbox = document.createElement('div');
+      qbox.className = 'qform-q';
+      var stem = document.createElement('div');
+      stem.className = 'qform-stem';
+      stem.textContent = String(q.label);
+      if(q.required){
+        var rq = document.createElement('span');
+        rq.className = 'qform-req';
+        rq.textContent = '*';
+        stem.appendChild(rq);
+      }
+      qbox.appendChild(stem);
+      if(q.type === 'text'){
+        var inp = document.createElement('input');
+        inp.setAttribute('type', 'text');
+        inp.className = 'qform-text';
+        inp.setAttribute('placeholder', '请输入…');
+        var sv = saved[q.id];
+        if(sv != null && String(sv).trim()) inp.value = String(sv);
+        qbox.appendChild(inp);
+        entry.inputs[q.id] = { type: 'text', input: inp };
+      }else{
+        var holder = { type: 'radio', radios: [] };
+        var defVal = qformDefaultValue(q);
+        var savedVal = (saved[q.id] != null && String(saved[q.id]).trim()) ? String(saved[q.id]) : null;
+        for(var oi = 0; oi < q.options.length; oi++){
+          (function(op){
+            qformSeq++;
+            var row = document.createElement('label');
+            row.className = 'qform-opt';
+            var radio = document.createElement('input');
+            radio.setAttribute('type', 'radio');
+            try{ radio.type = 'radio'; }catch(e){}
+            radio.name = 'qf' + qformSeq + '_' + String(form.id) + '_' + String(q.id);
+            radio.value = String(op.value);
+            var want = savedVal != null ? (String(op.value) === savedVal) : (String(op.value) === defVal);
+            if(want){ radio.checked = true; row.classList.add('sel'); }
+            radio.onchange = function(){ qformPaintOpts(qbox, radio); };
+            var tx = document.createElement('span');
+            tx.className = 'qform-opt-tx';
+            var b = document.createElement('b');
+            b.textContent = String(op.label);
+            tx.appendChild(b);
+            if(op.description){
+              var d = document.createElement('span');
+              d.textContent = String(op.description);
+              tx.appendChild(d);
+            }
+            row.appendChild(radio);
+            row.appendChild(tx);
+            if(op.recommended){
+              var rec = document.createElement('span');
+              rec.className = 'qform-rec';
+              rec.textContent = '推荐';
+              row.appendChild(rec);
+            }
+            qbox.appendChild(row);
+            holder.radios.push(radio);
+          })(q.options[oi]);
+        }
+        entry.inputs[q.id] = holder;
+      }
+      card.appendChild(qbox);
+    })(form.questions[qi]);
+  }
+  var foot = document.createElement('div');
+  foot.className = 'qform-foot';
+  var skipBtn = document.createElement('button');
+  skipBtn.setAttribute('type', 'button');
+  skipBtn.className = 'docs-btn';
+  skipBtn.textContent = '跳过';
+  skipBtn.onclick = function(){ qformSubmitAnswer(String(form.id), true); };
+  var submitBtn = document.createElement('button');
+  submitBtn.setAttribute('type', 'button');
+  submitBtn.className = 'docs-btn primary';
+  submitBtn.textContent = '提交答案';
+  submitBtn.onclick = function(){ qformSubmitAnswer(String(form.id), false); };
+  foot.appendChild(skipBtn);
+  foot.appendChild(submitBtn);
+  card.appendChild(foot);
+  var hint = document.createElement('div');
+  hint.className = 'qform-hint';
+  hint.style.display = 'none';
+  card.appendChild(hint);
+  entry.submitBtn = submitBtn;
+  entry.skipBtn = skipBtn;
+  entry.hintEl = hint;
+  wrap.appendChild(card);
+  if(state !== 'pending') qformSetDone(entry, state);
+  qformLive[String(form.id)] = entry;
+  return { wrap: wrap, tagEl: tag, entry: entry };
+}
+function qformSetDone(entry, state){
+  try{
+    entry.state = state;
+    var st = (state === 'skipped') ? 'skipped' : 'answered';
+    try{ if(entry.cardEl) entry.cardEl.setAttribute('data-qform-state', st); }catch(e){}
+    try{
+      if(entry.tagEl){
+        entry.tagEl.className = 'tool-status-tag done';
+        entry.tagEl.textContent = (st === 'skipped') ? '已跳过' : '已答';
+      }
+    }catch(e){}
+    for(var qid in entry.inputs){
+      if(!entry.inputs.hasOwnProperty(qid)) continue;
+      var h = entry.inputs[qid];
+      try{
+        if(h.type === 'text'){ if(h.input) h.input.disabled = true; }
+        else{ for(var i = 0; i < h.radios.length; i++){ try{ h.radios[i].disabled = true; }catch(e){} } }
+      }catch(e){}
+    }
+    try{ if(entry.submitBtn){ entry.submitBtn.disabled = true; entry.submitBtn.textContent = '已提交'; } }catch(e){}
+    try{ if(entry.skipBtn) entry.skipBtn.disabled = true; }catch(e){}
+  }catch(e){}
+}
+function qformCollectAnswers(entry){
+  var map = {};
+  try{
+    var qs = (entry && entry.form && Array.isArray(entry.form.questions)) ? entry.form.questions : [];
+    for(var i = 0; i < qs.length; i++){
+      var q = qs[i];
+      var h = entry.inputs ? entry.inputs[q.id] : null;
+      if(!h){ map[q.id] = ''; continue; }
+      if(q.type === 'text'){
+        var v = '';
+        try{ v = String((h.input && h.input.value) || '').trim(); }catch(e){ v = ''; }
+        map[q.id] = v;
+      }else{
+        var val = '';
+        try{
+          for(var k = 0; k < h.radios.length; k++){ if(h.radios[k] && h.radios[k].checked){ val = String(h.radios[k].value); break; } }
+        }catch(e){ val = ''; }
+        if(!val) val = qformDefaultValue(q);
+        map[q.id] = val;
+      }
+    }
+  }catch(e){}
+  return map;
+}
+function qformPersistState(formId, state, answers){
+  try{
+    var s = (typeof aiCurSesh === 'function') ? aiCurSesh() : null;
+    if(!s || !Array.isArray(s.events)) return false;
+    for(var i = s.events.length - 1; i >= 0; i--){
+      var e = s.events[i];
+      if(!e || (e.t !== 'question' && e.type !== 'question')) continue;
+      var o = null;
+      try{ o = JSON.parse(String(e.text || '')); }catch(err){ continue; }
+      if(!o || !o.form || String(o.form.id) !== String(formId)) continue;
+      o.state = state;
+      o.answers = answers || {};
+      e.text = JSON.stringify(o);
+      try{ if(typeof aiSaveSesh === 'function') aiSaveSesh(); }catch(err2){}
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+function qformSubmitAnswer(formId, isSkip){
+  var fid = String(formId == null ? '' : formId);
+  var entry = qformLive[fid];
+  if(!entry || entry.state !== 'pending') return false;
+  var busy = false;
+  try{ busy = (typeof aiBusy !== 'undefined' && !!aiBusy); }catch(e){ busy = false; }
+  if(busy){
+    try{ if(typeof showToast === 'function') showToast('上一个任务仍在运行，请稍候再提交。'); }catch(e){}
+    return false;
+  }
+  var map = qformCollectAnswers(entry);
+  if(isSkip){
+    map = {};
+    var qs = (entry.form && Array.isArray(entry.form.questions)) ? entry.form.questions : [];
+    for(var i = 0; i < qs.length; i++) map[qs[i].id] = '';
+  }
+  var text = qformBuildAnswer(entry.form, map);
+  qformSetDone(entry, isSkip ? 'skipped' : 'answered');
+  try{ qformPersistState(fid, isSkip ? 'skipped' : 'answered', map); }catch(e){}
+  var oid = '';
+  try{
+    var s = (typeof aiCurSesh === 'function') ? aiCurSesh() : null;
+    if(s && s.oid) oid = String(s.oid);
+  }catch(e){ oid = ''; }
+  if(!oid){
+    try{ if(typeof showToast === 'function') showToast('将开启新会话续答'); }catch(e){}
+    try{ if(entry.hintEl){ entry.hintEl.textContent = '将会开启新会话续答'; entry.hintEl.style.display = ''; } }catch(e){}
+  }
+  try{
+    var box = null;
+    try{ box = (typeof aiInputEl !== 'undefined' && aiInputEl) ? aiInputEl : null; }catch(e){ box = null; }
+    if(!box && typeof document !== 'undefined' && document.getElementById) box = document.getElementById('aiInput');
+    if(box) box.value = text;
+  }catch(e){}
+  try{ if(typeof aiDoSend === 'function') aiDoSend(); }catch(e){}
+  return true;
+}
+function qformReplayOne(tl, e){
+  try{
+    if(!tl) return false;
+    var o = null;
+    try{ o = JSON.parse(String((e && e.text) || '')); }catch(err){ return false; }
+    if(!o || !o.form || !o.form.id || !Array.isArray(o.form.questions) || !o.form.questions.length) return false;
+    var st = (o.state === 'answered' || o.state === 'skipped') ? o.state : 'pending';
+    var built = qformBuildCard(o.form, { state: st, answers: (o.answers && typeof o.answers === 'object') ? o.answers : {} });
+    tl.appendChild(built.wrap);
+    return true;
+  }catch(e){ return false; }
+}
+function qformRoundDone(fullText){
+  var n = 0;
+  try{
+    var forms = qformFindAll(fullText);
+    if(!forms || !forms.length) return 0;
+    var host = null;
+    try{ host = (typeof i5TlEnsureTimeline === 'function') ? i5TlEnsureTimeline() : null; }catch(e){ host = null; }
+    if(!host){
+      try{ host = (typeof aiStreaming !== 'undefined' && aiStreaming) ? aiStreaming : null; }catch(e){ host = null; }
+    }
+    for(var i = 0; i < forms.length; i++){
+      (function(f){
+        try{
+          if(host && host.querySelector){
+            var dup = null;
+            try{ dup = host.querySelector('[data-qform="' + String(f.id).replace(/"/g, '') + '"]'); }catch(e){ dup = null; }
+            if(dup) return;
+          }
+          var pf = { id: f.id, title: f.title, questions: f.questions };
+          if(host){
+            var built = qformBuildCard(pf, { state: 'pending', answers: {} });
+            try{ host.appendChild(built.wrap); }catch(e){}
+          }else{
+            qformLive[String(pf.id)] = { form: pf, state: 'pending', answers: {}, inputs: {}, cardEl: null, tagEl: null, submitBtn: null, skipBtn: null };
+          }
+          try{
+            var ts = (typeof aiSessNow === 'function') ? aiSessNow() : Date.now();
+            if(typeof aiCurTaskEvents !== 'undefined' && aiCurTaskEvents) aiCurTaskEvents.push({ t: 'question', text: JSON.stringify({ v: 1, form: pf, state: 'pending', answers: {} }), ts: ts });
+          }catch(e){}
+          n++;
+        }catch(e){}
+      })(forms[i]);
+    }
+    try{ if(host && typeof i5TlScroll === 'function') i5TlScroll(); }catch(e){}
+  }catch(e){}
+  return n;
+}
+try{ if(typeof window !== 'undefined') window.QForm = { find: qformFindAll, display: qformDisplayText, answer: qformBuildAnswer, submit: qformSubmitAnswer }; }catch(e){}

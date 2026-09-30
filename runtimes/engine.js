@@ -233,8 +233,10 @@ function _startLockedExecution({ def, resolvedBin, prompt, cwd, options = {}, ha
  * @param {string} params.prompt - 用户提示词（可包含数十KB HTML）
  * @param {string} params.cwd - 沙箱工作目录
  * @param {Object} [params.options] - 选项 (model, resumeSessionId 等)
- * @param {Object} params.handlers - 回调 { onStart, onThinking, onChunk, onToolCall, onSession, onError, onClose }
+ * @param {Object} params.handlers - 回调 { onStart, onThinking, onChunk, onToolCall, onSession, onError, onClose, onQuestion?, onTrace? }
  *   onStart({pid, agentId, agentName}) 在进程创建成功后触发一次，供渲染层把“启动中”切为“等待响应”
+ *   onQuestion({questions, raw}) 提问体直通（可选，缺失时解析器侧 no-op；到达不改变成功/失败判定）
+ *   onTrace({tag, level, text}) 留痕直通（可选，缺失 no-op；QUESTION 标签供排查）
  * @returns {{ cancel: () => Promise<void>, pid: number | null }}
  */
 function startAgentExecution({ def, resolvedBin, prompt, cwd, options = {}, handlers }) {

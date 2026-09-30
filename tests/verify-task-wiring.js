@@ -103,8 +103,12 @@ function rmDir(p) {
   assert.ok(sec.includes('修改文档、功能说明、PRD、需求文档'), '须含文档关键词');
   assert.ok(sec.includes('.context/skills/prototype-ui/SKILL.md'), '须含原型相对地址');
   assert.ok(sec.includes('.context/skills/prd-skill/skill.md'), '须含文档相对地址');
-  assert.ok(sec.includes('动手前完整读取'), '须含动手前完整读取约束');
-  assert.ok(sec.includes('读不到就直说') && sec.includes('不得臆造'), '须含读不到直说、不得臆造');
+  assert.ok(sec.includes('toolPrompt.md'), '取用时机须收敛到 toolPrompt（代码不做读取限制）');
+  assert.ok(!/动手前完整读取|严格遵循/.test(sec), '代码映射段不得再带读取约束');
+  // 读取约束唯一真相源：toolPrompt.md 第五节
+  const tpText = fs.readFileSync(path.join(rootDir, 'toolPrompt.md'), 'utf8');
+  assert.ok(tpText.includes('命中表内触发关键词'), 'toolPrompt 须写明技能命中才读');
+  assert.ok(tpText.includes('读不到就直说') && tpText.includes('不得臆造'), '读不到直说、不得臆造须收敛到 toolPrompt');
   console.log('[PASS] 映射段生成');
 })();
 

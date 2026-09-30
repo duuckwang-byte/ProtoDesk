@@ -138,11 +138,10 @@ function buildUiSpecSection(kind, spec) {
     else if (spec && spec.id) version = String(spec.id);
   } catch (e) {}
   const kindLabel = (k === 'pc') ? '桌面端（pc）' : '移动端（mobile）';
-  return '【UI 设计规范·必读】\n'
+  return '【UI 设计规范】\n'
     + '当前原型端别：' + kindLabel + '，适用规范《' + name + '》（版本 ' + version + '）。\n'
-    + '规范全文位于本工作目录 ' + CONTEXT_DIR_NAME + '/' + CONTEXT_SPEC_FILE + '：动手修改任何文件前必须完整读取该文件并严格遵循。\n'
-    + '它只约束界面的视觉呈现与交互形态，不约束代码实现方式（手写 CSS 或引用任意组件库均可，只要视觉结果符合规范）。\n'
-    + '与用户本次明确需求冲突处，以用户需求为准。';
+    + '规范全文位于本工作目录 ' + CONTEXT_DIR_NAME + '/' + CONTEXT_SPEC_FILE + '，读不读、何时读按 toolPrompt.md 第五节执行。\n'
+    + '它只约束界面的视觉呈现与交互形态，不约束代码实现方式（手写 CSS 或引用任意组件库均可，只要视觉结果符合规范）。';
 }
 function buildToolPromptPointer() {
   return '【工作纪律·必读】\n'
@@ -189,11 +188,10 @@ function buildSkillMapSection(staged) {
     }
     if (!rows.length) return '';
     return '【技能映射·按关键词取用】\n'
-      + '下表按用户需求关键词取用对应技能；命中时动手前必须完整读取表中相对地址的技能全文，并严格遵循。\n'
+      + '下表按用户需求关键词取用对应技能；取用与读取时机按 toolPrompt.md 第五节执行。\n'
       + '| 触发关键词 | 技能地址（本工作目录相对路径） |\n'
       + '|---|---|\n'
-      + rows.join('\n') + '\n'
-      + '约束：动手前完整读取命中技能全文；若技能文件读不到就直说，不得臆造。';
+      + rows.join('\n');
     } catch (e) { return ''; }
 }
 /* ═══════ 事前范围确认 S5（下发前快检，零打扰优先） ═══════
@@ -1256,6 +1254,23 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
         onSession: (id) => {
           const sid = String((id && (id.sessionId || id.id || id.sessionID || id.session_id || id.session)) || (typeof id === 'string' ? id : '') || '');
           emitAiEvent({ type: 'session', id: sid, sessionId: sid });
+        },
+        /* question-form 子任务C：提问体透传（仅复用现有 ai:event 通道，不新增 IPC）。
+         * onQuestion 到达只发事件：不触发 ErrorCard，不碰 answerAcc/用量/改动，不改变成功/失败判定；
+         * 前端凭 {type:'question', questions} 经既有任务事件体系（aiCurTaskEvents→会话落盘）记录，供重开对话框重建。 */
+        onQuestion: (data) => {
+          try {
+            const d = (data && typeof data === 'object') ? data : {};
+            const qs = Array.isArray(d.questions) ? d.questions : [];
+            emitAiEvent({ type: 'question', questions: qs, raw: (d.raw != null ? d.raw : d) });
+          } catch (e) {}
+        },
+        /* question-form 留痕直通：解析器 onTrace({tag,level,text}) 原样转 ai:event trace（QUESTION 排查证据）。 */
+        onTrace: (t) => {
+          try {
+            const o = (t && typeof t === 'object') ? t : {};
+            emitAiEvent({ type: 'trace', trace: { tag: String(o.tag || 'TRACE'), level: String(o.level || 'info'), text: String(o.text || '') } });
+          } catch (e) {}
         },
         onError: (diag) => {
           const d = (diag && typeof diag === 'object') ? diag : { message: String((diag && diag.message) || diag || '未知错误') };
