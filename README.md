@@ -4,9 +4,9 @@
 
 ## 下载
 
-Windows 64 位安装包（v1.0.1）：
+Windows 64 位安装包（v1.2.0）：
 
-- [ProtoDesk-Setup-1.0.1.exe](https://github.com/duuckwang-byte/ProtoDesk/releases/download/v1.0.1/ProtoDesk-Setup-1.0.1.exe)
+- [ProtoDesk-Setup-1.2.0.exe](https://github.com/duuckwang-byte/ProtoDesk/releases/download/v1.2.0/ProtoDesk-Setup-1.2.0.exe)
 - 其他版本见 [Releases](https://github.com/duuckwang-byte/ProtoDesk/releases/latest) 页面
 
 ## 功能一览
