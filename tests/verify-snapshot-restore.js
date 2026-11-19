@@ -21,6 +21,7 @@ const mainSrc = (() => {
   return files.map((f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }).join('\n');
 })();
 const frontSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'project-ai-export.js'), 'utf8');
+const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'main', 'services', 'sandbox-storage-service.js'), 'utf8');
 
 console.log('=== snapshot-restore 回归测试 ===');
 
@@ -52,4 +53,24 @@ console.log('=== snapshot-restore 回归测试 ===');
   console.log('[PASS] (c) 前端 restore 调用含 .catch 且上报 snapshot-restore');
 }
 
-console.log('=== snapshot-restore 全部断言通过 (3/3 PASS) ===');
+// (d) 快照复制不得再直接调用 fs.cpSync（Electron37/Node22 中文路径 EPERM 运行时缺陷）
+{
+  assert.ok(!/fs\.cpSync\s*\(/.test(svcSrc), '快照服务不得再直接调用 fs.cpSync');
+  assert.ok(/function\s+copyDirRecursive\s*\(/.test(svcSrc), '须提供 readdir + mkdir + copyFile 的递归复制实现');
+  assert.ok(svcSrc.includes('fs.readdirSync(winFsPath(srcDir), { withFileTypes: true })'), '递归复制须用 readdir withFileTypes');
+  assert.ok(svcSrc.includes('fs.copyFileSync(winFsPath(from), winFsPath(to))'), '单文件复制须用 copyFileSync');
+  assert.ok(svcSrc.includes('copyDirRecursive(dn, dst)'), 'takeSnapshot 须走兼容复制实现');
+  console.log('[PASS] (d) 快照/恢复不再依赖 fs.cpSync，改用逐文件递归复制');
+}
+
+// (e) 恢复流程：undo 备份失败明确中止；暂存 + 回滚保证失败不破坏当前文件
+{
+  assert.ok(svcSrc.includes('恢复前备份失败，已中止（当前文件未改动）'), 'undo 备份失败须明确报错并说明未改动');
+  assert.ok(svcSrc.includes("'.restore-staging-'"), '恢复须先复制到同级暂存目录');
+  assert.ok(svcSrc.includes("'.restore-old-'"), '恢复须保留旧目录副本用于回滚');
+  assert.ok(svcSrc.includes('恢复失败，已回滚（当前文件未改动）'), '目录交换失败须自动回滚');
+  assert.ok(!svcSrc.includes('fs.rmSync(dn, { recursive: true, force: true })'), '不得先删除当前原型再复制快照');
+  console.log('[PASS] (e) 恢复采用备份→暂存→交换→回滚，失败不破坏当前文件');
+}
+
+console.log('=== snapshot-restore 全部断言通过 (5/5 PASS) ===');

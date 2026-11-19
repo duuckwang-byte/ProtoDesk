@@ -14,6 +14,15 @@ sandboxSeed/
 # 开发隔离数据
 .devdata/
 
+# wave4/wave5 e2e 隔离数据目录（seed.mjs 可随时重建，不入库）
+.devdata-wave4-*/
+
+# playwright 测试产物
+test-results/
+
+# 真机取证截图（体积大，仅本地保留：docs/wave4/shots/）
+docs/wave4/shots/
+
 # opencode 运行时内部文件
 sidecar.js
 .rewrite-stream.js

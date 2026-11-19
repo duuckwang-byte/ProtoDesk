@@ -91,7 +91,68 @@ function defaultAiCfg() {
     visibleModels: [],
     visibleModelsCli: null,
     visibleModelsApi: null,
+    /* Phase 1 ACP：默认关闭，开启后仅 transport:'acp' 的 Agent 走新链路 */
+    acp: {
+      enabled: false,
+      defaultPermissionMode: 'approve-reads',
+      agents: {}
+    },
   };
+}
+
+const ACP_PERMISSION_MODES = ['approve-all', 'approve-reads', 'deny-all'];
+
+/* ACP 配置清洗：只保留非敏感字段；enabled 严格布尔，权限模式非法回落 approve-reads。
+ * agents 按 id 保留浅层配置（transport / permissionMode / path / command 等），敏感键与 env 一律丢弃。 */
+function sanitizeAcpAgentEntry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out = {};
+  try {
+    for (const key of Object.keys(value)) {
+      if (SENSITIVE_KEYS.indexOf(key) >= 0) continue;
+      if (key === 'env') continue;
+      const v = value[key];
+      if (v == null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[key] = v;
+    }
+  } catch (e) { return null; }
+  return out;
+}
+
+function sanitizeAcpCfg(value) {
+  const src = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
+  const out = {
+    enabled: src.enabled === true,
+    defaultPermissionMode: ACP_PERMISSION_MODES.indexOf(String(src.defaultPermissionMode || '')) >= 0
+      ? String(src.defaultPermissionMode) : 'approve-reads',
+    agents: {}
+  };
+  try {
+    if (src.agents && typeof src.agents === 'object' && !Array.isArray(src.agents)) {
+      for (const id of Object.keys(src.agents)) {
+        const entry = sanitizeAcpAgentEntry(src.agents[id]);
+        if (entry) out.agents[String(id)] = entry;
+      }
+    }
+    for (const key of Object.keys(src)) {
+      if (key === 'agents' || key === 'enabled' || key === 'defaultPermissionMode') continue;
+      if (SENSITIVE_KEYS.indexOf(key) >= 0 || key === 'env') continue;
+      const v = src[key];
+      if (v == null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[key] = v;
+    }
+  } catch (e) {}
+  return out;
+}
+
+/* 合并 ACP 配置：agents 按 id 浅合并（incoming 覆盖），其余字段 incoming 覆盖。 */
+function mergeAcpCfg(current, incoming) {
+  const base = sanitizeAcpCfg(current);
+  const inc = (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) ? incoming : null;
+  if (!inc) return base;
+  const incClean = sanitizeAcpCfg(inc);
+  const merged = Object.assign({}, base, incClean, {
+    agents: Object.assign({}, base.agents, incClean.agents)
+  });
+  return sanitizeAcpCfg(merged);
 }
 
 const SENSITIVE_KEYS = ['apiKey', 'api_key', 'token', 'password', 'secret'];
@@ -134,7 +195,11 @@ function toSafePersistedShape(cfg) {
     if (SENSITIVE_KEYS.indexOf(k) >= 0) continue;
     if (k === 'api' || k === 'byok' || k === 'apiConfig') continue;
     if (k === 'apiProfiles') continue;
+    if (k === 'acp') continue;
     out[k] = c[k];
+  }
+  if (c.acp && typeof c.acp === 'object') {
+    out.acp = sanitizeAcpCfg(c.acp);
   }
   if (c.api && typeof c.api === 'object') {
     out.api = _stripSensitiveFromSection(c.api);
@@ -306,6 +371,7 @@ function loadAiConfigFull() {
     if (raw && raw.apiConfig && typeof raw.apiConfig === 'object') res.apiConfig = Object.assign({}, raw.apiConfig);
     if (raw && Array.isArray(raw.apiProfiles)) res.apiProfiles = raw.apiProfiles;
     if (raw && raw.activeApiProfileId != null) res.activeApiProfileId = raw.activeApiProfileId;
+    res.acp = sanitizeAcpCfg(raw && raw.acp ? raw.acp : def.acp);
   } catch (e) {}
   // 叠加解密凭据（文件优先，内存补齐）
   try {
@@ -453,6 +519,12 @@ function maskedSave(cfg) {
     if (incoming && typeof incoming.agentId === 'string') next.agentId = incoming.agentId;
     if (incoming && typeof incoming.mainAgent === 'string') next.mainAgent = incoming.mainAgent;
     if (incoming && typeof incoming.cliPaths === 'object' && incoming.cliPaths) next.cliPaths = incoming.cliPaths;
+    /* Phase 1 ACP：agents 按 id 合并，整体仍走 sanitize（敏感字段不落盘）。 */
+    if (incoming && incoming.acp && typeof incoming.acp === 'object') {
+      next.acp = mergeAcpCfg(curFull && curFull.acp, incoming.acp);
+    } else if (!next.acp) {
+      next.acp = sanitizeAcpCfg(curFull && curFull.acp);
+    }
     if (incoming && (incoming.engine === 'cli' || incoming.engine === 'api')) {
       next.engine = incoming.engine;
       if (incoming.engine === 'cli') { try { delete next.mode; delete next.providerType; } catch (e) {} }
@@ -592,6 +664,11 @@ function saveAiCfgSyncCompat(c) {
         try { delete q.apiKey; } catch (e) {}
         return q;
       });
+      if (incoming.acp && typeof incoming.acp === 'object') {
+        next.acp = mergeAcpCfg(curFull && curFull.acp, incoming.acp);
+      } else {
+        next.acp = sanitizeAcpCfg(next.acp || (curFull && curFull.acp));
+      }
     } catch (e) {}
     const { configPath } = resolvePaths();
     _atomicWriteJson(configPath, toSafePersistedShape(next), false);
@@ -702,6 +779,8 @@ module.exports = {
   isPersistAvailable,
   maskKey,
   defaultAiCfg,
+  sanitizeAcpCfg,
+  mergeAcpCfg,
   toSafePersistedShape,
   loadAiConfigFull,
   getMaskedAiConfig,

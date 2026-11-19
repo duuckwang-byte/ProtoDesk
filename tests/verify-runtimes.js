@@ -126,6 +126,7 @@ async function test2_DetectionFuse() {
     elapsed < 5000,
     `detectAllAgents({}) 耗时应<5000ms（目标3000ms熔断，留余量），实际 ${elapsed}ms`
   );
+  console.log(`[detect] 首次=${elapsed}ms（真实探测）`);
   assert.ok(Array.isArray(results), 'detectAllAgents 应返回数组');
   assert.strictEqual(results.length, 26, `应返回26条，实际 ${results.length}`);
 
@@ -152,12 +153,25 @@ async function test2_DetectionFuse() {
   assert.strictEqual(fakeResolved, null, `假 bin 应 resolve 为 null，实际 ${fakeResolved}`);
   assert.ok(fakeElapsed < 5000, `假 bin 解析耗时应<5000ms，实际 ${fakeElapsed}ms`);
 
-  // 整体 detectAllAgents 仍按时返回（二次调用验证不受假 def 影响）
+  // 整体 detectAllAgents 仍按时返回（二次调用验证不受假 def 影响；同一进程内应复用 10s TTL 结果，不再二次 spawn）
   const t2 = Date.now();
   const results2 = await detectAllAgents({});
   const elapsed2 = Date.now() - t2;
+  console.log(`[detect] 二次=${elapsed2}ms（TTL 复用，首次 ${elapsed}ms）`);
   assert.ok(elapsed2 < 5000, `二次 detectAllAgents 耗时应<5000ms，实际 ${elapsed2}ms`);
   assert.strictEqual(results2.length, 26, '二次探测仍应返回26条');
+  assert.deepStrictEqual(
+    results2.map((r) => r.id),
+    results.map((r) => r.id),
+    '二次探测的 id 顺序/内容应与首次一致（复用不得改变返回结构）'
+  );
+
+  // 复用结果须为副本：调用方改动不得污染下一次探测
+  const firstName = results2[0].name;
+  results2[0].name = '__mutated__';
+  const results3 = await detectAllAgents({});
+  assert.strictEqual(results3[0].name, firstName, '缓存结果不得被调用方修改污染');
+  assert.strictEqual(results3.length, 26, '第三次探测仍应返回26条');
 }
 
 // ---------- 断言3：80KB超大Prompt管道注入 ----------

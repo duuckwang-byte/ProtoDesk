@@ -51,4 +51,20 @@ function registerGitController() {
   });
 }
 
-module.exports = { registerGitController };
+/**
+ * P2-1 应用退出兜底：异步终止全部活跃 Git 子进程树（不涉及任何 IPC 通道）。
+ * @returns {Promise<number>} 本次处理的子进程数量
+ */
+function cleanupGitChildren() {
+  return gitWorkflow.killAllGitChildren();
+}
+
+/**
+ * P2-1 进程退出兜底：同步终止全部活跃 Git 子进程树。
+ * @returns {number} 本次处理的子进程数量
+ */
+function cleanupGitChildrenSync() {
+  return gitWorkflow.killAllGitChildrenSync();
+}
+
+module.exports = { registerGitController, cleanupGitChildren, cleanupGitChildrenSync };

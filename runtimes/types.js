@@ -20,6 +20,8 @@
  * @property {number} [maxPromptArgBytes] - 命令行 argv 模式下的最大安全预算
  * @property {{ args: string[], timeoutMs?: number, parse: (stdout: string) => RuntimeModelOption[] }} [listModels] - 动态模型拉取声明
  * @property {string} [needsProtocol] - 特殊协议标记（如 acp-json-rpc），存在时引擎仅探测展示不执行
+ * @property {'acp'|'legacy'} transport - 执行传输：'acp' 走 main/acp/acp-service.js，'legacy' 走现有 CLI 直驱
+ * @property {{ args: string[], adapter: string, command?: string }} [acp] - ACP 启动声明；args 为追加参数，adapter 为空表示原生 ACP，command 可选用于覆盖启动命令名
  */
 
 module.exports = {};

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 预览层网络策略（详见 docs/preview-network-policy.md）：
+         1. 原型 srcdoc 继承本 CSP，因此这里同时决定预览内容能加载哪些外部资源；
+         2. 当前按需求放行任意 http:/https:（含 CDN），HTTP 为明文传输，存在篡改/中间人注入/数据外泄风险；
+         3. script-src 显式放行 'unsafe-eval'，仅供沙箱预览 iframe 内单文件 Vue 2/3 运行时模板编译（new Function）使用；
+         4. 仅放行网络类指令；object-src 等危险指令不写入 http/https，iframe sandbox（allow-scripts allow-forms，无 allow-same-origin）与主进程 webSecurity/contextIsolation 保持不放宽；
+         5. Vite dev 的 HMR 内联 preamble/ws 继续保留 localhost:5173 例外。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http: http://localhost:5173; style-src 'self' 'unsafe-inline' https: http:; font-src 'self' data: https: http:; img-src 'self' data: blob: proto-asset: https: http:; connect-src 'self' https: http: wss: ws://localhost:5173; frame-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; worker-src 'self' blob: https: http:; form-action 'self' https: http:;"
+    />
+    <title>原型工具</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

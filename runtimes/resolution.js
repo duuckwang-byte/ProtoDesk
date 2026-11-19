@@ -1,6 +1,5 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { execSync } = require('node:child_process');
 
 function isExecutableFile(p) {
   try {
@@ -19,47 +18,206 @@ function getPathDirs() {
   return raw.split(path.delimiter).map(s => (s || '').trim()).filter(Boolean);
 }
 
-function candidateForDir(dir, base) {
+/**
+ * 候选文件名后缀顺序：Windows 下必须优先查找可执行脚本与二进制 (.cmd, .bat, .exe)，
+ * 严禁无后缀优先，防止匹配到 npm 创建的无后缀 bash 脚本。
+ * @param {string} base 可执行文件名（可带后缀）
+ * @returns {string[]} 候选文件名（带后缀）
+ */
+function candidateNames(base) {
   const isWin = process.platform === 'win32';
-  if (!isWin) return [path.join(dir, base)];
-  // Windows 下必须优先查找可执行脚本与二进制 (.cmd, .bat, .exe)，严禁无后缀优先，防止匹配到 npm 创建的无后缀 bash 脚本
-  const suffixes = ['.cmd', '.bat', '.exe', ''];
-  // 若 base 已带后缀则不再叠加
+  if (!isWin) return [base];
   const lower = base.toLowerCase();
   if (lower.endsWith('.exe') || lower.endsWith('.cmd') || lower.endsWith('.bat')) {
-    return [path.join(dir, base)];
+    return [base];
   }
-  return suffixes.map(sfx => path.join(dir, base + sfx));
+  return [base + '.cmd', base + '.bat', base + '.exe', base];
+}
+
+/**
+ * 单次探测批次的目录项缓存：26 个 def 共享同一份 PATH 目录列表，
+ * 每个目录只 readdir 一次，把 O(defs × dirs × suffixes) 次 stat 降为 O(dirs) 次 readdir。
+ * 缓存只在一次 detectAllAgents 内复用，不跨调用，避免新增 CLI 后长期看不到。
+ * @returns {{ dirs: Map<string, Set<string>|null> }}
+ */
+function createResolutionCache() {
+  return { dirs: new Map() };
+}
+
+/**
+ * @param {string} dir 目录
+ * @returns {string} 大小写归一后的缓存键（Windows 文件系统不区分大小写）
+ */
+function dirCacheKey(dir) {
+  return process.platform === 'win32' ? dir.toLowerCase() : dir;
+}
+
+/**
+ * 读取目录内文件名集合；目录不存在/无权限时返回 null（调用方回退到逐文件探测）。
+ * @param {{ dirs: Map }} cache 目录项缓存
+ * @param {string} dir 目录
+ * @returns {Set<string>|null} 文件名集合（Windows 已转小写）
+ */
+function readDirNames(cache, dir) {
+  const key = dirCacheKey(dir);
+  if (cache && cache.dirs.has(key)) return cache.dirs.get(key);
+  let names = null;
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    names = new Set();
+    for (const ent of entries) {
+      // 指向文件的符号链接也保留，命中后再用 stat 确认目标类型
+      if (!ent.isFile() && !ent.isSymbolicLink()) continue;
+      names.add(process.platform === 'win32' ? ent.name.toLowerCase() : ent.name);
+    }
+  } catch (e) {
+    // 目录不存在等价于空目录，直接按“无候选”处理，避免对每个候选再补一次 exists 探测
+    names = e && (e.code === 'ENOENT' || e.code === 'ENOTDIR') ? new Set() : null;
+  }
+  if (cache) cache.dirs.set(key, names);
+  return names;
+}
+
+/**
+ * 判断目录内是否存在指定候选文件。
+ * @param {{ dirs: Map }|null} cache 目录项缓存
+ * @param {string} dir 目录
+ * @param {string} name 文件名
+ * @returns {boolean} 存在且为常规文件
+ */
+function hasCandidateFile(cache, dir, name) {
+  if (cache) {
+    const names = readDirNames(cache, dir);
+    if (names) {
+      const key = process.platform === 'win32' ? name.toLowerCase() : name;
+      // 目录项已声明为文件/链接，links 需 stat 兜底确认；未命中直接跳过，避免无谓 stat
+      return names.has(key) ? isExecutableFile(path.join(dir, name)) : false;
+    }
+  }
+  return isExecutableFile(path.join(dir, name));
+}
+
+/**
+ * 在给定目录序列中按「base 优先、目录其次、后缀最后」的原顺序查找。
+ * @param {{ dirs: Map }|null} cache 目录项缓存
+ * @param {string[]} bases 可执行文件名列表（bin + fallbackBins）
+ * @param {string[]} dirs 目录列表
+ * @returns {string|null} 命中路径
+ */
+function findInDirs(cache, bases, dirs) {
+  for (const base of bases) {
+    for (const dir of dirs) {
+      for (const name of candidateNames(base)) {
+        if (hasCandidateFile(cache, dir, name)) return path.join(dir, name);
+      }
+    }
+  }
+  return null;
 }
 
 let cachedNpmRootDirs = null;
-function npmRootDirs() {
-  // npm 全局根进程内不变，缓存避免 26 并发探测时重复 spawn
-  if (cachedNpmRootDirs) return cachedNpmRootDirs;
-  const out = [];
+
+/**
+ * 读取 .npmrc 中的 prefix（npm 全局安装前缀），避免为拿全局根而 spawn 一个 npm 进程。
+ * 支持 ${VAR} / %VAR% 形式的环境变量展开，失败返回空串。
+ * @param {string} file .npmrc 路径
+ * @returns {string} 前缀路径
+ */
+function readNpmrcPrefix(file) {
   try {
-    // npm 全局根推导 bin 目录
-    const npmRoot = execSync('npm root -g', { encoding: 'utf8', timeout: 3000 }).trim().split(/\r?\n/)[0].trim();
-    if (npmRoot) {
-      out.push(npmRoot);
-      out.push(path.join(npmRoot, '.bin'));
-      // C:\...\npm\node_modules -> C:\...\npm
-      out.push(path.dirname(npmRoot));
+    if (!file || !fs.existsSync(file)) return '';
+    const text = fs.readFileSync(file, 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*prefix\s*=\s*(.+?)\s*$/i.exec(line);
+      if (!m) continue;
+      let value = m[1].replace(/^["']|["']$/g, '');
+      value = value.replace(/\$\{([^}]+)\}|%([^%]+)%/g, (all, a, b) => {
+        const name = a || b;
+        return process.env[name] || process.env[name.toUpperCase()] || all;
+      });
+      return value.trim();
     }
-  } catch (_) { /* 忽略，降级到常见路径 */ }
-  cachedNpmRootDirs = out;
-  return out;
+  } catch (_) { /* 忽略 */ }
+  return '';
+}
+
+/**
+ * npm 全局根候选目录：由环境变量 + Node 安装位置 + .npmrc 推导，纯同步读取，不 spawn 进程。
+ * Windows 默认全局前缀是 %APPDATA%\npm（npm root -g 即其下 node_modules），
+ * 自定义前缀通过 npm_config_prefix 或 .npmrc prefix 覆盖。
+ * @returns {string[]} 去重后的候选目录
+ */
+function npmRootDirs() {
+  if (cachedNpmRootDirs) return cachedNpmRootDirs;
+  const isWin = process.platform === 'win32';
+  const out = [];
+  const push = (d) => { if (d) out.push(d); };
+  const home = process.env.USERPROFILE || process.env.HOME || '';
+  const execDir = path.dirname(process.execPath);
+
+  const prefixes = [];
+  const envPrefix = process.env.npm_config_prefix || process.env.NPM_CONFIG_PREFIX;
+  if (envPrefix) prefixes.push(envPrefix);
+  // 与 `npm root -g` 的配置优先级保持一致：项目 .npmrc > 用户 .npmrc > 全局 npmrc
+  const npmrcFiles = [
+    path.join(process.cwd(), '.npmrc'),
+    process.env.npm_config_userconfig || path.join(home, '.npmrc'),
+    path.join(execDir, 'node_modules', 'npm', 'npmrc')
+  ];
+  for (const file of npmrcFiles) {
+    const prefix = readNpmrcPrefix(file);
+    if (prefix) prefixes.push(prefix);
+  }
+
+  for (const prefix of prefixes) {
+    push(path.join(prefix, 'node_modules'));
+    push(path.join(prefix, 'node_modules', '.bin'));
+    push(prefix);
+    if (!isWin) push(path.join(prefix, 'bin'));
+  }
+
+  if (isWin) {
+    const appData = process.env.APPDATA || '';
+    if (appData) {
+      // npm root -g 的默认值：%APPDATA%\npm\node_modules
+      push(path.join(appData, 'npm', 'node_modules'));
+      push(path.join(appData, 'npm', 'node_modules', '.bin'));
+      push(path.join(appData, 'npm'));
+    }
+    // Node 安装目录自带的全局 node_modules（部分安装器把 CLI 装在这里）
+    push(path.join(execDir, 'node_modules'));
+    push(path.join(execDir, 'node_modules', '.bin'));
+  } else {
+    // /usr/local/bin/node -> /usr/local；全局包在 lib/node_modules，bin 在 bin
+    const prefix = path.dirname(execDir);
+    push(path.join(prefix, 'lib', 'node_modules'));
+    push(path.join(prefix, 'lib', 'node_modules', '.bin'));
+    push(path.join(prefix, 'bin'));
+  }
+
+  cachedNpmRootDirs = [...new Set(out)];
+  return cachedNpmRootDirs;
 }
 
 function collectFallbackDirs() {
   const dirs = [];
   const push = (d) => { if (d) dirs.push(d); };
-  npmRootDirs().forEach(push);
 
   const home = process.env.USERPROFILE || process.env.HOME || '';
   const appData = process.env.APPDATA || '';
+  const localAppData = process.env.LOCALAPPDATA || (home ? path.join(home, 'AppData', 'Local') : '');
   const programData = process.env.ProgramData || 'C:\\ProgramData';
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+
+  // 厂商私有安装目录（Antigravity/agy）：安装器不写 PATH，CLI 实际落盘于
+  // %LOCALAPPDATA%\agy\bin\agy.exe（或 Programs\agy\bin）。仅作为 PATH 之后的兜底，
+  // 放在 npm/scoop 之前，避免被同名 shim 抢先。
+  if (localAppData) {
+    push(path.join(localAppData, 'agy', 'bin'));
+    push(path.join(localAppData, 'Programs', 'agy', 'bin'));
+  }
+
+  npmRootDirs().forEach(push);
 
   // npm 常见全局 bin
   if (appData) push(path.join(appData, 'npm'));
@@ -117,13 +275,16 @@ function qoderCnExecutable() {
 }
 
 /**
- * 二进制文件深度解析器：自定义路径 -> 厂商私有目录(qoderCN) -> PATH -> npm/scoop/choco -> 文件校验
+ * 二进制文件深度解析器：自定义路径 -> 厂商私有目录(qoderCN) -> PATH -> 厂商兜底(agy) / npm/scoop/choco -> 文件校验
  * @param {Object} def Agent 定义（含 bin / fallbackBins）
  * @param {string} [customPath] 用户手动指定的可执行文件路径
+ * @param {{ cache?: { dirs: Map } }} [options] 可选目录项缓存（一次探测内共享，避免重复 readdir/stat）
  * @returns {Promise<string|null>} 解析出的绝对路径，找不到返回 null（不抛错）
  */
-async function resolveAgentExecutable(def, customPath) {
+async function resolveAgentExecutable(def, customPath, options = {}) {
   try {
+    const cache = options && options.cache ? options.cache : createResolutionCache();
+
     // 1. 自定义路径优先
     if (customPath && typeof customPath === 'string' && customPath.trim()) {
       const cp = customPath.trim().replace(/^["']|["']$/g, '');
@@ -151,13 +312,8 @@ async function resolveAgentExecutable(def, customPath) {
       try {
         if (fs.existsSync(cp) && fs.statSync(cp).isDirectory()) {
           const bases = [def && def.bin, ...((def && def.fallbackBins) || [])].filter(Boolean);
-          const suffixes = isWin ? ['.cmd', '.bat', '.exe', ''] : [''];
-          for (const base of bases) {
-            for (const sfx of suffixes) {
-              const full = path.join(cp, base + sfx);
-              if (isExecutableFile(full)) return full;
-            }
-          }
+          const hit = findInDirs(cache, bases, [cp]);
+          if (hit) return hit;
         }
       } catch (_) { /* 忽略 */ }
       // 自定义路径存在但不是有效文件时仍继续走 PATH 兜底（不直接返回 null）
@@ -175,33 +331,17 @@ async function resolveAgentExecutable(def, customPath) {
     }
 
     // 3. PATH 遍历查找
-    const pathDirs = getPathDirs();
-    for (const base of bases) {
-      for (const dir of pathDirs) {
-        const candidates = candidateForDir(dir, base);
-        for (const c of candidates) {
-          if (isExecutableFile(c)) return c;
-        }
-      }
-    }
+    const pathHit = findInDirs(cache, bases, getPathDirs());
+    if (pathHit) return pathHit;
 
     // 4. npm / scoop / choco 兜底
-    const extraDirs = collectFallbackDirs();
-    for (const base of bases) {
-      for (const dir of extraDirs) {
-        const candidates = candidateForDir(dir, base);
-        for (const c of candidates) {
-          if (isExecutableFile(c)) return c;
-        }
-      }
-    }
-
-    return null;
+    return findInDirs(cache, bases, collectFallbackDirs());
   } catch (_) {
     return null;
   }
 }
 
 module.exports = {
+  createResolutionCache,
   resolveAgentExecutable
 };

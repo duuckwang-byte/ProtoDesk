@@ -42,10 +42,17 @@ Windows 64 位安装包（v1.0.1）：
 
 ```bash
 npm install
-npx electron .      # 开发模式启动
-npm run build       # 打包 Windows 安装版，产物在 桌面端/
-npm test            # 回归门禁
+npm run build:renderer   # 构建 React 渲染层到 dist/renderer/
+npx electron .           # 默认启动 React 版
+npm run start:legacy     # 回退旧版渲染层（legacy）
+npm run build            # 打包 Windows 安装版，产物在 桌面端/
+npm test                 # 回归门禁
 ```
+
+- **默认入口**：React 渲染层（`dist/renderer/index.html`）。启动前会校验产物；缺失时自动回退 legacy 并在控制台告警，避免白屏。
+- **回退 legacy**：`npm run start:legacy`；PowerShell 也可用 `$env:PLAND_RENDERER='legacy'; npx electron .`；支持深链参数 `npx electron . --renderer=legacy`（即 `?renderer=legacy`）。
+- **强制 React**：`npm run start:react` 或 `$env:PLAND_RENDERER='react'; npx electron .`；`PLAND_RENDERER` 取未知值时同样按 React 处理。
+- 验收清单与完整回滚步骤见 [docs/React版启动与回滚.md](docs/React版启动与回滚.md)。
 
 ## License
 

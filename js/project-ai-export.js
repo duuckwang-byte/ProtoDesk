@@ -1842,8 +1842,12 @@ var btnTestApi=$('btnTestApi'),testApiStatus=$('testApiStatus');
 var setModelSearch=$('setModelSearch'),btnClearAllModels=$('btnClearAllModels');
 var modelCheckList=$('modelCheckList'),newModelInput=$('newModelInput'),btnAddCustomModel=$('btnAddCustomModel');
 var curAiConfig=null;
+/* 管理列表当前渲染上下文：防止切 Agent/引擎后，旧列表的勾选被写进新配置；也用于丢弃过期异步渲染。 */
+var modelManagerListCtx=null;
+/* 最近一次全量目录快照：仅用于勾选后同步重绘「已选」菜单，不改变 ACP 缓存语义。 */
+var managerCacheGroups=[];
 /* CLI 模型可见/自定义列表按 CLI 分 CLI 隔离 {agentId:[ids]}（旧版为全局数组，读时兼容、载入时迁移）。
- * 未选过的 CLI 取到 [] → 管理页显示为空（下拉仍可从全量选，见 aiRenderModelOptions 保底）。 */
+ * 未选过的 CLI 取到 [] → 管理菜单只显示已选（空态“暂未选择模型”）；全量目录只在「获取模型」弹窗展示。 */
 function curCliId(cfg){
   try{
     var c=(cfg===undefined)?curAiConfig:cfg;
@@ -2032,9 +2036,11 @@ function syncCurrentChecklistToMemory(){
   if(!curAiConfig) curAiConfig = {};
   var listEl=$('modelCheckList');
   if(listEl && !listEl.querySelector('input[type="checkbox"]')){
-    return; /* 新版管理页无复选框：可见集合由获取弹窗/删除按钮直接维护，此处不覆盖 */
+    return; /* 列表尚未渲染/加载中：保留内存中的可见集合，避免误清空 */
   }
   var eng = getActiveEngineInUi();
+  /* 只接受“当前引擎 + 当前 Agent”渲染出的列表；否则切 Agent/引擎时会把旧勾选写进新配置。 */
+  if(!modelManagerListCtx || modelManagerListCtx.engine!==eng || modelManagerListCtx.agentId!==curCliId()) return;
   var selected = getSelectedModelIds();
   if(eng === 'cli'){
     setCliVisibleIds(selected);
@@ -2121,8 +2127,9 @@ function fetchProviderModels(){
   if(fetchModelStatus)fetchModelStatus.textContent='正在拉取远程模型…';
   var byokUi=i5GetByokFromUi();
   return window.protoAPI.ai.listModels({ engine:'api', api:byokUi, byok:byokUi, apiConfig:byokUi }).then(function(r){
-    if(r&&r.ok&&r.groups&&r.groups.length){
-      var ids=[]; r.groups.forEach(function(g){ (g.models||[]).forEach(function(m){ var id=typeof m==='string'?m:(m&&typeof m.id==='string'?m.id:(m&&typeof m.name==='string'?m.name:'')); if(id&&ids.indexOf(id)<0)ids.push(String(id)); }); });
+    var groups=(r&&Array.isArray(r.allGroups)&&r.allGroups.length)?r.allGroups:((r&&r.groups)||[]);
+    if(r&&r.ok&&groups.length){
+      var ids=[]; groups.forEach(function(g){ (g.models||[]).forEach(function(m){ var id=typeof m==='string'?m:(m&&typeof m.id==='string'?m.id:(m&&typeof m.name==='string'?m.name:'')); if(id&&ids.indexOf(id)<0)ids.push(String(id)); }); });
       if(ids.length){
         curAiConfig=curAiConfig||{}; curAiConfig.api=curAiConfig.api||{};
         var _um={}; (curAiConfig.api.customModels||[]).concat(ids).forEach(function(id){ if(id&&!_um[id])_um[id]=1; });
@@ -2165,53 +2172,96 @@ if(btnTestApi){
     });
   };
 }
-function renderModelManagerList(cfg){
-  var modelCheckList=$('modelCheckList');
-  if(!modelCheckList)return;
-  var engHint=typeof getActiveEngineInUi==='function'?getActiveEngineInUi():((cfg&&cfg.engine)||'cli');
-  if(!window.protoAPI||!window.protoAPI.ai||!window.protoAPI.ai.listModels){
-    modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">仅桌面端支持模型管理</div>';
-    return;
-  }
-  modelCheckList.innerHTML='正在读取模型列表…';
-  window.protoAPI.ai.listModels(engHint).then(function(r){
-    if(!r||!r.groups||!r.groups.length){
-      if(r&&r.engine&&r.engine!==engHint){
-        modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">引擎数据与当前选项不匹配</div>';
-        return;
-      }
-      modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">未获取到可用模型</div>';
-      return;
-    }
-    if(r.engine&&r.engine!==engHint){
-      modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">引擎数据与当前选项不匹配</div>';
-      return;
-    }
-    var isCli=(engHint==='cli');
-    var visible=isCli?getCliVisibleIds(cfg):(cfg&&cfg.visibleModelsApi);
-    var html='';
-    r.groups.forEach(function(g){
-      var items=g.models||[];
-      if(!items.length)return;
-      var gHtml='';
-      items.forEach(function(m){
-        var mid=typeof m==='string'?m:(m&&(m.id||m.name))||'';
-        var mname=typeof m==='string'?m:(m&&(m.name||m.id))||'';
-        if(!mid)return;
-        if(visible && visible.indexOf(mid)<0) return; /* 管理页只显已选 */
-        gHtml+='<div class="model-check-item" data-id="'+escAttr(mid)+'">'
-          +'<span>'+escHtml(mname)+'</span>'
-          +'<span style="margin-left:auto;font-size:10px;color:var(--faint);">'+escHtml(mid)+'</span>'
-          +'<button type="button" class="model-del" data-id="'+escAttr(mid)+'" title="删除（取消勾选）">×</button>'
-          +'</div>';
-      });
-      if(gHtml)html+='<div style="font-weight:700;font-size:11.5px;color:var(--faint);margin:6px 0 2px;">'+escHtml(g.label||g.provider)+'</div>'+gHtml;
-    });
-    if(!html)html='<div style="color:var(--faint);padding:6px;">暂无已选模型，可通过「获取模型」勾选</div>';
-    modelCheckList.innerHTML=html;
-  }).catch(function(e){
-    modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">读取模型失败</div>';
+/* 管理菜单可见集合：CLI 按 agentId 隔离；API 未落盘白名单（null）沿用“全选”旧语义。 */
+function modelManagerVisibleIds(cfg){
+ var eng=typeof getActiveEngineInUi==='function'?getActiveEngineInUi():((cfg&&cfg.engine)||'cli');
+ if(eng==='cli')return getCliVisibleIds(cfg);
+ var v=(cfg&&Array.isArray(cfg.visibleModelsApi))?cfg.visibleModelsApi:null;
+ return v;
+}
+/* 管理菜单 HTML：只渲染已选模型；模型详情取 allGroups，目录外已选项单独保留。
+ * 全量模型列表只在「获取模型」弹窗（fetchCacheGroups）展示。 */
+function buildModelManagerHtml(groups,cfg){
+ var visible=modelManagerVisibleIds(cfg);
+ var html='',seen={};
+ (groups||[]).forEach(function(g){
+  var items=(g&&g.models)||[];
+  var gHtml='';
+  items.forEach(function(m){
+   var mid=typeof m==='string'?m:(m&&(m.id||m.name))||'';
+   var mname=typeof m==='string'?m:(m&&(m.name||m.id))||'';
+   if(!mid||seen[mid])return;
+   seen[mid]=1;
+   if(visible&&visible.indexOf(mid)<0)return;
+   gHtml+='<label class="model-check-item" data-id="'+escAttr(mid)+'">'
+     +'<input type="checkbox" value="'+escAttr(mid)+'" checked>'
+     +'<span>'+escHtml(mname)+'</span>'
+     +'<span style="margin-left:auto;font-size:10px;color:var(--faint);">'+escHtml(mid)+'</span>'
+     +'</label>';
   });
+  if(gHtml)html+='<div style="font-weight:700;font-size:11.5px;color:var(--faint);margin:6px 0 2px;">'+escHtml(g.label||g.provider)+'</div>'+gHtml;
+ });
+ /* 目录外已选项（手输/历史配置）也要显示并可取消，避免保存时静默丢失 */
+ var leftSeen={},leftHtml='';
+ (visible||[]).forEach(function(id){
+  if(!id||seen[id]||leftSeen[id])return;
+  leftSeen[id]=1;
+  leftHtml+='<label class="model-check-item" data-id="'+escAttr(id)+'">'
+    +'<input type="checkbox" value="'+escAttr(id)+'" checked>'
+    +'<span>'+escHtml(id)+'</span>'
+    +'<span style="margin-left:auto;font-size:10px;color:var(--faint);">'+escHtml(id)+'</span>'
+    +'</label>';
+ });
+ if(leftHtml)html+='<div style="font-weight:700;font-size:11.5px;color:var(--faint);margin:6px 0 2px;">已选（不在当前目录）</div>'+leftHtml;
+ if(!html)html='<div style="color:var(--faint);padding:6px;">暂未选择模型</div>';
+ return html;
+}
+function bindModelManagerToggles(){
+ var modelCheckList=$('modelCheckList');
+ if(!modelCheckList)return;
+ modelCheckList.querySelectorAll('input[type="checkbox"]').forEach(function(c){
+  c.onchange=function(){ applyManagerToggle(c.value, !!c.checked); };
+ });
+}
+/* 勾选后立即用最近的全量目录快照重绘菜单（只显示已选），无需等 IPC 回包。 */
+function refreshModelManagerFromCache(){
+ var modelCheckList=$('modelCheckList');
+ if(!modelCheckList)return false;
+ var eng=typeof getActiveEngineInUi==='function'?getActiveEngineInUi():'cli';
+ if(!modelManagerListCtx||modelManagerListCtx.engine!==eng||modelManagerListCtx.agentId!==curCliId())return false;
+ modelCheckList.innerHTML=buildModelManagerHtml(managerCacheGroups,curAiConfig);
+ bindModelManagerToggles();
+ try{ if(setModelSearch)filterModelManagerList(setModelSearch.value); }catch(e){}
+ return true;
+}
+function renderModelManagerList(cfg){
+ var modelCheckList=$('modelCheckList');
+ if(!modelCheckList)return;
+ cfg=cfg||curAiConfig;
+ var engHint=typeof getActiveEngineInUi==='function'?getActiveEngineInUi():((cfg&&cfg.engine)||'cli');
+ if(!window.protoAPI||!window.protoAPI.ai||!window.protoAPI.ai.listModels){
+  modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">仅桌面端支持模型管理</div>';
+  return;
+ }
+ modelCheckList.innerHTML='正在读取模型列表…';
+ var renderCtx={ engine:engHint, agentId:curCliId(cfg) };
+ modelManagerListCtx=renderCtx;
+ window.protoAPI.ai.listModels(engHint).then(function(r){
+  if(modelManagerListCtx!==renderCtx)return; /* 已切换 Agent/引擎，丢弃过期响应 */
+  if(r&&r.engine&&r.engine!==engHint){
+   modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">引擎数据与当前选项不匹配</div>';
+   return;
+  }
+  /* 菜单只渲染已选：allGroups 提供全量模型详情，渲染时按可见集合过滤；
+   * 目录为空时仍保留目录外已选项。 */
+  var groups=(r&&Array.isArray(r.allGroups)&&r.allGroups.length)?r.allGroups:((r&&r.groups)||[]);
+  managerCacheGroups=groups||[];
+  modelCheckList.innerHTML=buildModelManagerHtml(groups,cfg);
+  bindModelManagerToggles();
+ }).catch(function(e){
+  if(modelManagerListCtx!==renderCtx)return;
+  modelCheckList.innerHTML='<div style="color:var(--faint);padding:6px;">读取模型失败</div>';
+ });
 }
 function getSelectedModelIds(){
   var modelCheckList=$('modelCheckList');
@@ -2224,17 +2274,20 @@ function getSelectedModelIds(){
 var btnClearAllModels=$('btnClearAllModels'),setModelSearch=$('setModelSearch');
 if(btnClearAllModels)btnClearAllModels.onclick=function(){
   setVisibleModels([]);
+  if(typeof refreshModelManagerFromCache==='function')refreshModelManagerFromCache();
+  if(typeof syncFetchCheckedStates==='function')syncFetchCheckedStates();
   persistVisibleAndRefresh('已清空全部勾选');
 };
-if(setModelSearch)setModelSearch.oninput=function(){
-  var q=setModelSearch.value.trim().toLowerCase();
+function filterModelManagerList(q){
   var modelCheckList=$('modelCheckList');
   if(!modelCheckList)return;
+  q=String(q==null?'':q).trim().toLowerCase();
   modelCheckList.querySelectorAll('.model-check-item').forEach(function(item){
     var txt=(item.textContent||'').toLowerCase();
     item.style.display=(!q||txt.indexOf(q)>=0)?'flex':'none';
   });
-};
+}
+if(setModelSearch)setModelSearch.oninput=function(){ filterModelManagerList(setModelSearch.value); };
 var btnAddCustomModel=$('btnAddCustomModel'),newModelInput=$('newModelInput');
 if(btnAddCustomModel){
   btnAddCustomModel.onclick=function(){
@@ -2286,6 +2339,36 @@ function scheduleFetchPersist(){
     persistVisibleAndRefresh();
   },300);
 }
+/* 设置 → 模型管理列表的勾选：只改当前引擎的“对话下拉可见集合”，不删除管理列表项。 */
+function applyManagerToggle(id, checked){
+  if(!id)return;
+  curAiConfig=curAiConfig||{};
+  normalizeCliModelMaps(curAiConfig);
+  var isCli=getActiveEngineInUi()==='cli';
+  var vis;
+  if(isCli){ vis=getCliVisibleIds(); }
+  else{
+    if(Array.isArray(curAiConfig.visibleModelsApi)) vis=curAiConfig.visibleModelsApi.slice();
+    else{
+      /* API 侧未落盘白名单时管理页默认全勾：先以当前渲染项为全集，取消一项才不会误变“全可见”。 */
+      vis=[];
+      try{
+        var listEl=(typeof $==='function')?$('modelCheckList'):null;
+        if(listEl&&listEl.querySelectorAll)listEl.querySelectorAll('.model-check-item input[type="checkbox"]').forEach(function(c){ if(c.value&&vis.indexOf(c.value)<0)vis.push(c.value); });
+      }catch(e){}
+    }
+  }
+  var at=vis.indexOf(id);
+  if(checked){ if(at<0)vis.push(id); }
+  else if(at>=0){ vis.splice(at,1); }
+  if(isCli)setCliVisibleIds(vis); else curAiConfig.visibleModelsApi=vis;
+  if(typeof refreshModelManagerFromCache==='function'&&refreshModelManagerFromCache()){}
+  else if(typeof renderModelManagerList==='function')renderModelManagerList(curAiConfig);
+  if(typeof syncFetchCheckedStates==='function')syncFetchCheckedStates();
+  if(typeof aiInvalidateModels==='function')aiInvalidateModels();
+  if(typeof aiLoadModels==='function')aiLoadModels();
+  scheduleFetchPersist();
+}
 function applyFetchToggle(id, checked){
   if(!id)return;
   curAiConfig=curAiConfig||{};
@@ -2325,7 +2408,9 @@ function applyFetchToggle(id, checked){
     if(at>=0)vis.splice(at,1);
     if(isCli)setCliVisibleIds(vis); else curAiConfig.visibleModelsApi=vis;
   }
-  if(typeof renderModelManagerList==='function')renderModelManagerList(curAiConfig);
+  if(typeof refreshModelManagerFromCache==='function'&&refreshModelManagerFromCache()){}
+  else if(typeof renderModelManagerList==='function')renderModelManagerList(curAiConfig);
+  if(typeof syncFetchCheckedStates==='function')syncFetchCheckedStates();
   if(typeof aiInvalidateModels==='function')aiInvalidateModels();
   if(typeof aiLoadModels==='function')aiLoadModels();
   scheduleFetchPersist();
@@ -2341,6 +2426,17 @@ function refreshFetchCount(){
   });
   if(fetchSelectCount)fetchSelectCount.textContent='已选 '+n+' / '+t+' 个（勾选即时生效）';
   return {checked:n,shown:t};
+}
+/* 弹窗保持全量；菜单侧勾选变化时只同步勾选态，不重建列表、不丢失搜索命中。 */
+function syncFetchCheckedStates(){
+  if(!modelFetchList)return;
+  var visible=getFetchVisible();
+  modelFetchList.querySelectorAll('.model-check-item').forEach(function(item){
+    var box=item.querySelector('input[type="checkbox"]');
+    if(!box)return;
+    box.checked=(!visible||visible.indexOf(box.value)>=0);
+  });
+  refreshFetchCount();
 }
 function batchFetchCheck(want){
   if(!modelFetchList)return;
@@ -2386,11 +2482,16 @@ function openModelFetch(){
   }
   var engHint=typeof getActiveEngineInUi==='function'?getActiveEngineInUi():'cli';
   window.protoAPI.ai.listModels(engHint).then(function(r){
-    if(!r||!r.ok||!r.groups||!r.groups.length){
+    if(!r||!r.ok){
       if(modelFetchList)modelFetchList.innerHTML='<div style="color:var(--faint);padding:6px;">未获取到可用模型</div>';
       return;
     }
-    fetchCacheGroups=r.groups||[];
+    var groups=(Array.isArray(r.allGroups)&&r.allGroups.length)?r.allGroups:(r.groups||[]);
+    if(!groups.length){
+      if(modelFetchList)modelFetchList.innerHTML='<div style="color:var(--faint);padding:6px;">未获取到可用模型</div>';
+      return;
+    }
+    fetchCacheGroups=groups;
     renderFetchList('');
   }).catch(function(e){
     if(modelFetchList)modelFetchList.innerHTML='<div style="color:var(--faint);padding:6px;">读取模型失败</div>';
@@ -2401,7 +2502,7 @@ function getFetchVisible(){
   var isCli=getActiveEngineInUi()==='cli';
   if(isCli)return getCliVisibleIds();
   var v=curAiConfig&&curAiConfig.visibleModelsApi;
-  return v||null; /* null = 全选 */
+  return Array.isArray(v)?v:null; /* null = 旧配置未落盘白名单（全选）；[] = 明确全不选 */
 }
 function renderFetchList(q){
   if(!modelFetchList)return;
@@ -2474,6 +2575,8 @@ function removeVisibleModel(id){
   var arr=isCli?getCliVisibleIds():(curAiConfig.visibleModelsApi||[]);
   arr=arr.filter(function(x){ return x!==id; });
   setVisibleModels(arr);
+  if(typeof refreshModelManagerFromCache==='function')refreshModelManagerFromCache();
+  if(typeof syncFetchCheckedStates==='function')syncFetchCheckedStates();
   persistVisibleAndRefresh('已取消勾选：'+id);
   return arr;
 }
@@ -2646,6 +2749,67 @@ try{
  if(_apiClose)_apiClose.onclick=function(){ closeApiProfileModal(); };
 }catch(e){}
 
+/* ═══════ ACP 运行时设置（Phase 1）：只保存配置，不在此处启动 ACP 会话 ═══════
+ * 配置结构：cfg.acp = { enabled, defaultPermissionMode, agents }；
+ * 后端默认关闭（false / approve-reads），前端仅做读取回填与变更落盘。 */
+var ACP_PERMISSION_MODES=['approve-all','approve-reads','deny-all'];
+var ACP_DEFAULT_PERMISSION_MODE='approve-reads';
+function acpPermissionMode(v){
+  var s=String(v==null?'':v).trim();
+  return ACP_PERMISSION_MODES.indexOf(s)>=0?s:ACP_DEFAULT_PERMISSION_MODE;
+}
+function acpConfigFromUi(base){
+  var cfg=(base&&typeof base==='object')?base:{};
+  var acp=(cfg.acp&&typeof cfg.acp==='object'&&!Array.isArray(cfg.acp))?cfg.acp:{};
+  var out={};
+  try{ Object.keys(acp).forEach(function(k){ out[k]=acp[k]; }); }catch(e){}
+  var chk=$('chkAcpEnabled');
+  var sel=$('selAcpPermissionMode');
+  out.enabled=!!(chk&&chk.checked);
+  out.defaultPermissionMode=acpPermissionMode(sel?sel.value:'');
+  if(!out.agents||typeof out.agents!=='object'||Array.isArray(out.agents))out.agents={};
+  return out;
+}
+function acpApplyUiFromConfig(cfg){
+  var c=(cfg&&typeof cfg==='object')?cfg:curAiConfig;
+  var on=!!(c&&c.acp&&c.acp.enabled===true);
+  var mode=acpPermissionMode(c&&c.acp&&c.acp.defaultPermissionMode);
+  var chk=$('chkAcpEnabled'); if(chk)chk.checked=on;
+  var sel=$('selAcpPermissionMode'); if(sel)sel.value=mode;
+}
+function acpSaveFromUi(){
+  curAiConfig=curAiConfig||{};
+  var prevAcp=(curAiConfig.acp&&typeof curAiConfig.acp==='object'&&!Array.isArray(curAiConfig.acp))
+    ?curAiConfig.acp:{ enabled:false, defaultPermissionMode:ACP_DEFAULT_PERMISSION_MODE, agents:{} };
+  var prevOn=prevAcp.enabled===true;
+  var prevMode=acpPermissionMode(prevAcp.defaultPermissionMode);
+  curAiConfig.acp=acpConfigFromUi(curAiConfig);
+  var nextOn=curAiConfig.acp.enabled===true;
+  var nextMode=curAiConfig.acp.defaultPermissionMode;
+  if(nextOn===prevOn&&nextMode===prevMode)return;
+  function rollback(msg){
+    try{ curAiConfig.acp=prevAcp; }catch(e){}
+    try{ acpApplyUiFromConfig(curAiConfig); }catch(e){}
+    try{ showToast(msg); }catch(e){}
+  }
+  if(!(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig)){
+    try{ acpApplyUiFromConfig(curAiConfig); }catch(e){}
+    return;
+  }
+  window.protoAPI.ai.saveConfig(curAiConfig).then(function(r){
+    if(r&&r.ok===false){ rollback('ACP 设置保存失败：'+((r&&r.error)||'未知错误')); return; }
+    try{ showSettingsSaveTip(); }catch(e){}
+    try{ refreshCliInfo(); }catch(e){} /* 重探测：刷新 Agent 矩阵的 ACP/兼容徽标 */
+    try{ aiRefreshCli(); }catch(e){}
+  }).catch(function(e){
+    rollback('ACP 设置保存失败：'+((e&&e.message)||e||'未知错误'));
+  });
+}
+try{
+  var _acpChk=document.getElementById('chkAcpEnabled'); if(_acpChk)_acpChk.onchange=acpSaveFromUi;
+  var _acpSel=document.getElementById('selAcpPermissionMode'); if(_acpSel)_acpSel.onchange=acpSaveFromUi;
+}catch(e){}
+
 function loadSettingsToUi(){
   sbxRootHint();
   refreshCliInfo();
@@ -2656,6 +2820,7 @@ function loadSettingsToUi(){
       try{ ensureApiProfiles(); }catch(e){}
       try{ syncActiveProfileToMirror(); }catch(e){}
       setEngineUi(curAiConfig.engine||'cli', true);
+      try{ acpApplyUiFromConfig(curAiConfig); }catch(e){}
       try{ renderApiProfileMatrix(); }catch(e){}
       renderModelManagerList(curAiConfig);
       try{ refreshUispecList(); }catch(e){}
@@ -2663,6 +2828,7 @@ function loadSettingsToUi(){
   }else{
     try{ ensureApiProfiles(); }catch(e){}
     try{ renderApiProfileMatrix(); }catch(e){}
+    try{ acpApplyUiFromConfig({}); }catch(e){}
   }
 }
 
@@ -2937,7 +3103,14 @@ function saveSettingsFromUi(){
     activeApiProfileId:curAiConfig?curAiConfig.activeApiProfileId:null,
     visibleModels:activeVisible,
     visibleModelsCli:(function(){ try{ var _v=curAiConfig&&curAiConfig.visibleModelsCli; if(Array.isArray(_v))return _v.slice(); if(_v&&typeof _v==='object'){ var _o={}; Object.keys(_v).forEach(function(k){ if(Array.isArray(_v[k]))_o[k]=_v[k].slice(); }); return _o; } }catch(e){} return {}; })(),
-    visibleModelsApi:curAiConfig?curAiConfig.visibleModelsApi||null:null
+    visibleModelsApi:curAiConfig?curAiConfig.visibleModelsApi||null:null,
+    acp:(function(){
+      try{
+        /* 无 ACP 控件的旧页面不覆盖已有配置 */
+        if(!document.getElementById('chkAcpEnabled'))return curAiConfig?curAiConfig.acp:undefined;
+        return acpConfigFromUi(curAiConfig);
+      }catch(e){ return curAiConfig&&curAiConfig.acp; }
+    })()
   };
   if(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.saveConfig){
     window.protoAPI.ai.saveConfig(cfg).then(function(){
@@ -3520,6 +3693,8 @@ function setActiveSession(id, explicitDir){
  aiSessionKey=SESS_KEY+encodeURIComponent(dir||'')+'#'+encodeURIComponent(id);
  renderSessionList(dir);
  aiRenderBubbles();
+ try{ if(typeof aiRenderAcpConfig==='function')aiRenderAcpConfig(); }catch(e){}
+ try{ if(typeof aiRefreshCascaderReasoning==='function')aiRefreshCascaderReasoning(); }catch(e){}
  aiRenderSbx();
  return true;
 }
@@ -3529,7 +3704,7 @@ function createSession(title, explicitDir){
  var sid=genSessId();
  var now=Date.now();
  var t=String(title||'').trim()||('新会话 '+(Object.keys(data.sessions).length+1));
- data.sessions[sid]={id:sid,title:t,createdAt:now,updatedAt:now,oid:'',m:[],lastHash:{},v:AI_SESS_V,events:[]};
+ data.sessions[sid]={id:sid,title:t,createdAt:now,updatedAt:now,oid:'',acpSessionId:'',_freshSession:true,m:[],lastHash:{},v:AI_SESS_V,events:[]};
  data.activeId=sid;
  saveSessions(data, dir);
  aiActiveKey=SESS_KEY+'#'+encodeURIComponent(sid);
@@ -3537,6 +3712,8 @@ function createSession(title, explicitDir){
  aiSessionKey=SESS_KEY+encodeURIComponent(dir||'')+'#'+encodeURIComponent(sid);
  renderSessionList(dir);
  aiRenderBubbles();
+ try{ if(typeof aiRenderAcpConfig==='function')aiRenderAcpConfig(); }catch(e){}
+ try{ if(typeof aiRefreshCascaderReasoning==='function')aiRefreshCascaderReasoning(); }catch(e){}
  return data.sessions[sid];
 }
 function deleteSession(id, explicitDir){
@@ -3561,6 +3738,8 @@ function deleteSession(id, explicitDir){
  aiSessionKey=SESS_KEY+encodeURIComponent(dir||'')+'#'+encodeURIComponent(data.activeId||'');
  renderSessionList(dir);
  aiRenderBubbles();
+ try{ if(typeof aiRenderAcpConfig==='function')aiRenderAcpConfig(); }catch(e){}
+ try{ if(typeof aiRefreshCascaderReasoning==='function')aiRefreshCascaderReasoning(); }catch(e){}
  return true;
 }
 function renameSession(id, newTitle, explicitDir){
@@ -3629,7 +3808,7 @@ document.addEventListener('DOMContentLoaded', function(){
 function aiSbxDir(){ return (currentSource&&currentSource.sandboxDir)||''; }
 function aiHistKey(){ var d=aiSbxDir(); return 'ai_hist_'+(d?encodeURIComponent(d):'ROOT'); }
 function aiLoadSesh(){ try{ var v=JSON.parse(localStorage.getItem(aiHistKey())); return (v&&typeof v==='object'&&Array.isArray(v.m))?v:null; }catch(e){ return null; } }
-function aiSaveSesh(){ if(!aiSession) return; try{ aiNormalizeSessForRead(aiSession); }catch(e){} var dir=aiSbxDir(); var data=loadSessions(dir); var sid=aiSession.id||data.activeId; if(!sid||!data.sessions[sid]){ try{ localStorage.setItem(aiHistKey(), JSON.stringify(aiSession)); }catch(e){} if(sid&&data.sessions[sid]){ data.sessions[sid]=aiSession; data.activeId=sid; saveSessions(data, dir); renderSessionList(dir); } return; } var sess=data.sessions[sid]; sess.m=aiSession.m; sess.oid=aiSession.oid; if(aiSession.lastHash) sess.lastHash=aiSession.lastHash; if(Array.isArray(aiSession.events)) sess.events=aiSession.events; if(aiSession.v===AI_SESS_V) sess.v=AI_SESS_V; try{ aiNormalizeSessForRead(sess); }catch(e){} sess.updatedAt=Date.now(); data.activeId=sid; saveSessions(data, dir); renderSessionList(dir); try{ localStorage.setItem(aiHistKey(), JSON.stringify(aiSession)); }catch(e){} }
+function aiSaveSesh(){ if(!aiSession) return; try{ aiNormalizeSessForRead(aiSession); }catch(e){} try{ if(!aiSession.agentId){ var _cfgAid=''; try{ _cfgAid=(typeof curAiConfig!=='undefined'&&curAiConfig)?String(curAiConfig.agentId||curAiConfig.mainAgent||''):''; }catch(e2){} if(_cfgAid){ aiSession.agentId=_cfgAid; aiSession.agentName=aiSession.agentName||aiAgentNameOf(_cfgAid); } } }catch(e){} var dir=aiSbxDir(); var data=loadSessions(dir); var sid=aiSession.id||data.activeId; if(!sid||!data.sessions[sid]){ try{ localStorage.setItem(aiHistKey(), JSON.stringify(aiSession)); }catch(e){} if(sid&&data.sessions[sid]){ data.sessions[sid]=aiSession; data.activeId=sid; saveSessions(data, dir); renderSessionList(dir); } return; } var sess=data.sessions[sid]; sess.m=aiSession.m; sess.oid=aiSession.oid; sess.acpSessionId=aiSession.acpSessionId||''; if(aiSession.agentId)sess.agentId=aiSession.agentId; if(aiSession.agentName)sess.agentName=aiSession.agentName; if(aiSession.agentWorkdir)sess.agentWorkdir=aiSession.agentWorkdir; if(aiSession._freshSession===true)sess._freshSession=true; else { try{ delete sess._freshSession; }catch(e){} } if(Array.isArray(aiSession.acpConfigOptions))sess.acpConfigOptions=aiSession.acpConfigOptions; if(aiSession.acpConfigOptionsModel)sess.acpConfigOptionsModel=aiSession.acpConfigOptionsModel; if(aiSession.acpConfigModel)sess.acpConfigModel=aiSession.acpConfigModel; if(aiSession.acpThoughtConfigId)sess.acpThoughtConfigId=aiSession.acpThoughtConfigId; if(aiSession.acpThoughtValue)sess.acpThoughtValue=aiSession.acpThoughtValue; if(aiSession.acpConfig&&typeof aiSession.acpConfig==='object'&&!Array.isArray(aiSession.acpConfig))sess.acpConfig=aiSession.acpConfig; if(aiSession.lastHash) sess.lastHash=aiSession.lastHash; if(Array.isArray(aiSession.events)) sess.events=aiSession.events; if(aiSession.v===AI_SESS_V) sess.v=AI_SESS_V; try{ aiNormalizeSessForRead(sess); }catch(e){} sess.updatedAt=Date.now(); data.activeId=sid; saveSessions(data, dir); renderSessionList(dir); try{ localStorage.setItem(aiHistKey(), JSON.stringify(aiSession)); }catch(e){} }
 function aiWriteSeshFor(key,fn){
  try{
   var v=JSON.parse(localStorage.getItem(key)||'null');
@@ -3638,6 +3817,27 @@ function aiWriteSeshFor(key,fn){
   try{ aiNormalizeSessForRead(v); }catch(e){}
   localStorage.setItem(key,JSON.stringify(v));
  }catch(e){}
+}
+/* ai:event session 落盘：oid 保留 legacy CLI 兼容；ACP 会话 id 单独写 acpSessionId，供 resume 专用。 */
+function aiApplySessionEvent(s,ev){
+ if(!s||!ev)return;
+ /* 首次 session 事件：会话 agentId 为空时先采用事件归属（uiSessionId 不冲突才采用），
+    避免旧会话被全局配置的另一个 Agent 挡在归属校验外。 */
+ if(!s.agentId){
+  var _evAid=String(ev.agentId||''),_evUi=String(ev.uiSessionId||'');
+  if(_evAid&&(!_evUi||!s.id||_evUi===String(s.id))){
+   s.agentId=_evAid;
+   s.agentName=String(ev.agentName||'')||((typeof aiAgentNameOf==='function')?aiAgentNameOf(_evAid):_evAid);
+  }
+ }
+ /* T7c：跨 Agent/跨会话事件不写当前会话，防止 acpSessionId 串线 */
+ if(!aiEventMatchesSession(s,ev))return;
+ aiBindSessionAgent(s,ev);
+ if(ev.transport==='acp'||ev.acpSessionId){
+  s.acpSessionId=String(ev.acpSessionId||ev.id||'');
+  s._freshSession=false;
+ }
+ s.oid=ev.id||'';
 }
 function aiActiveHistKey(){ return aiActiveKey||aiHistKey(); }
 var aiActiveKey=null;
@@ -5138,6 +5338,9 @@ function i5ReplayTimeline(container, evts, opts){
     }else if(t==='question'||t==='form'){
      expRow=null; expCnt=null; expChips=null;
      try{ if(typeof qformReplayOne==='function') qformReplayOne(tl, e); }catch(ee){}
+    }else if(t==='permission'){
+     expRow=null; expCnt=null; expChips=null;
+     try{ if(typeof permReplayOne==='function') permReplayOne(tl, e); }catch(ee){}
     }else if(t==='error'){
      try{ if(answerBuf&&answerEl) finalizeAnswer(); }catch(ee){}
      expRow=null; expCnt=null; expChips=null;
@@ -5240,6 +5443,7 @@ function i5ClassifyError(ev){
  if(/429|QUOTA|RATE_LIMIT/i.test(code+' '+msg+' '+title))return '429';
  if(/401|AUTH|INVALID_API_KEY|UNAUTH/i.test(code+' '+msg+' '+title))return '401';
  if(/CLI_NOT_FOUND|AGENT_NOT_FOUND|NOT_FOUND_CLI/i.test(code+' '+msg))return 'CLI_NOT_FOUND';
+ if(/ACP_MODEL_UNSUPPORTED|MODEL_UNSUPPORTED/i.test(code+' '+msg+' '+title))return 'model_unsupported';
  if(/CANCEL/i.test(code+' '+msg))return 'cancel';
  if(/429/.test(msg))return '429';
  if(/401/.test(msg))return '401';
@@ -5252,12 +5456,24 @@ function i5RenderErrorCard(ev){
   '429':{ t:'模型配额耗尽或请求受限 (429)', b:'当前服务商账户余额不足或并发过高，工作区完好无损。建议切换免费模型或检查额度后重试。', acts:[['primary','前往设置中心配置 Key',"openSettings('ai')"],['secondary','切换至免费推荐模型',"switchModel('free')"],['secondary','重新发起',"i5RetryLast()"]] },
   '401':{ t:'密钥失效或未授权 (401)', b:'服务商拒绝了当前凭据：Key 错误、过期或未保存。已检测 UI 与已保存 Key 是否一致，请前往设置修正后重试。', acts:[['primary','前往设置中心配置 Key',"openSettings('ai')"],['secondary','重新发起',"i5RetryLast()"]] },
   'CLI_NOT_FOUND':{ t:'未检测到 Agent CLI', b:String((ev&&ev.message)||'未找到本地 Agent 可执行文件。请安装对应 CLI 或在设置中心矩阵中指定路径后重试。'), acts:[['secondary','复制安装命令',"i5CopyInstall()"],['primary','前往设置指定路径',"openSettings('ai')"],['secondary','重新发起',"i5RetryLast()"]] },
+  'model_unsupported':{ t:'当前模型不可用', b:String((ev&&ev.message)||'该 Agent 不支持当前选择的模型。')+' 请重新选择模型后重试。', acts:[['secondary','查看执行日志',"switchAiTab('logs')"],['secondary','重新发起',"i5RetryLast()"]] },
   'cancel':{ t:'已停止生成', b:'已按你的指令无损终止本次任务，工作区保留停止前状态，可随时重新发起。', acts:[['secondary','重新发起',"i5RetryLast()"]] },
   'unknown':{ t:String((ev&&ev.title)||'调用失败'), b:String((ev&&ev.message)||'未知错误')+' 工作区完好无损，可重试或查看执行日志定位。', acts:[['secondary','查看执行日志',"switchAiTab('logs')"],['secondary','重新发起',"i5RetryLast()"]] }
  };
  var m=map[kind]||map.unknown;
+ var _detailText='';
+ try{
+  if(ev&&ev.detail){
+   _detailText=String(ev.detail).replace(/\s+/g,' ').trim();
+   if(_detailText.length>240)_detailText=_detailText.slice(0,240)+'…';
+  }
+ }catch(e){}
+ var _availText='';
+ if(kind==='model_unsupported'&&ev&&Array.isArray(ev.availableModels)&&ev.availableModels.length){
+  _availText='可用模型：'+ev.availableModels.slice(0,5).join('、')+'。请重新选择模型。';
+ }
  var wrap=document.createElement('div'); wrap.className='ai-msg-bubble ai-error-card';
- wrap.innerHTML='<div class="err-card-header"><span class="err-icon">!</span><span class="err-title">'+escHtml(m.t)+'</span></div><div class="err-card-body">'+escHtml(m.b)+'</div><div class="err-card-actions"></div>';
+ wrap.innerHTML='<div class="err-card-header"><span class="err-icon">!</span><span class="err-title">'+escHtml(m.t)+'</span></div><div class="err-card-body">'+escHtml(m.b)+(_detailText?'<div class="err-card-detail" title="'+escHtml(_detailText)+'">'+escHtml(_detailText)+'</div>':'')+(_availText?'<div class="err-card-hint">'+escHtml(_availText)+'</div>':'')+'</div><div class="err-card-actions"></div>';
  var actWrap=wrap.querySelector('.err-card-actions')||wrap;
  (m.acts||[]).forEach(function(act){
   var btn=document.createElement('button');
@@ -5475,8 +5691,63 @@ function aiRefreshCli(){
 
 /* ── 模型列表：支持白名单过滤与直连/CLI 分组 ── */
 var aiModelCache=null;
+var aiModelTransport='';
+var aiModelError='';
+var aiModelErrorDetail='';
 var AI_MODEL_KEY='ai_model',AI_MODEL_DEFAULT='default';
 var AI_REASONING_KEY='ai_model_reasoning',AI_REASONING_DEFAULT='default';
+/* T7c：模型目录刷新状态。refreshing/stale/source/warning/error 由 ai:models 与 acp_catalog 共同维护，
+ * 仅作为按钮轻量状态展示，绝不阻塞输入与发送。 */
+var aiModelCatalog={refreshing:false,stale:false,source:'',warning:'',error:'',agentId:'',updatedAt:0};
+var aiModelCatalogByAgent={};
+/* T5c：选中模型即预探测该模型的 ACP configOptions（复用 ai:models 的 probeModel 分支）。
+ * 同一 Agent+模型只请求一次；旧响应按 requestId 丢弃；只应用仍对应当前 Agent/模型的成功结果。 */
+var aiAcpProbeSeq=0;
+var aiAcpProbeCache={};
+/* 级联当前展开的模型：configOptions 刷新后据此重开思考子菜单，避免“读到 6 档却要重新 hover”。 */
+var aiCascaderActiveModel='';
+function aiAgentIdNow(){
+ try{
+  var c=(typeof curAiConfig!=='undefined')?curAiConfig:null;
+  if(c){
+   var aid=String(c.agentId||c.mainAgent||'');
+   if(aid)return aid;
+   if(typeof curCliId==='function')return String(curCliId()||'');
+  }
+ }catch(e){}
+ return '';
+}
+function aiAgentNameOf(id){
+ var aid=String(id||'');
+ try{ if(aid&&typeof I5_AGENT_FALLBACK!=='undefined'&&I5_AGENT_FALLBACK[aid]) return String(I5_AGENT_FALLBACK[aid]); }catch(e){}
+ return aid;
+}
+/* 事件归属：仅在双方都有值且不一致时拒绝，兼容旧事件缺字段。 */
+function aiEventMatchesSession(s,ev){
+ if(!s||!ev) return false;
+ var aid=String(ev.agentId||''),sid=String(s.agentId||'');
+ if(!sid){ try{ if(typeof aiAgentIdNow==='function')sid=String(aiAgentIdNow()||''); }catch(e){} }
+ if(aid&&sid&&aid!==sid) return false;
+ var ui=String(ev.uiSessionId||'');
+ if(ui&&s.id&&ui!==String(s.id)) return false;
+ return true;
+}
+/* 会话 Agent 归属：首次发送/首个事件写入；事件自带 agentId 时优先采用事件值，
+ * 旧会话缺失且事件无归属时才用当前 Agent 回填；已有值不跟随切换（跨 Agent 用缓存）。 */
+function aiBindSessionAgent(s,ev){
+ if(!s) return {agentId:'',agentName:''};
+ var evAid=String((ev&&ev.agentId)||''),evName=String((ev&&ev.agentName)||'');
+ if(!s.agentId){
+  var aid=evAid||aiAgentIdNow();
+  if(aid){ s.agentId=aid; s.agentName=(evAid&&evAid===aid&&evName)?evName:aiAgentNameOf(aid); }
+ }else if(evAid&&evAid===String(s.agentId)){
+  var nm=evName||aiAgentNameOf(s.agentId);
+  if(nm) s.agentName=nm;
+ }
+ if(s.agentId&&!s.agentName) s.agentName=aiAgentNameOf(s.agentId);
+ if(ev&&ev.workdir) s.agentWorkdir=String(ev.workdir);
+ return {agentId:String(s.agentId||''),agentName:String(s.agentName||'')};
+}
 function aiStoredModel(){
   try{
     var m=localStorage.getItem(AI_MODEL_KEY)||'';
@@ -5507,7 +5778,7 @@ function aiCurModel(){
   var s=aiStoredModel(); if(s&&s!=='__none__'&&s!=='default')return s;
   return '';
 }
-function aiInvalidateModels(){ aiModelCache=null; }
+function aiInvalidateModels(){ aiModelCache=null; aiModelError=''; aiModelErrorDetail=''; aiModelTransport=''; aiModelCatalog={refreshing:false,stale:false,source:'',warning:'',error:'',agentId:aiAgentIdNow(),updatedAt:0}; }
 
 var aiStandardReasoningOptions=[
   { id: 'default', label: '默认推荐 (CLI 预设)', default: true },
@@ -5517,27 +5788,74 @@ var aiStandardReasoningOptions=[
 ];
 
 function aiReasoningBadgeText(rId){
-  if(rId==='high') return '高强度';
-  if(rId==='medium') return '中强度';
-  if(rId==='low') return '低强度';
-  return '默认';
+  var v=String(rId==null?'':rId).trim(),lv=v.toLowerCase();
+  if(lv==='high') return '高强度';
+  if(lv==='medium'||lv==='med') return '中强度';
+  if(lv==='low') return '低强度';
+  if(lv==='max') return 'Max';
+  if(lv==='xhigh'||lv==='x-high'||lv==='extra-high') return 'XHigh';
+  if(lv==='minimal') return 'Minimal';
+  if(!lv||lv==='default') return '默认';
+  return v;
 }
 
 function aiSyncModelBtn(){
   var btn=$('aiModelBtn'), txt=$('aiModelNameTxt'), badge=$('aiModelEffortBadge');
   if(!btn||!txt)return;
   btn.disabled=Boolean(aiBusy);
+  /* T7c：刷新中/缓存/异常轻量状态，不改按钮高度、不禁用发送 */
+  var catalogEl=$('aiModelCatalogState');
+  if(!catalogEl){
+    catalogEl=document.createElement('span');
+    catalogEl.id='aiModelCatalogState';
+    catalogEl.className='ai-model-catalog-state';
+    try{ if(txt.parentNode===btn) btn.insertBefore(catalogEl, txt.nextSibling); else btn.appendChild(catalogEl); }catch(e){ try{ btn.appendChild(catalogEl); }catch(e2){} }
+  }
+  if(catalogEl){
+    var catTxt='',catCls='ai-model-catalog-state',catTitle='';
+    try{
+      if(aiModelCatalog.error){ catTxt='目录异常'; catCls+=' err'; catTitle=[String(aiModelCatalog.error),String(aiModelCatalog.warning||'')].filter(Boolean).join(' · '); }
+      else if(aiModelCatalog.refreshing){ catTxt='刷新中…'; catTitle='后台正在刷新模型目录，当前列表仍可用'; }
+      else if(aiModelCatalog.warning){ catTxt=(aiModelCatalog.stale||String(aiModelCatalog.source||'')==='cache')?'缓存':'提示'; catTitle=String(aiModelCatalog.warning); }
+      else if(aiModelCatalog.stale||String(aiModelCatalog.source||'')==='cache'){ catTxt='缓存'; catTitle='当前展示缓存模型目录'; }
+    }catch(e){ catTxt=''; }
+    try{ catalogEl.textContent=catTxt; catalogEl.className=catCls; catalogEl.title=catTitle||catTxt; catalogEl.style.display=catTxt?'inline-block':'none'; }catch(e){}
+  }
+  var acpBadge=$('aiModelAcpBadge');
+  if(!acpBadge){
+    acpBadge=document.createElement('span');
+    acpBadge.id='aiModelAcpBadge';
+    acpBadge.className='ai-model-acp-badge';
+    acpBadge.textContent='ACP';
+    acpBadge.title='当前 Agent 走 ACP 标准协议';
+    try{ if(txt.parentNode===btn) btn.insertBefore(acpBadge, txt.nextSibling); else btn.appendChild(acpBadge); }catch(e){ try{ btn.appendChild(acpBadge); }catch(e2){} }
+  }
+  if(acpBadge) acpBadge.style.display=(aiModelTransport==='acp')?'inline-block':'none';
   var curM=aiCurModel();
   var curR=aiCurReasoning();
+  /* ACP 会话思考项优先：与级联选择器共用同一数据源，避免徽标显示旧静态值 */
+  try{
+   if(typeof aiAcpReasoning==='function'){
+    var _rs=null;try{ _rs=(typeof aiCurSesh==='function')?aiCurSesh():null; }catch(e2){ _rs=null; }
+    var _ar=aiAcpReasoning(_rs);
+    if(_ar)curR=_ar;
+    else if(typeof aiAcpThoughtState==='function'){
+     /* 旧模型档位 / 该模型无思考项：徽标显示默认，等待下一轮 ACP 刷新 */
+     var _ast=aiAcpThoughtState(_rs);
+     if(_ast&&(_ast.stale||_ast.noThought))curR='';
+    }
+   }
+  }catch(e){}
   if(!aiModelCache){
-    txt.textContent='加载模型…';
-    txt.title='加载模型…';
+    txt.textContent=aiModelError||'正在读取模型列表…';
+    txt.title=aiModelError?((typeof aiModelErrorDetail!=='undefined'&&aiModelErrorDetail)?(aiModelError+'：'+aiModelErrorDetail):aiModelError):'正在读取模型列表…';
     if(badge) badge.style.display='none';
     return;
   }
   if(!curM){
-    txt.textContent='选择模型';
-    txt.title='选择当前对话使用的模型';
+    var isDefault=(aiModelEl&&aiModelEl.value==='default');
+    txt.textContent=isDefault?'默认推荐模型':'选择模型';
+    txt.title=isDefault?'默认推荐模型 (CLI 预设)':'选择当前对话使用的模型';
     if(badge) badge.style.display='none';
     return;
   }
@@ -5575,11 +5893,35 @@ function aiRenderCascader(r){
   var stored=cleanId(aiStoredModel());
   if(stored==='__none__'||stored==='default') stored='';
   var cur=stored;
-  var curReasoning=aiCurReasoning();
+  try{ var _uiCur=cleanId(aiModelEl&&aiModelEl.value||''); if(_uiCur&&_uiCur!=='__manage_models__')cur=_uiCur; }catch(e){}
+  var sess=null; try{ sess=(typeof aiCurSesh==='function')?aiCurSesh():null; }catch(e){ sess=null; }
+  /* 统一数据源：当前会话有 ACP 思考项时，级联优先展示 Agent 返回的完整 options；
+   * 无 ACP 项才回退模型自带 reasoningOptions / 静态 reasoningOptions。 */
+  var acpReasoning=aiCascaderReasoning(r,sess,null);
+  if(acpReasoning.configId&&acpReasoning.stale&&acpReasoning.value&&sess){
+    if(!sess.acpConfig||typeof sess.acpConfig!=='object'||Array.isArray(sess.acpConfig))sess.acpConfig={};
+    sess.acpConfig[acpReasoning.configId]=acpReasoning.value;
+    sess.acpThoughtConfigId=acpReasoning.configId;
+    sess.acpThoughtValue=acpReasoning.value;
+    try{ if(typeof aiSaveSesh==='function')aiSaveSesh(); }catch(e){}
+  }
+  var acpReasoningOpts=(acpReasoning.source==='acp'||acpReasoning.source==='acp-boolean')?acpReasoning.options:null;
+  var isAcpReasoning=!!acpReasoningOpts;
+  var curReasoning=isAcpReasoning?(acpReasoning.value||''):aiCurReasoning();
+  var subTitle=null;
+  try{ subTitle=sub.querySelector?sub.querySelector('.ai-cascader-sub-title'):null; }catch(e){ subTitle=null; }
 
   primary.innerHTML='';
   subList.innerHTML='';
   sub.style.display='none';
+
+  var emptyText=(r&&r.errorText)||'';
+  if(emptyText){
+    var emptyEl=document.createElement('div');
+    emptyEl.className='ai-cascader-empty';
+    emptyEl.textContent=emptyText;
+    primary.appendChild(emptyEl);
+  }
 
   var groups=(r&&r.groups)||[];
   var visible=(r&&Array.isArray(r.visibleModels)&&r.visibleModels.length)?r.visibleModels.map(cleanId):null;
@@ -5587,29 +5929,104 @@ function aiRenderCascader(r){
 
   var activePrimaryItem=null;
 
-  function showSubForModel(mId, mName, rOpts, primaryEl){
+  function showSubForModel(mId, mName, rOpts, primaryEl, activate){
     if(activePrimaryItem) activePrimaryItem.classList.remove('hover-active');
     activePrimaryItem=primaryEl;
     if(primaryEl) primaryEl.classList.add('hover-active');
 
     subList.innerHTML='';
     sub.style.display='block';
-    var opts=(Array.isArray(rOpts)&&rOpts.length)?rOpts:fallbackReasoning;
+    /* 每个模型单独取思考项：ACP options 只对它真正归属的模型生效。
+     * 旧模型选项、静态表都不得串到刚切换的新模型上。 */
+    var targetModel=(mId==='__none__'?'':mId);
+    aiCascaderActiveModel=targetModel;
+    /* 选中模型（点击 / 键盘确认）或展开当前模型时立即探测该模型的 configOptions；
+     * hover 其它模型不主动拉起进程，避免无意义探测。 */
+    if(targetModel&&r&&r.transport==='acp'&&(activate||targetModel===cur)){
+     try{ aiAcpProbeStart(targetModel); }catch(e){}
+    }
+    var probeState=(targetModel&&r&&r.transport==='acp')?aiAcpProbeState(targetModel):null;
+    var probeLoading=!!(probeState&&probeState.status==='loading');
+    var probeError=!!(probeState&&probeState.status==='error');
+    var probeReady=!!(probeState&&probeState.status==='ready'&&Array.isArray(probeState.configOptions)&&probeState.configOptions.length);
+    var modelAcp=null;
+    try{ modelAcp=probeReady?aiCascaderReasoning(r,sess,null,targetModel,probeState.configOptions):aiCascaderReasoning(r,sess,null,targetModel); }catch(e){ modelAcp=null; }
+    var isModelAcp=!!(modelAcp&&(modelAcp.source==='acp'||modelAcp.source==='acp-boolean'));
+    var isAcpWait=!!(modelAcp&&modelAcp.source==='acp-wait');
+    var opts,activeVal,probeDefault=false;
+    if(probeLoading){
+     opts=[
+      {id:'__acp_probe__',label:'正在读取该模型配置…',title:'ACP 正在读取 '+targetModel+' 的 configOptions'},
+      {id:'__acp_default__',label:'使用默认（不等待）',title:'不等待探测结果，先按 Agent 默认思考强度使用'}
+     ];
+     activeVal='__acp_probe__';
+     isModelAcp=false;isAcpWait=false;probeDefault=true;
+    }else if(probeError){
+     opts=[{id:'__acp_default__',label:'使用默认（配置读取失败）',title:String(probeState.error||'')||'ACP 配置读取失败，使用 Agent 默认值'}];
+     activeVal='__acp_default__';
+     isModelAcp=false;isAcpWait=false;probeDefault=true;
+    }else{
+     opts=isModelAcp?modelAcp.options:(isAcpWait?modelAcp.options:((Array.isArray(rOpts)&&rOpts.length)?rOpts:fallbackReasoning));
+     activeVal=isModelAcp?modelAcp.value:(isAcpWait?'__acp_wait__':curReasoning);
+    }
+    if(subTitle){
+      subTitle.textContent=probeLoading?'正在读取模型配置':(probeError?'模型配置读取失败':(isModelAcp?(modelAcp.boolean?'选择思考开关':'选择思考强度'):'选择思考强度'));
+      if(probeLoading||probeError){
+        var probeTag=document.createElement('span');
+        probeTag.className='ai-model-acp-probe';
+        probeTag.textContent=probeLoading?'读取中':'失败';
+        probeTag.title=probeLoading?'正在通过 ACP 读取该模型的配置项':'ACP 配置读取失败，可回退使用 Agent 默认值';
+        subTitle.appendChild(probeTag);
+      }else if(isModelAcp){
+        var acpTag=document.createElement('span');
+        acpTag.className='ai-model-acp-badge';
+        acpTag.textContent='ACP';
+        acpTag.title='思考项来自 ACP configOptions（当前 Agent 公告）';
+        subTitle.appendChild(acpTag);
+      }else if(isAcpWait){
+        var waitTag=document.createElement('span');
+        waitTag.className='ai-model-acp-wait';
+        waitTag.textContent='待刷新';
+        waitTag.title=(modelAcp.options&&modelAcp.options[0]&&modelAcp.options[0].title)||'等待下一轮 ACP 刷新';
+        subTitle.appendChild(waitTag);
+      }
+    }
     for(var k=0;k<opts.length;k++){
       (function(opt){
+        var probeWaitOpt=String(opt.id)==='__acp_probe__';
+        var probeDefaultOpt=!!(probeDefault&&String(opt.id)==='__acp_default__');
+        var waitOpt=!!(isAcpWait&&String(opt.id)==='__acp_wait__');
+        var placeholderOpt=probeWaitOpt||probeDefaultOpt||waitOpt;
         var itemEl=document.createElement('div');
-        itemEl.className='ai-cascader-sub-item'+((mId===cur && opt.id===curReasoning)?' active':'');
+        itemEl.className='ai-cascader-sub-item'+(placeholderOpt?' ai-cascader-wait':'')+((mId===cur && String(opt.id)===String(activeVal))?' active':'');
         itemEl.textContent=opt.label||opt.id;
-        itemEl.title=opt.label||opt.id;
+        itemEl.title=opt.title||opt.label||opt.id;
         itemEl.onclick=function(ev){
           ev.stopPropagation();
-          /* 核心契约：点击右侧推理强度才真正选中模型并关闭弹窗 */
+          /* 读取中的占位项不可选；失败/等待项可选中模型并使用 Agent 默认思考。 */
+          if(probeWaitOpt)return;
+          /* 核心契约：点击右侧推理强度才真正选中模型并关闭弹窗。
+           * acp-wait / 读取失败占位只选模型并使用 Agent 默认思考，不写入旧模型值。 */
           var targetModel = (mId==='__none__'?'':mId);
           cur=targetModel;
-          curReasoning=opt.id;
+          curReasoning=(waitOpt||probeDefaultOpt)?'':opt.id;
           aiStoreModel(targetModel);
-          aiStoreReasoning(opt.id);
+          if(isModelAcp&&modelAcp.configId){
+            var cs=null;try{ cs=(typeof aiCurSesh==='function')?aiCurSesh():null; }catch(e2){ cs=null; }
+            if(cs){
+              if(!cs.acpConfig||typeof cs.acpConfig!=='object'||Array.isArray(cs.acpConfig))cs.acpConfig={};
+              /* 与底栏 ACP 选择器共用状态：下一轮 aiDoSend 经 extra.acpConfig 生效 */
+              cs.acpConfig[modelAcp.configId]=opt.id;
+              cs.acpThoughtConfigId=modelAcp.configId;
+              cs.acpThoughtValue=opt.id;
+              try{ if(typeof aiSaveSesh==='function')aiSaveSesh(); }catch(e3){}
+            }
+          }else if(!waitOpt&&!probeDefaultOpt){
+            aiStoreReasoning(opt.id);
+          }
           if(aiModelEl) aiModelEl.value = targetModel;
+          /* 选中后才应用已缓存的探测结果：切换模型后旧响应不会污染其它模型。 */
+          if(targetModel&&probeState&&probeState.status==='ready'){ try{ aiAcpProbeApply(probeState); }catch(e4){} }
           aiSyncModelBtn();
           closeCascader();
           if(typeof aiRenderModelOptions==='function') aiRenderModelOptions(r);
@@ -5622,12 +6039,15 @@ function aiRenderCascader(r){
   function closeCascader(){
     popover.style.display='none';
     cascader.classList.remove('open');
+    aiCascaderActiveModel='';
     if(activePrimaryItem){
       activePrimaryItem.classList.remove('hover-active');
       activePrimaryItem=null;
     }
     sub.style.display='none';
   }
+
+  var itemEls={};
 
   // 各供应商分组及模型项
   for(var i=0;i<groups.length;i++){
@@ -5645,6 +6065,13 @@ function aiRenderCascader(r){
       var grpLabel=document.createElement('div');
       grpLabel.className='ai-cascader-optgroup-label';
       grpLabel.textContent=g.label||g.provider||'供应商';
+      if(r&&r.transport==='acp'){
+        var acpTag=document.createElement('span');
+        acpTag.className='ai-model-acp-badge';
+        acpTag.textContent='ACP';
+        acpTag.title='该 Agent 走 ACP 标准协议';
+        grpLabel.appendChild(acpTag);
+      }
       primary.appendChild(grpLabel);
     }
 
@@ -5656,13 +6083,15 @@ function aiRenderCascader(r){
         itEl.className='ai-cascader-item'+(id===cur?' active':'');
         itEl.innerHTML='<span class="ai-cascader-item-txt">'+escHtml(name)+'</span><span class="ai-cascader-item-arrow">›</span>';
         itEl.title=name;
+        itEl.setAttribute('data-model-id',id);
+        itemEls[id]=itEl;
         itEl.onmouseenter=function(){
-          showSubForModel(id, name, rOpts, itEl);
+          showSubForModel(id, name, rOpts, itEl, false);
         };
         itEl.onclick=function(ev){
           ev.stopPropagation();
-          // 点击模型选项不直接选中，必须选右侧推理强度
-          showSubForModel(id, name, rOpts, itEl);
+          // 点击模型选项不直接选中，必须选右侧推理强度；点击即触发该模型配置探测
+          showSubForModel(id, name, rOpts, itEl, true);
         };
         primary.appendChild(itEl);
       })(gVisibleItems[j]);
@@ -5717,25 +6146,145 @@ function aiRenderCascader(r){
   }
 
   aiSyncModelBtn();
+  /* ACP 探测结果刷新列表后，若弹层仍打开且此前正在看某个模型，自动重开其思考子菜单，
+   * 让“正在读取…”在同一位置直接切换为该模型的完整档位。 */
+  if(cascader.classList.contains('open')&&aiCascaderActiveModel&&itemEls[aiCascaderActiveModel]){
+    try{ itemEls[aiCascaderActiveModel].onmouseenter(); }catch(e){}
+  }
 }
 
+function aiModelErrorTag(r){
+ var code=String((r&&r.error)||'');
+ return ((r&&r.transport==='acp')||/^ACP_/.test(code))?'ACP':'MODEL';
+}
+function aiApplyModelsFailure(r){
+ aiModelCache=null;
+ aiModelTransport=(r&&r.transport==='acp')?'acp':'';
+ var base=((r&&r.transport==='acp')||/^ACP_/.test(String((r&&r.error)||'')))?'ACP 启动命令不可用':'模型加载异常';
+ aiModelError='模型目录不可用（'+base+'）';
+ var detail=String((r&&(r.detail||r.error))||'').trim();
+ aiModelErrorDetail=detail;
+ aiModelCatalog={refreshing:false,stale:false,source:String((r&&r.source)||''),warning:'',error:detail?(aiModelError+'：'+detail):aiModelError,agentId:aiAgentIdNow(),updatedAt:Date.now()};
+ if(detail){ try{ aiAppendTrace({tag:aiModelErrorTag(r),level:'warn',text:'模型目录不可用：'+detail}); }catch(e){} }
+ if(aiModelEl){
+  aiModelEl.innerHTML='<option value="">'+escHtml(aiModelError)+'</option><option value="__manage_models__">管理模型列表...</option>';
+  aiModelEl.disabled=aiBusy;
+  aiModelEl.title=detail?(aiModelError+'：'+detail):aiModelError;
+ }
+ aiSyncModelBtn();
+ try{ aiRenderCascader({groups:[],transport:aiModelTransport,errorText:detail?(aiModelError+'：'+detail):aiModelError}); }catch(e){}
+}
+/* acp_catalog 的 models 兼容三种形态：[{id,name}] / [{label,models:[...]}] / {groups:[...]}；
+ * 只为归一化 Agent 返回内容，不生成任何本地臆造模型。 */
+function aiCatalogGroups(ev){
+ var raw=(ev&&(ev.models!=null?ev.models:ev.groups));
+ var groups=[],out=[],count=0;
+ if(Array.isArray(raw)){
+  var nested=false;
+  for(var ni=0;ni<raw.length;ni++){ if(raw[ni]&&Array.isArray(raw[ni].models)){ nested=true; break; } }
+  if(nested)groups=raw;
+  else groups=[{label:String((ev&&ev.agentName)||'Agent'),provider:String((ev&&ev.agentId)||'acp'),models:raw}];
+ }else if(raw&&typeof raw==='object'){
+  if(Array.isArray(raw.groups))groups=raw.groups;
+  else{
+   var loose=[];
+   for(var lk in raw){ if(Object.prototype.hasOwnProperty.call(raw,lk)) loose.push({id:lk,name:String(raw[lk]||lk)}); }
+   groups=[{label:String((ev&&ev.agentName)||'Agent'),provider:String((ev&&ev.agentId)||'acp'),models:loose}];
+  }
+ }
+ for(var gi=0;gi<groups.length;gi++){
+  var g=groups[gi]||{},ms=Array.isArray(g.models)?g.models:[],list=[];
+  for(var mi=0;mi<ms.length;mi++){
+   var m=ms[mi];
+   if(typeof m==='string'||typeof m==='number'){
+    var sid=String(m).trim();
+    if(sid)list.push({id:sid,name:sid});
+    continue;
+   }
+   m=m||{};
+   var id=String(m.id!=null?m.id:(m.value!=null?m.value:'')).trim();
+   if(!id)continue;
+   var item={id:id,name:String(m.name||m.label||id)};
+   if(Array.isArray(m.reasoningOptions)&&m.reasoningOptions.length)item.reasoningOptions=m.reasoningOptions;
+   list.push(item);
+  }
+  if(list.length){ out.push({label:String(g.label||g.provider||''),provider:String(g.provider||''),models:list}); count+=list.length; }
+ }
+ return {groups:out,count:count};
+}
+/* T7c：后台刷新完成事件。按 agentId 匹配当前 Agent；列表更新但保留用户已选合法模型；
+ * 空列表/错误只提示并保留旧列表，绝不静默退化成单模型。 */
+function aiApplyCatalogEvent(ev){
+ if(!ev||ev.type!=='acp_catalog')return false;
+ var aid=String(ev.agentId||'');
+ var cur='';
+ try{ if(typeof aiAgentIdNow==='function')cur=aiAgentIdNow(); }catch(e){}
+ if(!cur){ try{ cur=String((typeof aiSession!=='undefined'&&aiSession&&aiSession.agentId)||''); }catch(e){} }
+ if(aid&&cur&&aid!==cur){
+  try{ aiModelCatalogByAgent[aid]={event:ev,updatedAt:Date.now()}; }catch(e){}
+  return false;
+ }
+ var parsed=aiCatalogGroups(ev);
+ var source=String(ev.source||'');
+ var warning=String(ev.warning||'');
+ var error=String(ev.error||'');
+ var stale=!!ev.stale;
+ aiModelCatalog={refreshing:false,stale:stale,source:source,warning:warning,error:error,agentId:aid||cur,updatedAt:Date.now()};
+ var had=!!(aiModelCache&&Array.isArray(aiModelCache.groups)&&aiModelCache.groups.length);
+ if(parsed.count){
+  var prev=aiModelCache||{};
+  var next={
+   ok:true,
+   transport:String(prev.transport||ev.transport||'acp'),
+   groups:parsed.groups,
+   default:String(ev.defaultModel||prev.default||''),
+   source:source,
+   stale:stale,
+   refreshing:false,
+   catalogWarning:warning,
+   catalogError:error
+  };
+  if(Array.isArray(prev.visibleModels)&&prev.visibleModels.length)next.visibleModels=prev.visibleModels.slice();
+  if(Array.isArray(prev.reasoningOptions)&&prev.reasoningOptions.length)next.reasoningOptions=prev.reasoningOptions.slice();
+  aiModelCache=next; aiModelTransport=next.transport; aiModelError=''; aiModelErrorDetail='';
+  try{ aiRenderModelOptions(next); }catch(e){}
+ }else{
+  if(error){ aiModelError='模型目录刷新失败'; aiModelErrorDetail=error; }
+  else if(!had){ aiModelError='模型目录不可用'; aiModelErrorDetail=warning||'Agent 未返回可用模型'; }
+  if(aiModelEl&&!had){
+   try{
+    aiModelEl.innerHTML='<option value="">'+escHtml(aiModelError)+'</option><option value="__manage_models__">管理模型列表...</option>';
+    aiModelEl.disabled=aiBusy;
+    aiModelEl.title=aiModelErrorDetail?(aiModelError+'：'+aiModelErrorDetail):aiModelError;
+   }catch(e){}
+  }
+ }
+ try{
+  if(error)aiAppendTrace({tag:'MODEL',level:'error',text:'模型目录刷新失败：'+(warning||error)});
+  else if(warning)aiAppendTrace({tag:'MODEL',level:'warn',text:'模型目录提示：'+warning});
+ }catch(e){}
+ aiSyncModelBtn();
+ return true;
+}
 function aiLoadModels(){
  if(!HAS_AI||!aiModelEl)return;
  if(aiModelCache){ aiRenderModelOptions(aiModelCache); return; }
- aiModelEl.innerHTML='<option value="">选择模型…</option>';
+ aiModelError=''; aiModelErrorDetail=''; aiModelTransport='';
+ aiModelCatalog={refreshing:true,stale:false,source:'',warning:'',error:'',agentId:aiAgentIdNow(),updatedAt:Date.now()};
+ aiModelEl.innerHTML='<option value="">正在读取模型列表…</option>';
  aiModelEl.disabled=aiBusy;
  aiSyncModelBtn();
  window.protoAPI.ai.listModels().then(function(r){
-  if(r&&r.ok){ aiModelCache=r; aiRenderModelOptions(r); }
-  else{
-    aiModelEl.innerHTML='<option value="">模型加载异常</option><option value="__manage_models__">管理模型列表...</option>';
-    aiModelEl.disabled=aiBusy;
-    aiSyncModelBtn();
+  if(r&&r.ok){
+   aiModelError=''; aiModelErrorDetail=''; aiModelTransport=String(r.transport||''); aiModelCache=r;
+   aiModelCatalog={refreshing:!!r.refreshing,stale:!!r.stale,source:String(r.source||''),warning:String(r.warning||r.catalogWarning||''),error:'',agentId:String(r.agentId||aiAgentIdNow()),updatedAt:Date.now()};
+   aiRenderModelOptions(r);
+   aiSyncModelBtn();
+   if(aiModelCatalog.warning){ try{ aiAppendTrace({tag:'MODEL',level:'warn',text:'模型目录提示：'+aiModelCatalog.warning}); }catch(e){} }
   }
- }).catch(function(){
-  aiModelEl.innerHTML='<option value="">模型加载异常</option><option value="__manage_models__">管理模型列表...</option>';
-  aiModelEl.disabled=aiBusy;
-  aiSyncModelBtn();
+  else{ aiApplyModelsFailure(r||{}); }
+ }).catch(function(e){
+  aiApplyModelsFailure({ok:false,error:'MODELS_LOAD_FAILED',detail:String((e&&e.message)||e||'')});
  });
 }
 function aiRenderModelOptions(r){
@@ -5746,36 +6295,39 @@ function aiRenderModelOptions(r){
  var cur=stored;
  var groups=(r&&r.groups)||[];
  var visible=(r&&Array.isArray(r.visibleModels)&&r.visibleModels.length)?r.visibleModels.map(cleanId):null;
- var html='';
- var found=false;
+ var groupViews=[],allIds=[];
+ /* 先收敛本轮可见模型：白名单外的当前值仍保留展示，避免用户看不到在用模型 */
  for(var i=0;i<groups.length;i++){
-  var g=groups[i],items=(g&&g.models)||[];
-  var gHtml='';
+  var g=groups[i],items=(g&&g.models)||[],gItems=[];
   for(var j=0;j<items.length;j++){
-   var it=items[j],id=cleanId(it.id||''),name=it.name||id;
+   var it=items[j]||{},id=cleanId(it.id||'');
    if(!id)continue;
    if(visible && visible.indexOf(id)<0 && id!==cur) continue;
-   if(id===cur)found=true;
-   gHtml+='<option value="'+escHtml(id)+'"'+(id===cur?' selected':'')+'>'+escHtml(name)+'</option>';
+   gItems.push({id:id,name:it.name||it.label||id});
+   if(allIds.indexOf(id)<0)allIds.push(id);
+  }
+  if(gItems.length)groupViews.push({g:g,items:gItems});
+ }
+ var found=!!cur&&allIds.indexOf(cur)>=0;
+ /* 未显式选择或原模型已不可用：用后端 r.default；不在可见列表则取第一项（绝不写死旧模型常量） */
+ if(!found&&allIds.length){
+  var defId=cleanId(r&&r.default||'');
+  cur=(defId&&allIds.indexOf(defId)>=0)?defId:allIds[0];
+  found=true;
+  try{ aiStoreModel(cur); }catch(e){}
+ }
+ if(!found)cur='';
+ var html='';
+ for(var gi=0;gi<groupViews.length;gi++){
+  var gv=groupViews[gi],gHtml='';
+  for(var gj=0;gj<gv.items.length;gj++){
+   var mit=gv.items[gj];
+   gHtml+='<option value="'+escHtml(mit.id)+'"'+(mit.id===cur?' selected':'')+'>'+escHtml(mit.name)+'</option>';
   }
   if(gHtml){
-   html+='<optgroup label="'+escHtml(g.label||g.provider||'未命名供应商')+'">'+gHtml+'</optgroup>';
+   html+='<optgroup label="'+escHtml(gv.g.label||gv.g.provider||'未命名供应商')+'">'+gHtml+'</optgroup>';
   }
  }
-  /* 在用模型被移出配置：不再给旧模型开豁免（下拉不显示），自动落到本轮首个可见模型并持久化 */
-  if(!found&&stored&&stored!=='__none__'&&stored!=='default'&&html){
-   var firstId='';
-   try{
-    var m0=html.match(/<option value="([^"]+)"/);
-    if(m0)firstId=cleanId(m0[1]);
-   }catch(e){}
-   if(firstId){
-    cur=firstId;
-    try{ aiStoreModel(cur); }catch(e2){}
-    try{ html=html.replace('<option value="'+escHtml(firstId)+'"', '<option value="'+escHtml(firstId)+'" selected'); }catch(e3){}
-    found=true;
-   }
-  }
 
  if(!html){
   /* 安全保底：全未勾选时强制保留default推荐项，杜绝废弃-free */
@@ -5788,20 +6340,569 @@ function aiRenderModelOptions(r){
  aiModelEl.innerHTML='<option value=""'+(found?'':' selected')+'>选择模型…</option>'+html+'<option value="__manage_models__">管理模型列表...</option>';
  aiModelEl.disabled=aiBusy;
  aiModelEl.title='选择当前对话使用的模型';
+ aiModelEl.value=cur;
  aiModelEl.onchange=function(){
   var v=aiModelEl.value;
   if(v==='__manage_models__'){
    openSettings('models');
-   aiModelEl.value=stored||'';
+   aiModelEl.value=aiCurModel()||'';
    return;
   }
   aiStoreModel(v);
+  if(v&&r&&r.transport==='acp'){ try{ aiAcpProbeStart(v); }catch(e){} }
   aiSyncModelBtn();
  };
  if(!found&&cur){
   aiStoreModel('');
  }
  aiRenderCascader(r);
+}
+/* ═══════ ACP 会话配置（T5a：模型/思考/configOptions 落地；T5b 渲染上下文与思考选择器） ═══════
+ * 事件契约：ai:event {type:'acp_config', model, modelConfigId, thoughtConfigId, thoughtValue,
+ *                     configOptions[], warnings[], error?, availableModels?, uiSessionId?, transport:'acp'}
+ * 仅复用既有 ai:event 通道，不新增 IPC。 */
+function aiAcpConfigKey(ev,agentId){
+ var e=ev||{},parts=[],aid=String(agentId||e.agentId||'');
+ if(aid)parts.push('agent:'+aid);
+ if(e.uiSessionId)parts.push('ui:'+String(e.uiSessionId));
+ if(e.acpSessionId||e.sessionId)parts.push('acp:'+String(e.acpSessionId||e.sessionId));
+ if(!e.uiSessionId&&!e.acpSessionId&&!e.sessionId)parts.push('default');
+ return parts.join('|')||'default';
+}
+function aiHandleAcpConfig(ev){
+ if(!ev)return null;
+ var _agentId=String(ev.agentId||'');
+ if(!_agentId){ try{ if(typeof curAiConfig!=='undefined'&&curAiConfig)_agentId=String(curAiConfig.agentId||curAiConfig.mainAgent||''); }catch(e){} }
+ var entry={
+  type:'acp_config',
+  agentId:_agentId,
+  agentName:String(ev.agentName||''),
+  workdir:String(ev.workdir||''),
+  uiSessionId:String(ev.uiSessionId||''),
+  acpSessionId:String(ev.sessionId||ev.acpSessionId||''),
+  model:String(ev.model||''),
+  modelConfigId:String(ev.modelConfigId||''),
+  optionsModel:'',
+  thoughtConfigId:String(ev.thoughtConfigId||''),
+  thoughtValue:String(ev.thoughtValue||''),
+  configOptions:Array.isArray(ev.configOptions)?ev.configOptions.slice():[],
+  warnings:Array.isArray(ev.warnings)?ev.warnings.slice():[],
+  transport:String(ev.transport||'acp'),
+  updatedAt:Date.now()
+ };
+ /* configOptions 可能先于 setModel 读取（首轮切换模型），其 model.currentValue
+  * 才是这批 options 真正归属的模型；用它隔离旧模型选项，避免串到新模型。 */
+ entry.optionsModel=aiAcpOptionsModel(entry.configOptions,entry.model);
+ var store=window.__acpConfig;
+ if(!store||typeof store!=='object'||Array.isArray(store))store={};
+ var key=aiAcpConfigKey(ev,_agentId);
+ store[key]=entry; store.__latest=entry;
+ window.__acpConfig=store;
+ var matched=true;
+ try{
+  var s=aiCurSesh();
+  if(s){
+   var sesAid=String(s.agentId||'');
+   var sesUi=String(s.id||'');
+   /* 当前 uiSessionId 为空时允许事件绑定；仅非空且不一致才拦截。 */
+   if(entry.uiSessionId&&sesUi&&entry.uiSessionId!==sesUi)matched=false;
+   /* 首次 acp_config：当前会话 agentId 为空时先采用事件 agentId，再渲染；
+      不得先用全局配置 Agent 回填，否则事件会被判定为跨 Agent 而只写缓存。 */
+   if(matched&&!sesAid&&_agentId){
+    s.agentId=_agentId;
+    s.agentName=entry.agentName||((typeof aiAgentNameOf==='function')?aiAgentNameOf(_agentId):_agentId);
+    sesAid=_agentId;
+   }
+   if(_agentId&&sesAid&&_agentId!==sesAid)matched=false;
+   if(matched){
+    if(entry.agentName&&String(s.agentId||'')===_agentId)s.agentName=entry.agentName;
+    if(entry.workdir)s.agentWorkdir=entry.workdir;
+    s.acpConfigOptions=entry.configOptions;
+    s.acpConfigOptionsModel=entry.optionsModel;
+    s.acpConfigModel=entry.model;
+    s.acpThoughtConfigId=entry.thoughtConfigId;
+    s.acpThoughtValue=entry.thoughtValue;
+    /* 事件 thoughtValue 是「本轮真正应用的值」；仅当 options 归属本轮模型时才回写，
+     * 避免把旧模型的 currentValue 写进新模型的选择。 */
+    if(entry.thoughtConfigId&&entry.thoughtValue&&aiAcpModelMatches(entry.optionsModel,entry.model)){
+     if(!s.acpConfig||typeof s.acpConfig!=='object'||Array.isArray(s.acpConfig))s.acpConfig={};
+     s.acpConfig[entry.thoughtConfigId]=entry.thoughtValue;
+    }
+    try{ aiSaveSesh(); }catch(e){}
+   }
+  }
+ }catch(e){}
+ if(matched&&entry.model&&aiCurModel()!==entry.model){
+  try{ if(aiModelEl)aiModelEl.value=entry.model; }catch(e){}
+  try{ aiStoreModel(entry.model); }catch(e){}
+  try{ aiSyncModelBtn(); }catch(e){}
+ }
+ if(matched) for(var i=0;i<entry.warnings.length;i++){
+  if(!entry.warnings[i])continue;
+  try{ aiAppendTrace({tag:'ACP',level:'warn',text:String(entry.warnings[i])}); }catch(e){}
+ }
+ if(matched){
+  try{ if(typeof aiRenderAcpConfig==='function')aiRenderAcpConfig(); }catch(e){}
+  /* acp_config 到达后立即刷新级联思考项：已选合法值保留，非法值回落 currentValue/首项。
+     aiRenderCascader 末尾会同步模型按钮徽标，这里不再额外调用 aiSyncModelBtn。 */
+  try{ if(typeof aiRefreshCascaderReasoning==='function')aiRefreshCascaderReasoning(); }catch(e){}
+ }
+ return entry;
+}
+/* ═══════ ACP 会话配置选择器（T5b：configOptions → 底栏紧凑 select）
+ * 仅复用 acp_config 事件与 ai:ask extra.acpConfig；不新增 IPC，不触发立即请求。
+ * model / id=model 由现有级联选择器负责，此处跳过；
+ * model_config / thought / mode / 未知 category 均渲染为通用 select。 */
+function aiAcpConfigKind(item){
+ var raw=item||{};
+ var id=String(raw.id||raw.key||'').trim();
+ var idLower=id.toLowerCase();
+ var category=String(raw.category||'').trim().toLowerCase();
+ if(!id)return null;
+ if(category==='model'||idLower==='model')return null;
+ if(category==='model_config'||category==='model-config')return {key:'model_config',label:String(raw.name||raw.label||'上下文')};
+ if(category==='thought_level'||category==='thought'||category==='reasoning_effort'||category==='thought-level'||idLower==='thought_level'||idLower==='reasoning_effort'||idLower==='effort'||idLower==='thinking')return {key:'thought_level',label:'思考强度'};
+ if(category==='mode'||idLower==='mode')return {key:'mode',label:'模式'};
+ return {key:'generic',label:String(raw.name||raw.label||id)};
+}
+function aiAcpConfigSource(s){
+ if(s&&Array.isArray(s.acpConfigOptions)&&s.acpConfigOptions.length)return s.acpConfigOptions;
+ try{
+  var store=window.__acpConfig;
+  if(!store||typeof store!=='object')return [];
+  var sid=String((s&&s.id)||'');
+  var acpSid=String((s&&s.acpSessionId)||'');
+  /* 会话 agentId 为空表示归属尚未确认：此时不得用全局配置 Agent 反推过滤，
+     否则首次 acp_config 的候选会被全部排除。归属确认后仍按 agentId 隔离。 */
+  var sesAgent=String((s&&s.agentId)||'');
+  function agentOk(entry){
+   if(!sesAgent)return true;
+   var ea=String((entry&&entry.agentId)||'');
+   return !ea||ea===sesAgent;
+  }
+  function usable(entry){
+   return !!(entry&&Array.isArray(entry.configOptions)&&entry.configOptions.length&&agentOk(entry));
+  }
+  var latest=store.__latest;
+  var latestOk=usable(latest);
+  if(latestOk){
+   if(acpSid){ if(String(latest.acpSessionId||'')!==acpSid)latestOk=false; }
+   else if(sid&&String(latest.uiSessionId||'')!==sid)latestOk=false;
+  }
+  var fallback=latestOk?latest.configOptions:[];
+  var keys=Object.keys(store);
+  /* 优先 acpSessionId（会话唯一），其次 uiSessionId；agentId 仅在双方都有值时过滤。 */
+  if(acpSid){
+   for(var ai=0;ai<keys.length;ai++){
+    if(keys[ai]==='__latest')continue;
+    var ae=store[keys[ai]];
+    if(!usable(ae))continue;
+    if(String(ae.acpSessionId||'')===acpSid)return ae.configOptions;
+   }
+  }
+  if(sid){
+   for(var i=0;i<keys.length;i++){
+    if(keys[i]==='__latest')continue;
+    var entry=store[keys[i]];
+    if(!usable(entry))continue;
+    if(String(entry.uiSessionId||'')===sid)return entry.configOptions;
+   }
+  }
+  return fallback;
+ }catch(e){ return []; }
+}
+function aiAcpBoolValue(v){
+ var t=String(v==null?'':v).trim().toLowerCase();
+ return t==='true'||t==='false'||t==='enabled'||t==='disabled'||t==='on'||t==='off';
+}
+/* 归一化单个 configOption：保留 kind / boolean，供级联与底栏共用。
+ * boolean 项（如 codebuddy 的 thought_level=enabled）不得伪装成强度档位。 */
+function aiAcpConfigNormalizeItem(raw){
+ var item=raw||{};
+ var id=String(item.id||item.key||'').trim();
+ if(!id)return null;
+ var meta=aiAcpConfigKind(item);
+ if(!meta)return null;
+ var opts=[],seen={},rawOpts=Array.isArray(item.options)?item.options:[];
+ for(var j=0;j<rawOpts.length;j++){
+  var o=rawOpts[j]||{};
+  var value=(o.value!=null?String(o.value):String(o.id||o.key||''));
+  if(!value||seen[value])continue;
+  seen[value]=1;
+  opts.push({value:value,label:String(o.name||o.label||value),title:String(o.description||o.name||o.label||value)});
+ }
+ var type=String(item.type||'').trim().toLowerCase();
+ var boolean=(type==='boolean');
+ if(!boolean&&opts.length){
+  boolean=true;
+  for(var k=0;k<opts.length;k++){
+   if(!aiAcpBoolValue(opts[k].value)){ boolean=false; break; }
+  }
+ }
+ if(!opts.length&&boolean&&item.currentValue!=null&&String(item.currentValue).trim()){
+  var cur=String(item.currentValue).trim();
+  opts=[{value:cur,label:cur,title:cur}];
+ }
+ if(!opts.length)return null;
+ return {id:id,kind:meta.key,label:meta.label,title:String(item.description||item.name||item.label||id),currentValue:item.currentValue,options:opts,boolean:boolean};
+}
+function aiAcpConfigItems(s){
+ var list=aiAcpConfigSource(s),out=[];
+ if(!Array.isArray(list))return out;
+ for(var i=0;i<list.length;i++){
+  var item=aiAcpConfigNormalizeItem(list[i]);
+  if(item)out.push(item);
+ }
+ return out;
+}
+/* ACP configOptions 实际归属的模型：优先 model 项的 currentValue（真正生效值），
+ * 缺失时用事件 model / 会话记录兜底。opencode 首轮切换模型时，事件 model 已是新模型，
+ * 但 configOptions 仍是切换前模型的快照，必须靠 currentValue 识别。 */
+function aiAcpOptionsModel(options,fallback){
+ var list=Array.isArray(options)?options:[];
+ for(var i=0;i<list.length;i++){
+  var item=list[i]||{};
+  var id=String(item.id||item.key||'').trim();
+  var category=String(item.category||'').trim().toLowerCase();
+  if(id==='model'||category==='model'){
+   var current=String(item.currentValue==null?'':item.currentValue).trim();
+   if(current)return current;
+  }
+ }
+ return String(fallback==null?'':fallback).trim();
+}
+/* ACP 模型 id 大小写敏感，只做 trim 后精确比较；任一方缺失时不做限制。 */
+function aiAcpModelMatches(owner,target){
+ var a=String(owner==null?'':owner).trim();
+ var b=String(target==null?'':target).trim();
+ if(!a||!b)return true;
+ return a===b;
+}
+function aiAcpReasoningTarget(s){
+ try{
+  var current=(typeof aiCurModel==='function')?String(aiCurModel()||'').trim():'';
+  if(current)return current;
+ }catch(e){}
+ return String((s&&(s.acpConfigModel||s.acpConfigOptionsModel))||'').trim();
+}
+/* 思考项状态：
+ * - item：仅当 configOptions 归属 target 模型时返回（ACP 真值）；
+ * - stale：有思考项但属于上一个模型（模型刚切换，等待下一轮 acp_config 刷新）；
+ * - hasOptions：已收到过 ACP configOptions（含仅有 mode 的情况）；
+ * - noThought：已收到 ACP 配置，但该配置没有思考项（模型不支持）。
+ * 旧模型的思考项绝不透传给当前模型，静态兜底只在完全没有 ACP 配置时使用。 */
+function aiAcpThoughtState(s,targetModel,optionsOverride){
+ var target=String(targetModel==null?'':targetModel).trim();
+ if(!target)target=aiAcpReasoningTarget(s);
+ var list=Array.isArray(optionsOverride)?optionsOverride:aiAcpConfigSource(s);
+ var owner=aiAcpOptionsModel(list,s&&(s.acpConfigOptionsModel||s.acpConfigModel));
+ var match=aiAcpModelMatches(owner,target);
+ var first=null,firstBool=null;
+ if(Array.isArray(list)){
+  for(var i=0;i<list.length;i++){
+   var item=aiAcpConfigNormalizeItem(list[i]);
+   if(!item||item.kind!=='thought_level')continue;
+   if(item.boolean){ if(!firstBool)firstBool=item; }
+   else if(!first)first=item;
+  }
+ }
+ var picked=first||firstBool||null;
+ var hasOptions=!!(Array.isArray(list)&&list.length);
+ return {item:match?picked:null,raw:picked,owner:owner,target:target,match:match,
+  stale:!!picked&&!match,hasOptions:hasOptions,noThought:hasOptions&&!picked};
+}
+/* 当前会话的 ACP 思考强度项（非布尔）。级联思考列表的唯一优先数据源。 */
+function aiAcpThoughtConfig(s,targetModel){
+ var state=aiAcpThoughtState(s,targetModel);
+ return (state.item&&!state.item.boolean)?state.item:null;
+}
+/* 布尔思考项：只作为开关语义处理，不生成 low/medium/high 等强度档位。 */
+function aiAcpBooleanThought(s,targetModel){
+ var state=aiAcpThoughtState(s,targetModel);
+ return (state.item&&state.item.boolean)?state.item:null;
+}
+/* 已选值合法则保留；非法回落 currentValue，再回落首项。 */
+function aiAcpThoughtResolve(thought,saved){
+ var opts=(thought&&Array.isArray(thought.options))?thought.options:[];
+ var vals=[];
+ for(var i=0;i<opts.length;i++){ if(opts[i]&&opts[i].value!=null)vals.push(String(opts[i].value)); }
+ var has=!!(saved&&typeof saved==='object'&&!Array.isArray(saved)&&thought&&thought.id&&Object.prototype.hasOwnProperty.call(saved,thought.id));
+ var picked=(has&&saved[thought.id]!=null)?String(saved[thought.id]):'';
+ if(picked&&vals.indexOf(picked)>=0)return {value:picked,stale:false};
+ var current=(thought&&thought.currentValue!=null)?String(thought.currentValue).trim():'';
+ if(current&&vals.indexOf(current)>=0)return {value:current,stale:!!picked};
+ return {value:vals[0]||'',stale:!!picked};
+}
+function aiReasoningOptsFromAcp(thought){
+ var out=[],opts=(thought&&Array.isArray(thought.options))?thought.options:[];
+ for(var i=0;i<opts.length;i++){
+  var value=String(opts[i].value);
+  out.push({id:value,label:String(opts[i].label||value),title:String(opts[i].title||opts[i].label||value)});
+ }
+ return out;
+}
+/* ═══════ ACP 模型配置预探测（T5c：选中模型即读取 configOptions） ═══════
+ * 复用既有 ai:models 通道的 probeModel 分支，不新增 IPC：
+ * - 同一 Agent+模型进行中/已成功/已失败均不重复请求（失败保留“使用默认”，不静默重试）；
+ * - 切换模型/Agent 后旧响应只留缓存，requestId 不匹配或目标不一致的结果直接丢弃；
+ * - 成功且仍对应当前所选模型时才写入 s.acpConfigOptions，避免污染其它模型的选项。 */
+function aiAcpProbeAgentId(){
+ try{ if(typeof aiAgentIdNow==='function'){ var a=String(aiAgentIdNow()||''); if(a)return a; } }catch(e){}
+ try{
+  var c=(typeof curAiConfig!=='undefined')?curAiConfig:null;
+  if(c)return String(c.agentId||c.mainAgent||'');
+ }catch(e){}
+ return '';
+}
+function aiAcpProbeKey(agentId,sessionId,model){
+ return String(agentId||'')+'|'+String(sessionId||'')+'|'+String(model==null?'':model).trim();
+}
+function aiAcpProbeSessionId(){
+ try{ var s=(typeof aiCurSesh==='function')?aiCurSesh():null; return (s&&s.id)?String(s.id):''; }catch(e){ return ''; }
+}
+function aiAcpProbeState(model){
+ var target=String(model==null?'':model).trim();
+ if(!target)return null;
+ var entry=aiAcpProbeCache[aiAcpProbeKey(aiAcpProbeAgentId(),aiAcpProbeSessionId(),target)];
+ return (entry&&typeof entry==='object')?entry:null;
+}
+function aiAcpProbeStart(model){
+ var target=String(model==null?'':model).trim();
+ if(!target)return null;
+ try{
+  if(!window.protoAPI||!window.protoAPI.ai||typeof window.protoAPI.ai.listModels!=='function')return null;
+ }catch(e){ return null; }
+ var aid=aiAcpProbeAgentId();
+ var s=null;try{ s=aiCurSesh(); }catch(e){ s=null; }
+ var sid=(s&&s.id)?String(s.id):'';
+ var key=aiAcpProbeKey(aid,sid,target);
+ var prev=aiAcpProbeCache[key];
+ /* 去重：同一 Agent+会话+模型进行中/已成功/已失败均不重复请求；仅 busy 属瞬时失败，允许下次重试。 */
+ if(prev&&(prev.status==='loading'||prev.status==='ready'||(prev.status==='error'&&!prev.transient)))return prev;
+ var rid=++aiAcpProbeSeq;
+ var entry={status:'loading',agentId:aid,uiSessionId:sid,model:target,configOptions:[],modelConfigId:'',error:'',code:'',transient:false,requestId:rid,ts:Date.now()};
+ aiAcpProbeCache[key]=entry;
+ var hint={engine:'cli',probeModel:target,agentId:aid};
+ if(sid)hint.uiSessionId=sid;
+ try{ var dir=aiSbxDir(); if(dir)hint.cwd=String(dir); }catch(e){}
+ function settle(next){
+  var now=aiAcpProbeCache[key];
+  if(!now||now.requestId!==rid)return;
+  now.status=next.status;
+  now.configOptions=next.configOptions||[];
+  now.modelConfigId=next.modelConfigId||'';
+  now.error=next.error||'';
+  now.code=next.code||'';
+  now.transient=!!next.transient;
+  now.ts=Date.now();
+  aiAcpProbeCache[key]=now;
+  if(now.status==='ready'){ try{ aiAcpProbeApply(now); }catch(e){} }
+  try{ aiRefreshCascaderReasoning(); }catch(e){}
+ }
+ try{
+  window.protoAPI.ai.listModels(hint).then(function(r){
+   if(!r||!r.ok){
+    var code=String((r&&r.error)||'');
+    settle({status:'error',error:String((r&&(r.detail||r.error))||'ACP 配置读取失败'),code:code,transient:code==='busy'});
+    return;
+   }
+   /* 服务端回传的模型必须与本次目标一致，避免并发探测串模型。 */
+   var got=String((r&&r.model)||'').trim();
+   if(got&&got!==target){ settle({status:'error',error:'ACP 返回模型不一致：'+got}); return; }
+   var opts=Array.isArray(r.configOptions)?r.configOptions:[];
+   if(!opts.length){ settle({status:'error',error:'ACP 未返回该模型的配置项'}); return; }
+   settle({status:'ready',configOptions:opts,modelConfigId:String(r.modelConfigId||'')});
+  }).catch(function(e){
+   settle({status:'error',error:String((e&&e.message)||e||'ACP 配置读取失败')});
+  });
+ }catch(e){
+  settle({status:'error',error:String((e&&e.message)||e||'ACP 配置读取失败')});
+ }
+ return entry;
+}
+function aiAcpProbeApply(entry){
+ if(!entry||entry.status!=='ready'||!Array.isArray(entry.configOptions)||!entry.configOptions.length)return false;
+ var s=null;try{ s=aiCurSesh(); }catch(e){ s=null; }
+ if(!s)return false;
+ /* 只应用仍归属当前会话 + 当前 Agent + 当前所选模型的结果；其余仅留缓存。 */
+ if(entry.uiSessionId&&s.id&&String(entry.uiSessionId)!==String(s.id))return false;
+ var aid=aiAcpProbeAgentId();
+ if(entry.agentId&&aid&&entry.agentId!==aid)return false;
+ var current='';
+ try{ current=String(aiCurModel()||'').trim(); }catch(e){ current=''; }
+ if(current&&String(entry.model||'')!==current)return false;
+ s.acpConfigOptions=entry.configOptions;
+ s.acpConfigOptionsModel=aiAcpOptionsModel(entry.configOptions,entry.model);
+ s.acpConfigModel=String(entry.model||'');
+ var thought=null,thoughtBool=null;
+ for(var i=0;i<entry.configOptions.length;i++){
+  var item=aiAcpConfigNormalizeItem(entry.configOptions[i]);
+  if(!item||item.kind!=='thought_level')continue;
+  if(item.boolean){ if(!thoughtBool)thoughtBool=item; }
+  else if(!thought){ thought=item; }
+ }
+ var picked=thought||thoughtBool;
+ if(picked){
+  if(!s.acpConfig||typeof s.acpConfig!=='object'||Array.isArray(s.acpConfig))s.acpConfig={};
+  var rr=aiAcpThoughtResolve(picked,s.acpConfig);
+  if(rr.value)s.acpConfig[picked.id]=rr.value;
+  s.acpThoughtConfigId=picked.id;
+  s.acpThoughtValue=rr.value||'';
+ }else{
+  s.acpThoughtConfigId='';
+  s.acpThoughtValue='';
+ }
+ try{ if(typeof aiSaveSesh==='function')aiSaveSesh(); }catch(e){}
+ try{ if(typeof aiRenderAcpConfig==='function')aiRenderAcpConfig(); }catch(e){}
+ return true;
+}
+/* 级联思考项统一取数：ACP thought > 模型自带 reasoningOptions > 静态 reasoningOptions。
+ * ACP 项完整保留 Agent 返回的 max/xhigh 等值，绝不裁剪成固定几档。
+ * 模型切换后，旧模型的 ACP 项不再透传：ACP 会话下返回 acp-wait（等待下一轮刷新），
+ * 静态表只在整个会话从未收到 ACP configOptions 时使用。 */
+function aiCascaderReasoning(r,s,modelItem,targetModel,optionsOverride){
+ if(s===undefined){ try{ s=(typeof aiCurSesh==='function')?aiCurSesh():null; }catch(e){ s=null; } }
+ var saved=(s&&s.acpConfig&&typeof s.acpConfig==='object'&&!Array.isArray(s.acpConfig))?s.acpConfig:{};
+ var state=null;
+ try{ state=aiAcpThoughtState(s,targetModel,optionsOverride); }catch(e){ state=null; }
+ if(state&&state.item&&!state.item.boolean){
+  var rr=aiAcpThoughtResolve(state.item,saved);
+  return {source:'acp',configId:state.item.id,boolean:false,options:aiReasoningOptsFromAcp(state.item),
+   value:rr.value,stale:rr.stale,waiting:false,ownerModel:state.owner,targetModel:state.target};
+ }
+ if(state&&state.item&&state.item.boolean){
+  var br=aiAcpThoughtResolve(state.item,saved);
+  var bopts=aiReasoningOptsFromAcp(state.item);
+  for(var bi=0;bi<bopts.length;bi++)bopts[bi].label='思考：'+bopts[bi].label;
+  return {source:'acp-boolean',configId:state.item.id,boolean:true,options:bopts,
+   value:br.value,stale:br.stale,waiting:false,ownerModel:state.owner,targetModel:state.target};
+ }
+ /* ACP 已公告配置但当前模型没有可复用项：不再显示旧固定表，明确标记等待/不支持。 */
+ var acpActive=!!(r&&r.transport==='acp');
+ try{
+  if(typeof curAiConfig!=='undefined'&&curAiConfig&&curAiConfig.acp&&curAiConfig.acp.enabled===false)acpActive=false;
+ }catch(e){}
+ var waitingReason='';
+ if(acpActive&&state){
+  if(state.stale)waitingReason='wait';
+  else if(state.noThought)waitingReason='none';
+ }
+ if(waitingReason){
+  var waitLabel=waitingReason==='wait'
+   ?'等待下一轮刷新（思考使用默认）'
+   :'该模型未提供思考档位（使用默认）';
+  var waitTitle=waitingReason==='wait'
+   ?'思考项属于 '+(state.owner||'上一个模型')+'；已切换到 '+(state.target||'新模型')+'，发送下一轮后由 ACP 返回该模型的真实档位'
+   :'ACP 已公告该模型的配置，但没有思考档位；发送时使用 Agent 默认值';
+  return {source:'acp-wait',configId:'',boolean:false,
+   options:[{id:'__acp_wait__',label:waitLabel,title:waitTitle}],
+   value:'__acp_wait__',stale:false,waiting:true,ownerModel:state.owner,targetModel:state.target};
+ }
+ var modelOpts=(modelItem&&Array.isArray(modelItem.reasoningOptions)&&modelItem.reasoningOptions.length)?modelItem.reasoningOptions:null;
+ var fallback=(r&&Array.isArray(r.reasoningOptions)&&r.reasoningOptions.length)?r.reasoningOptions:aiStandardReasoningOptions;
+ var options=modelOpts||fallback;
+ var value=(typeof aiCurReasoning==='function')?aiCurReasoning():'';
+ return {source:modelOpts?'model':'static',configId:'',boolean:false,options:options,value:value,stale:false,
+  waiting:false,ownerModel:state?state.owner:'',targetModel:state?state.target:(String(targetModel==null?'':targetModel).trim())};
+}
+function aiAcpConfigResolve(item,saved){
+ var opts=(item&&Array.isArray(item.options))?item.options:[];
+ var vals=[];
+ for(var i=0;i<opts.length;i++){ if(opts[i]&&opts[i].value!=null)vals.push(String(opts[i].value)); }
+ var raw=(saved&&item&&Object.prototype.hasOwnProperty.call(saved,item.id))?saved[item.id]:null;
+ var picked=(raw==null?'':String(raw));
+ if(picked&&vals.indexOf(picked)>=0)return {value:picked,stale:false};
+ var current=(item&&item.currentValue!=null)?String(item.currentValue).trim():'';
+ if(current&&vals.indexOf(current)>=0)return {value:current,stale:!!picked};
+ return {value:vals[0]||'',stale:!!picked};
+}
+function aiRenderAcpConfig(){
+ var wrap=$('aiAcpConfig');
+ if(!wrap){
+  var foot=document.querySelector('.ai-foot-actions');
+  if(!foot)return;
+  wrap=document.createElement('div');
+  wrap.id='aiAcpConfig';
+  wrap.className='ai-acp-config';
+  var cascader=$('aiModelCascader');
+  var anchor=cascader||$('aiModel');
+  if(anchor&&anchor.parentNode===foot)foot.insertBefore(wrap,anchor.nextSibling);
+  else foot.appendChild(wrap);
+ }
+ var s=null;try{ s=aiCurSesh(); }catch(e){ s=null; }
+ /* 思考项已并入模型级联（唯一入口）：底栏只保留 model_config / mode / 其他通用项，
+  * 避免出现“级联 3 项、底栏 6 项”的重复入口。 */
+ var allItems=aiAcpConfigItems(s),items=[];
+ for(var ii=0;ii<allItems.length;ii++){ if(allItems[ii].kind!=='thought_level')items.push(allItems[ii]); }
+ if(!items.length){ wrap.innerHTML=''; wrap.style.display='none'; return; }
+ wrap.style.display='inline-flex';
+ var saved=(s&&s.acpConfig&&typeof s.acpConfig==='object'&&!Array.isArray(s.acpConfig))?s.acpConfig:{};
+ var changed=false;
+ wrap.innerHTML='';
+ for(var i=0;i<items.length;i++){
+  (function(item){
+   var resolved=aiAcpConfigResolve(item,saved);
+   if(resolved.stale){ saved[item.id]=resolved.value; changed=true; }
+   var box=document.createElement('label');
+   box.className='ai-acp-config-item';
+   box.setAttribute('data-acp-config-id',item.id);
+   box.title=item.title||item.label;
+   var lab=document.createElement('span');
+   lab.className='ai-acp-config-label';
+   lab.textContent=item.label;
+   var sel=document.createElement('select');
+   sel.className='ai-acp-config-select';
+   sel.setAttribute('data-acp-config-id',item.id);
+   sel.setAttribute('aria-label',item.label);
+   sel.title=item.title||item.label;
+   for(var k=0;k<item.options.length;k++){
+    var opt=document.createElement('option');
+    opt.value=item.options[k].value;
+    opt.textContent=item.options[k].label;
+    opt.title=item.options[k].title||item.options[k].label;
+    sel.appendChild(opt);
+   }
+   sel.value=resolved.value;
+   sel.onchange=function(){
+    var v=sel.value;
+    var cur=null;try{ cur=aiCurSesh(); }catch(e){ cur=null; }
+    if(!cur)return;
+    if(!cur.acpConfig||typeof cur.acpConfig!=='object'||Array.isArray(cur.acpConfig))cur.acpConfig={};
+    cur.acpConfig[item.id]=v;
+    /* 只更新本地状态，下一轮 aiDoSend 通过 extra.acpConfig 生效 */
+    try{ if(typeof aiSaveSesh==='function')aiSaveSesh(); }catch(e){}
+   };
+   box.appendChild(lab);
+   box.appendChild(sel);
+   wrap.appendChild(box);
+  })(items[i]);
+ }
+ if(changed&&s){ s.acpConfig=saved; try{ if(typeof aiSaveSesh==='function')aiSaveSesh(); }catch(e){} }
+}
+/* 思考强度：ACP 思考项（级联唯一入口）优先，其次兼容旧 cfg key，最后沿用级联本地记录。
+   后端 requestedConfig 会跳过受保护的 thought 项，因此必须经 extra.reasoning 下发。 */
+function aiAcpReasoning(s){
+ var cfg=(s&&s.acpConfig&&typeof s.acpConfig==='object'&&!Array.isArray(s.acpConfig))?s.acpConfig:{};
+ var target='';
+ try{ target=aiAcpReasoningTarget(s); }catch(e){ target=''; }
+ var state=null;
+ try{ state=aiAcpThoughtState(s,target); }catch(e){ state=null; }
+ if(state&&state.item){
+  var resolved=aiAcpThoughtResolve(state.item,cfg);
+  if(resolved.value)return String(resolved.value);
+ }
+ /* 旧模型思考项 / 该模型无思考项：不得把上一模型的 cfg 值下发给新模型，
+    使用 Agent 默认值；下一轮 acp_config 会带回新模型的真实档位。 */
+ if(state&&(state.stale||state.noThought))return '';
+ var value=cfg.thought_level||cfg.reasoning_effort||cfg.effort||cfg.thinking||'';
+ if(value)return String(value);
+ try{ return (typeof aiCurModel==='function'&&aiCurModel()&&typeof aiCurReasoning==='function')?aiCurReasoning():''; }catch(e){ return ''; }
+}
+/* ACP 配置/会话变化后立即刷新级联思考项；没有模型缓存时由 aiLoadModels 负责 */
+function aiRefreshCascaderReasoning(){
+ try{
+  if(typeof aiModelCache!=='undefined'&&aiModelCache)aiRenderCascader(aiModelCache);
+ }catch(e){}
 }
 /* 收敛全屏遮罩：打开/关闭 AI 弹窗前强制清除全部游离抽屉遮罩，杜绝灰罩叠加残留
    已知遮罩（linkInspMask/linkMgrMask/multiEditMask）由各自逻辑管理并一并收敛；
@@ -5826,13 +6927,12 @@ function sweepStrayMasks(){
 }
 
  function openAi(){
-  if(!aiMaskEl)return;
   if(!HAS_AI){ (typeof showToast==="function"?showToast:alert)('大模型对话仅桌面端可用（请使用 exe 版打开）。'); return; }
+  if(!aiMaskEl)return;
    sweepStrayMasks(); /* 先清除游离/已知遮罩，避免与 AI 弹窗叠加 */
    if(window.MaskStack) window.MaskStack.push('aiMask', aiEscClose); // T3.3:ESC经此先取消后关闭
-   aiEnsureCur(); /* 再加载当前沙箱唯一会话（含 opencode 会话 ID） */
+   aiEnsureCur(); /* 加载当前沙箱唯一会话 */
    try{ renderSessionList(aiSbxDir()); }catch(e){}
-  try{ renderSessionList(aiSbxDir()); }catch(e){}
    aiSaveSesh();
   aiRenderSbx();
   aiRenderTargetPages();
@@ -5841,51 +6941,33 @@ function sweepStrayMasks(){
    try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e){}
    aiLoadModels();
    aiRenderBubbles();
-   // 进入后强制滚动到底部，可手动上滑查看历史
+   try{ if(typeof aiRenderAcpConfig==='function')aiRenderAcpConfig(); }catch(e){}
   try{ aiUserScrolledPause=false; if(aiChatView){ aiChatView.scrollTop=aiChatView.scrollHeight; } }catch(e){}
-   /* 弹窗关闭期间任务仍在进行：按发送时会话/沙箱核对后挂回流式气泡（跨源不恢复，防串扰） */
    try{ aiReattachStream(); }catch(e){}
   if(aiInputEl){ aiInputEl.focus(); try{ aiAutosizeInput(); }catch(e){} }
  }
-  function closeAi(){
-   /* Wave-D/G SoC修复：委托 AiDomain.requestClose（EventBus ai:request-close/ai:closed + Store感知，无裸挂）。 */
-   try { if (typeof AiDomain !== 'undefined' && AiDomain && typeof AiDomain.requestClose === 'function') { AiDomain.requestClose('user'); return; } } catch (e) {}
-   try { if (typeof window !== 'undefined' && window.EventBus && typeof window.EventBus.emit === 'function') window.EventBus.emit('ai:request-close', {}); } catch (e4) {}
-   if(window.MaskStack) window.MaskStack.pop('aiMask');
-   if(aiMaskEl)aiMaskEl.style.display='none';
-   sweepStrayMasks();
-  }
- /* T3.3:MaskStack唯一ESC入口回调。等价旧双监听净效果（取消+关闭）：
-    ✕按钮/遮罩点击仍走closeAi（后台继续），仅ESC经此取消后关闭 */
-  function aiEscClose(){
-   if(aiBusy){ try{ i5CancelAi(); }catch(e){} }
-   closeAi();
-  }
-  /* AI 设计：在当前原型沙箱打开对话（沙箱唯一会话，自动续接历史） */
- function openAiDesign(){
-  /* B2 独立窗已开则直接focus独立窗（调aiwin:open），否则正常开应用内弹窗 */
-  try{
-   var __aiOpen=false;
-   try{ __aiOpen=!!window.__aiWinOpen; }catch(e){}
-   if(__aiOpen){
-    try{
-     if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.open==='function'){
-      var _pa={};
-      try{ _pa.project=String((typeof currentProject!=='undefined')?currentProject:''); }catch(e){}
-      try{ var _c=(typeof currentSource!=='undefined')?currentSource:null; if(_c)_pa.proto=String(_c.displayName||_c.name||'').replace(/\.(html?|md)$/i,''); }catch(e){}
-      try{ window.protoAPI.aiwin.open(_pa); }catch(e){ try{ window.protoAPI.aiwin.open(); }catch(e2){} }
-      try{ if(typeof closeAi==='function')closeAi(); }catch(e){}
-      return;
-     }
-    }catch(e){}
+ function closeAi(){
+    /* Wave-D/G SoC修复：委托 AiDomain.requestClose（EventBus ai:request-close/ai:closed + Store感知，无裸挂）。 */
+    try { if (typeof AiDomain !== 'undefined' && AiDomain && typeof AiDomain.requestClose === 'function') { AiDomain.requestClose('user'); return; } } catch (e) {}
+    try { if (typeof window !== 'undefined' && window.EventBus && typeof window.EventBus.emit === 'function') window.EventBus.emit('ai:request-close', {}); } catch (e4) {}
+    if(window.MaskStack) window.MaskStack.pop('aiMask');
+    if(aiMaskEl)aiMaskEl.style.display='none';
+    sweepStrayMasks();
    }
-  }catch(e){}
-  if(!aiMaskEl)return;
+  /* T3.3:MaskStack唯一ESC入口回调。等价旧双监听净效果（取消+关闭）：
+     ✕按钮/遮罩点击仍走closeAi（后台继续），仅ESC经此取消后关闭 */
+   function aiEscClose(){
+    if(aiBusy){ try{ i5CancelAi(); }catch(e){} }
+    closeAi();
+   }
+  /* AI 设计：工具内弹窗为唯一入口；沙箱唯一会话，自动续接历史 */
+ function openAiDesign(){
   if(!HAS_AI){ (typeof showToast==="function"?showToast:alert)('大模型对话仅桌面端可用（请使用 exe 版打开）。'); return; }
+  if(!aiMaskEl)return;
    sweepStrayMasks(); /* 先清除游离/已知遮罩，避免与 AI 弹窗叠加 */
    if(window.MaskStack) window.MaskStack.push('aiMask', aiEscClose); // T3.3:ESC经此先取消后关闭
    aiEnsureCur(); /* 仅加载当前沙箱会话，不使用其他沙箱历史 */
-  try{ renderSessionList(aiSbxDir()); }catch(e){}
+   try{ renderSessionList(aiSbxDir()); }catch(e){}
    aiSaveSesh();
   aiRenderSbx();
   aiRenderTargetPages();
@@ -5894,8 +6976,8 @@ function sweepStrayMasks(){
    try{ if(typeof refreshAiTopIdentity==='function')refreshAiTopIdentity(); }catch(e){}
    aiLoadModels();
    aiRenderBubbles();
-   try{ aiUserScrolledPause=false; if(aiChatView) aiChatView.scrollTop=aiChatView.scrollHeight; }catch(e){}
-   /* 弹窗关闭期间任务仍在进行：按发送时会话/沙箱核对后挂回流式气泡（跨源不恢复，防串扰） */
+   try{ if(typeof aiRenderAcpConfig==='function')aiRenderAcpConfig(); }catch(e){}
+  try{ aiUserScrolledPause=false; if(aiChatView){ aiChatView.scrollTop=aiChatView.scrollHeight; } }catch(e){}
    try{ aiReattachStream(); }catch(e){}
   if(aiInputEl){ aiInputEl.focus(); try{ aiAutosizeInput(); }catch(e){} }
  }
@@ -5937,7 +7019,7 @@ function aiDoSend(){
    aiEnsureCur();
    /* 发送前防御：若缓存的会话 oid 不属于当前沙箱目录，忽略它（opencode 会卡死） */
    if(aiSession&&aiSession.oid&&!aiOidDirOk(aiSession.oid)){ aiSession.oid=''; aiSaveSesh(); }
-   var s=aiCurSesh();
+   var s=aiCurSesh(); try{ aiBindSessionAgent(s,null); }catch(e){}
     aiActiveKey=SESS_KEY+'#'+encodeURIComponent(s.id||''); /* 记录发送时所在源：本次运行的事件只回写该源 */
     try{ aiTaskSessId=s.id||null; aiTaskSbxDir=aiSbxDir(); }catch(e){} /* 重开恢复用：发送时的会话/沙箱快照 */
    if(!s)return;
@@ -5988,7 +7070,9 @@ function aiDoSend(){
    var activePg = (typeof aiDetectCurrentPage==='function' ? aiDetectCurrentPage() : '');
    var targetFile = (aiTargetPageSelect && aiTargetPageSelect.value) || (currentSource && (currentSource.activeSubFile || currentSource.mainHtmlFile || currentSource.name)) || '';
    /* 回滚说明：规范注入位置加错（用户出完原型再做），aiDoSend恢复直通原文t；快照helpers保留供导出附录/预读+后续复用 */
-    window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, uiKind:((typeof currentSource!=='undefined'&&currentSource&&(currentSource.kind||''))||'mobile'), enableTools:_enk, reasoning:(typeof aiCurReasoning==='function'?(aiCurModel()?aiCurReasoning():''):'')}).then(function(r){
+    var _acpSid=String(s.acpSessionId||''),_freshSession=s._freshSession===true;
+    if(_freshSession){ try{ delete s._freshSession; aiSaveSesh(); }catch(e){} }
+    window.protoAPI.ai.ask(t, s.oid||'', aiSbxDir(), aiCurModel(), {history:(s.m||[]).slice(-20), lastHash:s.lastHash||{}, uiSessionId:s.id||'', agentSessionId:s.oid||'', acpSessionId:_acpSid, freshSession:_freshSession, engine:(typeof getActiveEngineInUi==='function'?getActiveEngineInUi():(curAiConfig&&curAiConfig.engine||'cli')), activePage: activePg, targetFile: targetFile, uiKind:((typeof currentSource!=='undefined'&&currentSource&&(currentSource.kind||''))||'mobile'), enableTools:_enk, acpConfig: s.acpConfig || {}, reasoning:(typeof aiCurReasoning==='function'?aiAcpReasoning(s):'')}).then(function(r){
     if(r&&r.error==='busy'){
       /* 主进程忙：本次并未启动任何任务，本地必须复位，否则输入框永久禁用 */
       try{ aiSetBusy(false); }catch(e){}
@@ -6105,7 +7189,7 @@ if(HAS_AI){
    if(aiBusy){ try{ showToast('当前回答进行中，请先点击「停止生成」。'); }catch(e){} return; }
    if(aiChatView)aiChatView.innerHTML='';
    aiEnsureCur();
-   aiSession.m=[]; aiSession.oid=''; try{ aiSession.events=[]; if(aiSession.v!==AI_SESS_V) aiSession.v=AI_SESS_V; }catch(e){} try{ if(typeof aiCurTaskEvents!=='undefined') aiCurTaskEvents=[]; }catch(e){} /* 清空气泡与 opencode 上下文，二者保持一致 */
+   aiSession.m=[]; aiSession.oid=''; aiSession.acpSessionId=''; aiSession._freshSession=true; try{ aiSession.events=[]; if(aiSession.v!==AI_SESS_V) aiSession.v=AI_SESS_V; }catch(e){} try{ if(typeof aiCurTaskEvents!=='undefined') aiCurTaskEvents=[]; }catch(e){} /* 清空气泡与 opencode 上下文，二者保持一致 */
    aiSaveSesh();
   };
    if(aiInputEl)aiInputEl.addEventListener('keydown',function(e){
@@ -6116,9 +7200,18 @@ if(HAS_AI){
  window.protoAPI.ai.onEvent(function(ev){
     if(!ev)return;
     if(ev.type==='session'){
+     /* ACP 会话写 acpSessionId；oid 仅保留 legacy 兼容 */
      var k=aiActiveHistKey();
-     if(k===aiHistKey()||(k&&k.indexOf(SESS_KEY)===0)){ var s=aiCurSesh(); if(s){ s.oid=ev.id||''; aiSaveSesh(); } }
-     else{ aiWriteSeshFor(k,function(v){ v.oid=ev.id||''; }); }
+     if(k===aiHistKey()||(k&&k.indexOf(SESS_KEY)===0)){ var s=aiCurSesh(); if(s){ aiApplySessionEvent(s,ev); aiSaveSesh(); } }
+     else{ aiWriteSeshFor(k,function(v){ aiApplySessionEvent(v,ev); }); }
+    }
+    else if(ev.type==='acp_config'){
+     /* 保存 window.__acpConfig（含 configOptions/warnings），T5b 复用 */
+     try{ aiHandleAcpConfig(ev); }catch(e){}
+    }
+    else if(ev.type==='acp_catalog'){
+     /* T7c：后台刷新完成。按 agentId 归属，仅更新当前 Agent 的模型列表 */
+     try{ aiApplyCatalogEvent(ev); }catch(e){}
     }
      else if(ev.type==='run_started'){
        try{ i5MarkRunStarted(ev); }catch(e){}
@@ -6134,19 +7227,21 @@ if(HAS_AI){
       else if(ev.type==='scope_confirm_dismiss'){
        try{ i5DismissScopeConfirm(ev&&ev.id); }catch(e){}
       }
-      else if(ev.type==='remote-send'){
-       /* 独立窗代发：主窗待提交列表委托本窗发送，填输入框后走本窗 aiDoSend，全程落本窗 */
-       try{
-        var _rs=(ev&&typeof ev==='object')?ev:null;
-        var _rt=_rs?String(_rs.text||'').trim():'';
-        if(_rt){
-         try{ if(aiInputEl) aiInputEl.value=_rt; }catch(e){}
-         try{ window.__aiUserMsgDisplay=String((_rs&&_rs.display)||'')||null; }catch(e){}
-         try{ if(typeof aiDoSend==='function') aiDoSend(); }catch(e){}
-        }
-       }catch(e){}
+      else if(ev.type==='permission_request'){
+       /* ACP 权限请求：行内卡片，落当前任务事件，复用 ai:scope-confirm 回执 */
+       try{ permRequest(ev); }catch(e){}
       }
-     else if(ev.type==='thinking'){
+      else if(ev.type==='permission_resolved'){
+       try{
+        var _prS=aiCurSesh();
+        if(!_prS||aiEventMatchesSession(_prS,ev))permResolved(ev&&ev.id);
+       }catch(e){ try{ permResolved(ev&&ev.id); }catch(e2){} }
+      }
+      else if(ev.type==='agent_status'){
+       /* 轻量状态：只更新既有顶部徽标 title/class 与 data 属性，不改布局 */
+       try{ permAgentStatus(ev); }catch(e){}
+      }
+      else if(ev.type==='thinking'){
       try{ if(typeof aiCurTaskEvents!=='undefined'&&aiCurTaskEvents){ var _tt0=String((ev&&ev.text)||''); if(_tt0.trim()&&typeof aiSessNow==='function') aiCurTaskEvents.push({t:'thinking', text:_tt0, ts:aiSessNow()}); } }catch(e){}
       var g0=aiCurGroup(); if(!g0)return;
       try{ i5ThinkAppendChunk(String((ev&&ev.text)||'')); }catch(e){ try{ aiStreamThink+=String((ev&&ev.text)||''); }catch(e2){} }
@@ -6317,6 +7412,13 @@ function i5RenderAgentMatrix(agents, mainId){
     var nameEl=document.createElement('span'); nameEl.className='agent-name'; nameEl.textContent=i5AgentLabel(a);
     head.appendChild(nameEl);
     var right=document.createElement('span'); right.className='agent-head-right';
+    /* 传输徽标：ACP 标准协议 / 兼容模式，位于 header 右侧、状态点左侧 */
+    var isAcp=!!(a.transport==='acp'&&a.acp&&a.acp.supported);
+    var tb=document.createElement('span');
+    tb.className='agent-transport-badge '+(isAcp?'acp':'compat');
+    tb.textContent=isAcp?'ACP':'兼容';
+    tb.title=isAcp?'该 Agent 走 ACP 标准协议':'该 Agent 使用兼容模式';
+    right.appendChild(tb);
     if(isCur){ var useFlag=document.createElement('span'); useFlag.className='agent-use-flag'; useFlag.textContent='使用中'; right.appendChild(useFlag); }
     var st=document.createElement('span');
     if(a.available){ st.className='agent-status dot'; try{ st.title='已就绪'+(a.version?' · '+a.version:''); }catch(e){} }
@@ -7046,7 +8148,18 @@ function loadSandboxSources(selName, quiet){
     });
     /* 删除沙箱中已移除的预设源 */
     for(var i=sources.length-1;i>=0;i--){ var s=sources[i]; if(s&&s.isPreset&&s.sandboxDir&&!keep[s.name]){ sources.splice(i,1); } }
-    if(!sources.length){ renderSourceList(); libStatus('项目「'+currentProject+'」暂无原型：先点左下角「新建设计」创建，或通过「导入原型」导入 html 文件。'); _refreshDone(); return; }
+    if(!sources.length){
+      /* 空项目：必须清掉上个项目的残留，否则预览帧与文档面板继续显示旧原型 */
+      currentSource=null;
+      try{ if(window.Store&&window.Store.setCurrentSource) window.Store.setCurrentSource(null); }catch(e){}
+      try{ if(window.LinkBind) LinkBind.closeInspector(); }catch(e){}
+      try{ if(window.AnnotationEngine&&typeof AnnotationEngine.closeAll==='function') AnnotationEngine.closeAll(); }catch(e){}
+      try{ if(typeof editHideHover==='function') editHideHover(); }catch(e){}
+      try{ if(typeof frame!=='undefined'&&frame){ if(frame.hasAttribute('srcdoc')) frame.removeAttribute('srcdoc'); frame.setAttribute('src','about:blank'); } }catch(e){}
+      try{ document.title='原型预览'; }catch(e){}
+      try{ if(typeof loadDesc==='function') loadDesc(); }catch(e){}
+      try{ var _dt=document.getElementById('docTitle'); if(_dt) _dt.textContent='暂无原型'; }catch(e){}
+      renderSourceList(); libStatus('项目「'+currentProject+'」暂无原型：先点左下角「新建设计」创建，或通过「导入原型」导入 html 文件。'); _refreshDone(); return; }
     if(_selNameForProto){ /* 新建原型后：按文件夹名选中（fix refresh preserve: subFile param不触发此分支） */
       for(var j=0;j<sources.length;j++){ var so=sources[j]; if(so&&(so.displayName===_selNameForProto||so.name===_selNameForProto+'.html')){ currentSource=so; break; } }
     }
@@ -7761,3 +8874,513 @@ function qformRoundDone(fullText){
   return n;
 }
 try{ if(typeof window !== 'undefined') window.QForm = { find: qformFindAll, display: qformDisplayText, answer: qformBuildAnswer, submit: qformSubmitAnswer }; }catch(e){}
+/* ═══════ ACP 权限请求卡（前端行内） ═══════
+ * 契约：ai:event {type:'permission_request', id, uiSessionId, sessionId, toolCallId, title,
+ *   kind, command?, path?, cwd?, locations?, options?, risk?}
+ * 回执：protoAPI.ai.confirmScope({kind:'acp-permission', id, decision, optionId?})
+ * 落盘：aiCurTaskEvents.push({t:'permission', text:JSON.stringify(payload), ts})
+ * 回放：i5ReplayTimeline 的 t==='permission' 分支重建为只读态（待处理/已处理）。
+ * 约束：不新增 IPC、不弹全屏遮罩，卡片长在 #aiChatView 的助手时间线内。 */
+var permSeq = 0;
+var permLive = {};
+var permResolvedEarly = {};
+function permStr(v){ return (v == null ? '' : String(v)); }
+function permKindInfo(kind, title){
+  var raw = permStr(kind).trim().toLowerCase();
+  var t = permStr(title).trim().toLowerCase();
+  var s = raw || t;
+  if(/exec|shell|command|terminal|run|bash|powershell|cmd/.test(s) || s.indexOf('执行') >= 0) return { key:'execute', label:'执行', hint:'将执行本地命令，可能改动文件或环境。' };
+  if(/edit|write|create|delete|remove|patch|move|rename|save/.test(s) || s.indexOf('写') >= 0 || s.indexOf('修改') >= 0 || s.indexOf('删除') >= 0) return { key:'edit', label:'写文件', hint:'将写入或修改文件，可能覆盖现有内容。' };
+  if(/read|view|open|search|glob|list|grep|find/.test(s) || s.indexOf('读取') >= 0 || s.indexOf('查看') >= 0) return { key:'read', label:'读取', hint:'将读取文件或目录内容。' };
+  if(/fetch|http|web|network|url|download|request/.test(s) || s.indexOf('网络') >= 0 || s.indexOf('请求') >= 0) return { key:'fetch', label:'网络', hint:'将发起网络请求，可能访问外部地址。' };
+  return { key:'other', label:'操作', hint:'该操作会访问本地资源，请确认目标。' };
+}
+function permRiskInfo(risk){
+  var r = permStr(risk).trim().toLowerCase();
+  if(r === 'high' || r === 'h' || r.indexOf('高') >= 0) return { key:'high', label:'高风险' };
+  if(r === 'low' || r === 'l' || r.indexOf('低') >= 0) return { key:'low', label:'低风险' };
+  return { key:'medium', label:'中风险' };
+}
+function permOptionId(payload, decision){
+  var opts = (payload && Array.isArray(payload.options)) ? payload.options : [];
+  var want = [];
+  if(decision === 'deny') want = ['reject_once', 'reject_always', 'deny', 'reject'];
+  else if(decision === 'allow-always') want = ['allow_always', 'allow-always', 'always'];
+  else want = ['allow_once', 'allow-once', 'allow'];
+  for(var i = 0; i < opts.length; i++){
+    var o = opts[i];
+    if(!o || typeof o !== 'object') continue;
+    var k = permStr(o.kind).trim().toLowerCase().replace(/-/g, '_');
+    if(want.indexOf(k) >= 0) return permStr(o.optionId != null ? o.optionId : (o.id != null ? o.id : ''));
+  }
+  return '';
+}
+function permNormalize(ev){
+  var p = {};
+  var keys = ['id', 'agentId', 'agentName', 'workdir', 'uiSessionId', 'sessionId', 'toolCallId', 'title', 'kind', 'command', 'path', 'cwd', 'locations', 'options', 'risk'];
+  for(var i = 0; i < keys.length; i++){
+    var k = keys[i];
+    if(ev && ev[k] != null) p[k] = ev[k];
+  }
+  p.id = permStr(p.id).trim();
+  if(!p.id){ permSeq++; p.id = 'perm_local_' + String(Date.now()) + '_' + String(permSeq); }
+  p.title = permStr(p.title);
+  p.kind = permStr(p.kind);
+  if(p.agentId != null) p.agentId = permStr(p.agentId);
+  if(p.agentName != null) p.agentName = permStr(p.agentName);
+  if(p.workdir != null) p.workdir = permStr(p.workdir);
+  if(p.command != null) p.command = permStr(p.command);
+  if(p.path != null) p.path = permStr(p.path);
+  if(p.cwd != null) p.cwd = permStr(p.cwd);
+  if(p.risk != null) p.risk = permStr(p.risk);
+  if(!Array.isArray(p.locations)) p.locations = [];
+  if(!Array.isArray(p.options)) p.options = [];
+  return p;
+}
+function permMergeState(payload, state, decision){
+  var o = {};
+  try{
+    for(var k in payload){ if(Object.prototype.hasOwnProperty.call(payload, k)) o[k] = payload[k]; }
+  }catch(e){}
+  o.state = state || 'pending';
+  if(decision) o.decision = decision;
+  return o;
+}
+function permStatusText(state){
+  if(state === 'allowed') return '已允许';
+  if(state === 'denied') return '已拒绝';
+  if(state === 'resolved') return '已处理';
+  if(state === 'sending') return '等待处理';
+  return '待处理';
+}
+function permShortTarget(payload){
+  var s = '';
+  if(payload && payload.command) s = permStr(payload.command);
+  else if(payload && payload.path) s = permStr(payload.path);
+  else if(payload && Array.isArray(payload.locations) && payload.locations.length){
+    var l = payload.locations[0] || {};
+    s = permStr(l.path);
+    if(l.line != null && String(l.line) !== '') s += ':' + permStr(l.line);
+  }
+  if(!s) s = permStr(payload && payload.title);
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.length > 80 ? (s.slice(0, 80) + '…') : s;
+}
+function permTargetValue(payload){
+  if(payload && payload.command) return { label:'命令', value:permStr(payload.command) };
+  if(payload && payload.path) return { label:'文件', value:permStr(payload.path) };
+  if(payload && Array.isArray(payload.locations) && payload.locations.length){
+    var l = payload.locations[0] || {};
+    var v = permStr(l.path);
+    if(l.line != null && String(l.line) !== '') v += ':' + permStr(l.line);
+    return { label:'文件', value:v };
+  }
+  return { label:'目标', value:permStr(payload && payload.title) || '（未提供）' };
+}
+function permPaint(entry){
+  if(!entry) return;
+  var state = entry.state || 'pending';
+  try{ if(entry.cardEl) entry.cardEl.setAttribute('data-permission-state', state); }catch(e){}
+  try{
+    if(entry.tagEl){
+      var cls = 'tool-status-tag perm-tag ';
+      if(state === 'pending' || state === 'sending') cls += 'waiting';
+      else if(state === 'allowed') cls += 'done';
+      else if(state === 'denied') cls += 'deny';
+      else cls += 'processed';
+      entry.tagEl.className = cls;
+      entry.tagEl.textContent = permStatusText(state);
+    }
+  }catch(e){}
+  try{
+    if(entry.subEl){
+      var kind = permKindInfo(entry.payload && entry.payload.kind, entry.payload && entry.payload.title);
+      var short = permShortTarget(entry.payload);
+      var suffix = (state === 'pending') ? '（等待确认）' : ('（' + permStatusText(state) + '）');
+      entry.subEl.textContent = kind.label + (short ? (' · ' + short) : '') + suffix;
+    }
+  }catch(e){}
+  try{
+    if(entry.stateEl){
+      var st = '等待你的选择';
+      if(state === 'sending') st = '等待处理';
+      else if(state === 'allowed') st = '已允许';
+      else if(state === 'denied') st = '已拒绝';
+      else if(state === 'resolved') st = '已处理';
+      else if(entry.readonly) st = '待处理 · 仅供查看';
+      entry.stateEl.className = 'perm-state ' + state;
+      entry.stateEl.textContent = st;
+    }
+  }catch(e){}
+  var disabled = !(state === 'pending' && !entry.readonly);
+  try{
+    for(var i = 0; i < entry.buttons.length; i++){ if(entry.buttons[i]) entry.buttons[i].disabled = disabled; }
+  }catch(e){}
+}
+function permBuildCard(payload, opts){
+  var o = opts || {};
+  var state = (o.state === 'allowed' || o.state === 'denied' || o.state === 'resolved' || o.state === 'sending') ? o.state : 'pending';
+  var readonly = !!o.readonly;
+  var kind = permKindInfo(payload.kind, payload.title);
+  var risk = permRiskInfo(payload.risk);
+  var target = permTargetValue(payload);
+  var wrap = document.createElement('div');
+  wrap.className = 'perm-wrap';
+  var stream = document.createElement('div');
+  stream.className = 'tool-execution-stream';
+  var head = document.createElement('div');
+  head.className = 'tool-call-card';
+  var left = document.createElement('div');
+  left.className = 'tool-call-left';
+  var ic = document.createElement('span');
+  ic.className = 'tool-icon';
+  ic.textContent = '!';
+  var nm = document.createElement('span');
+  nm.className = 'tool-name';
+  nm.textContent = 'permission';
+  var pm = document.createElement('span');
+  pm.className = 'tool-param';
+  left.appendChild(ic);
+  left.appendChild(nm);
+  left.appendChild(pm);
+  var tag = document.createElement('span');
+  tag.className = 'tool-status-tag waiting perm-tag';
+  tag.textContent = permStatusText(state);
+  head.appendChild(left);
+  head.appendChild(tag);
+  stream.appendChild(head);
+  wrap.appendChild(stream);
+
+  var card = document.createElement('div');
+  card.className = 'perm-card';
+  card.setAttribute('data-permission-id', String(payload.id));
+  card.setAttribute('data-permission-state', state);
+  if(payload.agentId) card.setAttribute('data-agent-id', String(payload.agentId));
+  if(payload.workdir) card.setAttribute('data-workdir', String(payload.workdir));
+  var headRow = document.createElement('div');
+  headRow.className = 'perm-head';
+  var title = document.createElement('span');
+  title.className = 'perm-title';
+  title.textContent = 'Agent 请求执行操作';
+  var badge = document.createElement('span');
+  badge.className = 'perm-badge perm-kind ' + kind.key;
+  badge.textContent = kind.label;
+  var riskEl = document.createElement('span');
+  riskEl.className = 'perm-risk ' + risk.key;
+  riskEl.textContent = risk.label;
+  headRow.appendChild(title);
+  headRow.appendChild(badge);
+  headRow.appendChild(riskEl);
+  card.appendChild(headRow);
+  if(payload.agentName || payload.agentId || payload.workdir){
+    var agentRow = document.createElement('div');
+    agentRow.className = 'perm-agent';
+    var agentTxt = payload.agentName || payload.agentId || '';
+    agentRow.textContent = (agentTxt ? ('Agent：' + agentTxt) : '') + (payload.workdir ? ((agentTxt ? ' · ' : '') + '工作目录：' + payload.workdir) : '');
+    card.appendChild(agentRow);
+  }
+  if(payload.title && payload.title !== 'Agent 请求执行操作'){
+    var sub = document.createElement('div');
+    sub.className = 'perm-sub';
+    sub.textContent = payload.title;
+    card.appendChild(sub);
+  }
+
+  var targetBox = document.createElement('div');
+  targetBox.className = 'perm-target';
+  var targetLabel = document.createElement('div');
+  targetLabel.className = 'perm-target-label';
+  targetLabel.textContent = target.label;
+  var targetValue = document.createElement('code');
+  targetValue.className = 'perm-target-value';
+  targetValue.textContent = target.value;
+  targetBox.appendChild(targetLabel);
+  targetBox.appendChild(targetValue);
+  card.appendChild(targetBox);
+
+  if(payload.cwd){
+    var cwd = document.createElement('div');
+    cwd.className = 'perm-cwd';
+    cwd.textContent = '工作目录：' + payload.cwd;
+    card.appendChild(cwd);
+  }
+
+  var locs = Array.isArray(payload.locations) ? payload.locations : [];
+  if(locs.length){
+    var locBox = document.createElement('div');
+    locBox.className = 'perm-loc-list';
+    var locTitle = document.createElement('div');
+    locTitle.className = 'perm-loc-title';
+    locTitle.textContent = '涉及位置（' + String(locs.length) + '）';
+    locBox.appendChild(locTitle);
+    var max = locs.length > 6 ? 6 : locs.length;
+    for(var li = 0; li < max; li++){
+      var loc = locs[li] || {};
+      var row = document.createElement('div');
+      row.className = 'perm-loc';
+      var code = document.createElement('code');
+      var lv = permStr(loc.path);
+      if(loc.line != null && String(loc.line) !== '') lv += ':' + permStr(loc.line);
+      code.textContent = lv || '（未知）';
+      row.appendChild(code);
+      locBox.appendChild(row);
+    }
+    if(locs.length > max){
+      var more = document.createElement('div');
+      more.className = 'perm-loc-more';
+      more.textContent = '等 ' + String(locs.length) + ' 处';
+      locBox.appendChild(more);
+    }
+    card.appendChild(locBox);
+  }
+
+  var hint = document.createElement('div');
+  hint.className = 'perm-risk-hint ' + risk.key;
+  hint.textContent = risk.label + '：' + kind.hint;
+  card.appendChild(hint);
+
+  var foot = document.createElement('div');
+  foot.className = 'perm-foot';
+  var buttons = [];
+  function mkBtn(label, decision, cls){
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = cls;
+    b.textContent = label;
+    b.onclick = function(){ permDecide(entry, decision); };
+    buttons.push(b);
+    return b;
+  }
+  var bDeny = mkBtn('拒绝', 'deny', 'docs-btn perm-btn-deny');
+  var bAlways = mkBtn('本会话始终允许此类', 'allow-always', 'docs-btn');
+  var bOnce = mkBtn('允许一次', 'allow-once', 'docs-btn primary');
+  foot.appendChild(bDeny);
+  foot.appendChild(bAlways);
+  foot.appendChild(bOnce);
+  card.appendChild(foot);
+
+  var stateEl = document.createElement('div');
+  stateEl.className = 'perm-state ' + state;
+  stateEl.textContent = state === 'pending' ? '等待你的选择' : permStatusText(state);
+  card.appendChild(stateEl);
+  wrap.appendChild(card);
+
+  var entry = {
+    id: String(payload.id),
+    agentId: permStr(payload.agentId),
+    agentName: permStr(payload.agentName),
+    workdir: permStr(payload.workdir),
+    payload: payload,
+    state: state,
+    decision: permStr(o.decision),
+    readonly: readonly,
+    wrap: wrap,
+    cardEl: card,
+    tagEl: tag,
+    subEl: pm,
+    stateEl: stateEl,
+    buttons: buttons
+  };
+  permLive[String(payload.id)] = entry;
+  permPaint(entry);
+  return { wrap: wrap, tagEl: tag, entry: entry };
+}
+function permHost(){
+  try{
+    if(typeof i5TlEnsureTimeline === 'function'){
+      var tl = i5TlEnsureTimeline();
+      if(tl) return tl;
+    }
+  }catch(e){}
+  try{
+    var st = (typeof aiStreaming !== 'undefined') ? aiStreaming : null;
+    if(st){
+      var body = st.querySelector ? st.querySelector('.ai-msg-body') : null;
+      if(!body){ body = document.createElement('div'); body.className = 'ai-msg-body'; st.appendChild(body); }
+      var tl2 = body.querySelector ? body.querySelector('.i5-timeline') : null;
+      if(!tl2){ tl2 = document.createElement('div'); tl2.className = 'i5-timeline'; body.appendChild(tl2); }
+      return tl2;
+    }
+    var cv = (typeof aiChatView !== 'undefined') ? aiChatView : null;
+    if(cv){
+      var msg = document.createElement('div');
+      msg.className = 'ai-msg ai';
+      var body2 = document.createElement('div');
+      body2.className = 'ai-msg-body';
+      var tl3 = document.createElement('div');
+      tl3.className = 'i5-timeline';
+      body2.appendChild(tl3);
+      msg.appendChild(body2);
+      cv.appendChild(msg);
+      return tl3;
+    }
+  }catch(e){}
+  return null;
+}
+function permPushEvent(payload){
+  try{
+    var arr = (typeof aiCurTaskEvents !== 'undefined' && Array.isArray(aiCurTaskEvents)) ? aiCurTaskEvents : null;
+    if(!arr) return false;
+    var id = String(payload.id);
+    for(var i = 0; i < arr.length; i++){
+      var e = arr[i];
+      if(!e || (e.t !== 'permission' && e.type !== 'permission')) continue;
+      var o = null;
+      try{ o = JSON.parse(String(e.text || '')); }catch(err){ continue; }
+      if(o && String(o.id) === id) return false;
+    }
+    var ts = (typeof aiSessNow === 'function') ? aiSessNow() : Date.now();
+    arr.push({ t:'permission', text:JSON.stringify(payload), ts:ts });
+    return true;
+  }catch(e){ return false; }
+}
+function permPersistState(payload, state, decision){
+  var text = JSON.stringify(permMergeState(payload, state, decision));
+  var id = String(payload.id);
+  var updated = false;
+  try{
+    var arr = (typeof aiCurTaskEvents !== 'undefined' && Array.isArray(aiCurTaskEvents)) ? aiCurTaskEvents : [];
+    for(var i = arr.length - 1; i >= 0; i--){
+      var e = arr[i];
+      if(!e || (e.t !== 'permission' && e.type !== 'permission')) continue;
+      var o = null;
+      try{ o = JSON.parse(String(e.text || '')); }catch(err){ continue; }
+      if(o && String(o.id) === id){ e.text = text; updated = true; break; }
+    }
+  }catch(e){}
+  try{
+    var s = (typeof aiCurSesh === 'function') ? aiCurSesh() : null;
+    if(s && Array.isArray(s.events)){
+      for(var j = s.events.length - 1; j >= 0; j--){
+        var ev = s.events[j];
+        if(!ev || (ev.t !== 'permission' && ev.type !== 'permission')) continue;
+        var o2 = null;
+        try{ o2 = JSON.parse(String(ev.text || '')); }catch(err2){ continue; }
+        if(o2 && String(o2.id) === id){ ev.text = text; updated = true; break; }
+      }
+      if(updated && typeof aiSaveSesh === 'function') aiSaveSesh();
+    }
+  }catch(e){}
+  return updated;
+}
+function permDecide(entry, decision){
+  if(!entry || entry.readonly || entry.state !== 'pending') return false;
+  var p = entry.payload || {};
+  var payload = { kind:'acp-permission', id:String(p.id), decision:String(decision) };
+  var opt = permOptionId(p, decision);
+  if(opt) payload.optionId = opt;
+  var sent = false;
+  try{
+    if(typeof window !== 'undefined' && window && window.protoAPI && window.protoAPI.ai && typeof window.protoAPI.ai.confirmScope === 'function'){
+      window.protoAPI.ai.confirmScope(payload);
+      sent = true;
+    }
+  }catch(e){ sent = false; }
+  entry.decision = String(decision);
+  entry.state = sent ? ((decision === 'deny') ? 'denied' : 'allowed') : 'sending';
+  permPaint(entry);
+  permPersistState(p, sent ? entry.state : 'pending', decision);
+  try{ if(typeof i5TlScroll === 'function') i5TlScroll(); }catch(e){}
+  return true;
+}
+function permRequest(ev){
+  if(!ev || typeof ev !== 'object') return false;
+  /* T7c：权限请求必须属于当前 Agent/会话；跨 Agent/会话只入缓存并轻提示，不弹当前卡 */
+  try{
+    var curSess = (typeof aiCurSesh === 'function') ? aiCurSesh() : null;
+    if(curSess){
+      var foreign = false;
+      if(typeof aiEventMatchesSession === 'function') foreign = !aiEventMatchesSession(curSess, ev);
+      else{
+        var ea = String(ev.agentId || ''), sa = String(curSess.agentId || '');
+        if(ea && sa && ea !== sa) foreign = true;
+        var eu = String(ev.uiSessionId || '');
+        if(eu && curSess.id && eu !== String(curSess.id)) foreign = true;
+      }
+      if(foreign){
+        try{
+          var cache = (window.__acpPendingPermissions && typeof window.__acpPendingPermissions === 'object') ? window.__acpPendingPermissions : {};
+          var ck = String(ev.agentId || '') + '|' + String(ev.uiSessionId || ev.sessionId || '') + '|' + String(ev.id || '');
+          cache[ck] = { event: ev, updatedAt: Date.now() };
+          window.__acpPendingPermissions = cache;
+        }catch(e){}
+        try{ if(typeof aiAppendTrace === 'function') aiAppendTrace({ tag:'ACP', level:'warn', text:'收到其他 Agent/会话的权限请求，已暂存未展示' }); }catch(e){}
+        return false;
+      }
+      try{ if(typeof aiBindSessionAgent === 'function') aiBindSessionAgent(curSess, ev); }catch(e){}
+    }
+  }catch(e){}
+  var p = permNormalize(ev);
+  var id = String(p.id);
+  if(permLive[id]){
+    var old = permLive[id];
+    /* 回放出来的待处理卡可被真实请求升级为可操作；已处理/真实卡则按幂等忽略 */
+    if(!old.readonly || old.state !== 'pending'){
+      if(permResolvedEarly[id]) permResolved(id);
+      return false;
+    }
+    try{ if(old.wrap && old.wrap.parentNode) old.wrap.parentNode.removeChild(old.wrap); }catch(e){}
+    try{ delete permLive[id]; }catch(e){}
+  }
+  var host = permHost();
+  if(host && host.querySelector){
+    try{ if(host.querySelector('[data-permission-id="' + id.replace(/"/g, '') + '"]')) return false; }catch(e){}
+  }
+  var built = permBuildCard(p, { state: permResolvedEarly[id] ? 'resolved' : 'pending' });
+  try{ if(host) host.appendChild(built.wrap); }catch(e){}
+  permLive[id] = built.entry;
+  if(permResolvedEarly[id]) permPushEvent(permMergeState(p, 'resolved', ''));
+  else permPushEvent(p);
+  try{ if(typeof i5TlScroll === 'function') i5TlScroll(); }catch(e){}
+  return true;
+}
+function permResolved(id){
+  var key = permStr(id).trim();
+  if(!key) return false;
+  permResolvedEarly[key] = true;
+  var entry = permLive[key] || null;
+  if(!entry) return false;
+  if(entry.state === 'pending' || entry.state === 'sending') entry.state = 'resolved';
+  permPaint(entry);
+  permPersistState(entry.payload, entry.state, entry.decision);
+  return true;
+}
+function permReplayOne(tl, e){
+  try{
+    if(!tl) return false;
+    var o = null;
+    try{ o = JSON.parse(String((e && e.text) || '')); }catch(err){ return false; }
+    if(!o || !o.id) return false;
+    var p = permNormalize(o);
+    var st = (o.state === 'allowed' || o.state === 'denied' || o.state === 'resolved') ? o.state : 'pending';
+    var built = permBuildCard(p, { state: st, readonly: true, decision: o.decision || '' });
+    tl.appendChild(built.wrap);
+    return true;
+  }catch(e2){ return false; }
+}
+function permAgentStatus(ev){
+  if(!ev || typeof ev !== 'object') return false;
+  var st = permStr(ev.status).toLowerCase();
+  var msg = permStr(ev.message);
+  var label = (st === 'connected') ? 'Agent 已连接'
+    : (st === 'auth_required') ? 'Agent 需要登录'
+    : (st === 'disconnected') ? 'Agent 已断开'
+    : 'Agent 异常';
+  var cls = (st === 'connected') ? 'ok' : (st === 'auth_required' ? 'warn' : 'err');
+  try{ if(typeof window !== 'undefined') window.__aiAgentStatus = { status:st, message:msg, ts:(typeof aiSessNow === 'function') ? aiSessNow() : Date.now() }; }catch(e){}
+  try{
+    var cli = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('aiCli') : null;
+    if(cli){ cli.className = 'ai-cli ' + cls; cli.title = label + (msg ? (' · ' + msg) : ''); }
+  }catch(e){}
+  try{
+    var badge = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('aiAgentBadge') : null;
+    if(badge) badge.setAttribute('data-agent-status', st);
+  }catch(e){}
+  try{ if(typeof aiSyncBadgeDot === 'function') aiSyncBadgeDot(cls); }catch(e){}
+  try{
+    var cv = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('aiChatView') : null;
+    if(cv) cv.setAttribute('data-agent-status', st);
+  }catch(e){}
+  return true;
+}
+try{ if(typeof window !== 'undefined') window.PermCard = { request:permRequest, resolved:permResolved, build:permBuildCard, replay:permReplayOne, decide:permDecide, optionId:permOptionId, live:permLive }; }catch(e){}

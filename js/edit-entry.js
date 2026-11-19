@@ -670,19 +670,60 @@ function prIdEnsureInjected(html){
     var cnt=maxN;
     var nid=function(tag){ cnt++; var tg=String(tag||'div').toLowerCase().replace(/[^a-z0-9]/g,''); var id='pr-'+tg+'-'+cnt; while(seen[id]){ cnt++; id='pr-'+tg+'-'+cnt; } seen[id]=1; return id; };
     var parts=s.split(/(<!--[\s\S]*?-->|<script[\s>][\s\S]*?<\/script\s*>|<style[\s>][\s\S]*?<\/style\s*>)/gi);
+    /* 引号感知标签结尾：从'<'逐字符走，遇单/双引号跳到配对闭引号，首个引号外'>'为结尾（含'>'的:class/@click/v-if不再切错） */
+    var prIdTagEnd=function(str,from){
+      var j=from+1;
+      while(j<str.length){
+        var c=str.charAt(j);
+        if(c==='"'||c==="'"){
+          var q=c; j++;
+          while(j<str.length&&str.charAt(j)!==q){ j++; }
+          if(j>=str.length){ return -1; }
+          j++;
+        }else if(c==='>'){ return j; }
+        else{ j++; }
+      }
+      return -1;
+    };
+    var prIdReplaceTags=function(chunk,cb){
+      var out='',pos=0;
+      while(pos<chunk.length){
+        var lt=chunk.indexOf('<',pos);
+        if(lt<0){ out+=chunk.slice(pos); break; }
+        out+=chunk.slice(pos,lt);
+        var end=prIdTagEnd(chunk,lt);
+        if(end<0){ out+=chunk.charAt(lt); pos=lt+1; continue; }
+        var full=chunk.slice(lt,end+1),rep=null;
+        try{ rep=cb(full); }catch(e){ rep=null; }
+        out+=(typeof rep==='string'?rep:full);
+        pos=end+1;
+      }
+      return out;
+    };
     for(var i=0;i<parts.length;i+=2){
       var chunk=parts[i];
-      chunk=chunk.replace(/<(button|a|input|select|textarea|option|label)([^>]*?)>/gi,function(m0,tag,attrs){
+      chunk=prIdReplaceTags(chunk,function(m0){
+        var mm=/^<(button|a|input|select|textarea|option|label)([\s\S]*)>$/i.exec(m0);
+        if(!mm) return m0;
+        var tag=mm[1],attrs=mm[2];
         if(/data-pr-id\s*=/.test(attrs)||/data-testid\s*=/.test(attrs)) return m0;
         return '<'+tag+attrs+' data-pr-id="'+nid(tag)+'">';
       });
-      chunk=chunk.replace(/<([a-z][a-z0-9]*)([^>]*\bclass\s*=\s*["'][^"']*["'][^>]*?)>/gi,function(m0,tag,attrs){
+      chunk=prIdReplaceTags(chunk,function(m0){
+        var mm=/^<([a-z][a-z0-9]*)([\s\S]*)>$/i.exec(m0);
+        if(!mm) return m0;
+        var tag=mm[1],attrs=mm[2];
+        if(!/\bclass\s*=\s*(?:"[^"]*"|'[^']*')/.test(attrs)) return m0;
         var tl=String(tag).toLowerCase();
         if(/^(html|head|body|script|style|link|meta|title|base|template)$/.test(tl)) return m0;
         if(/data-pr-id\s*=/.test(attrs)||/data-testid\s*=/.test(attrs)) return m0;
         return '<'+tag+attrs+' data-pr-id="'+nid(tag)+'">';
       });
-      chunk=chunk.replace(/<([a-z][a-z0-9]*)([^>]*\b(?:data-page|onclick)\s*=[^>]*?)>/gi,function(m0,tag,attrs){
+      chunk=prIdReplaceTags(chunk,function(m0){
+        var mm=/^<([a-z][a-z0-9]*)([\s\S]*)>$/i.exec(m0);
+        if(!mm) return m0;
+        var tag=mm[1],attrs=mm[2];
+        if(!/\b(?:data-page|onclick)\s*=/.test(attrs)) return m0;
         if(/data-pr-id\s*=/.test(attrs)) return m0;
         return '<'+tag+attrs+' data-pr-id="'+nid(tag)+'">';
       });
@@ -692,10 +733,33 @@ function prIdEnsureInjected(html){
   }catch(e){ return String(html==null?'':html); }
 }
 /* 升级内核（纯函数，无IO）：在内存注入ID后的文档中按序号/文本定位所点元素，返回其 pr-id 选择器。
- * 注入只加属性不改变顺序与数量，故序号可跨文档对应；文件已有ID（活文档滞后）时直接在原文档中取号。 */
+ * 注入只加属性不改变顺序与数量，故序号可跨文档对应；文件已有ID（活文档滞后）时直接在原文档中取号。
+ * v-for 复制护栏：解析出的 pr-id 选择器在静态文档里计数，命中数!==1（0个或多个，如 v-for 复制带静态 data-pr-id）时
+ * 直接返回 null，禁止回退到 nth-of-type 全路径（序号/全路径回退必错位，必须停下）。返回 null 即定不到，调用方按失败路径处理。 */
 function prIdPickUpgrade(srcHtml, selector, liveIndex, text){
   try{
-    if(/data-pr-id\s*=/.test(String(selector||''))) return null;
+    /* 输入已是 pr-id：解析出 ID 后在静态原文档里计数，!=1（0个/多个，如 v-for 复制）直接返回 null，不做升级也不回退全路径 */
+    var inSel=String(selector||'');
+    if(/data-pr-id\s*=/.test(inSel)){
+      try{
+        var mIn=inSel.match(/\[data-pr-id="([^"]+)"\]/);
+        if(mIn&&mIn[1]){
+          var nsIn='[data-pr-id="'+mIn[1].replace(/"/g,'')+'"]';
+          var srcIn=String(srcHtml||'');
+          if(srcIn){
+            try{
+              var dIn=new DOMParser().parseFromString(srcIn,'text/html');
+              if(dIn){
+                var cIn=null;
+                try{ cIn=dIn.querySelectorAll(nsIn); }catch(eIn){}
+                if(!cIn||cIn.length!==1) return null;
+              }
+            }catch(eIn2){}
+          }
+        }
+      }catch(eIn3){}
+      return null;
+    }
     if(typeof prIdEnsureInjected!=='function') return null;
     var src=String(srcHtml||'');
     var injected='';
@@ -741,7 +805,20 @@ function prIdPickUpgrade(srcHtml, selector, liveIndex, text){
     var ns='[data-pr-id="'+pid.replace(/"/g,'')+'"]';
     var chk=null;
     try{ chk=baseDoc.querySelectorAll(ns); }catch(e){}
+    /* v-for 复制护栏：解析出的 pr-id 在静态文档里必须恰1（0个/多个直接返回 null，禁止回退 nth-of-type 全路径） */
     if(!chk||chk.length!==1) return null;
+    /* 静态原文档复核（注入后新增ID在原文档中为0属正常，仅拦截>1：v-for 复制/文件内重复，停下不猜） */
+    try{
+      if(changed){
+        var srcDoc=null;
+        try{ srcDoc=new DOMParser().parseFromString(src,'text/html'); }catch(e2){ srcDoc=null; }
+        if(srcDoc){
+          var chk0=null;
+          try{ chk0=srcDoc.querySelectorAll(ns); }catch(e3){ chk0=null; }
+          if(chk0&&chk0.length>1) return null;
+        }
+      }
+    }catch(e){}
     return { sel:ns, pdoc:baseDoc, srcHtml:changed?injected:src, el:hits[k], noop:!changed };
   }catch(e){ return null; }
 }
@@ -2239,31 +2316,7 @@ function editQueueSubmit(){
   persistEditQueue();
   updateEditBadge(); renderEditDrawer();
   EDIT_PENDING_SUBMIT=true;
-  /* 独立窗委托：对话框在独立窗口时，发送必须由独立窗执行自己的 aiDoSend，
-   * 否则气泡与流式事件全进本窗隐藏面板，独立窗什么也看不到。 */
-  var _detachedRemote=false;
-  try{ _detachedRemote = !!window.__aiWinOpen && !!(window.protoAPI&&window.protoAPI.ai&&window.protoAPI.ai.remoteSend&&window.protoAPI.ai.isBusy); }catch(e){ _detachedRemote=false; }
-  if(_detachedRemote){
-    (function(){
-      var _go=function(){
-        try{ editQueueDropSubmitted(); }catch(e){}
-        persistEditQueue();
-        updateEditBadge(); renderEditDrawer();
-        EDIT_PENDING_SUBMIT=true;
-        window.protoAPI.ai.remoteSend({text:t, display:td}).then(function(r){
-          if(r&&r.ok){ libStatus('已将 '+count+' 条修改需求提交给大模型，生成完成后自动刷新原型。'); }
-          else { editQueueRollback('独立窗提交失败：'+((r&&(r.error||r.message))||'未知错误')); }
-        }).catch(function(e2){ editQueueRollback('发送失败：'+(e2&&e2.message||e2)); });
-      };
-      try{
-        window.protoAPI.ai.isBusy().then(function(b){
-          if(b){ try{ libStatus('上一个任务仍在运行，请先停止后再发送。'); }catch(e3){} return; }
-          _go();
-        }).catch(function(){ _go(); });
-      }catch(e4){ _go(); }
-    })();
-    return;
-  }
+  /* 工具内 AI 弹窗统一入口：本地打开并发送，气泡与流式事件均落当前窗口 */
   if(typeof aiBusy!=='undefined'&&aiBusy){ try{ libStatus('上一个任务仍在运行，请先停止后再发送。'); }catch(e5){} return; }
   try{ editQueueDropSubmitted(); }catch(e6){}
   try{
@@ -2289,7 +2342,7 @@ function editQueueDropSubmitted(){
     return n0-EDIT_QUEUE.length;
   }catch(e){ return 0; }
 }
-/* 提交失败回滚（抽取共用：独立窗远端失败与本地异常走同一恢复；只补回已提交项，未动过的保留） */
+/* 提交失败回滚（抽取共用：本地发送异常与回滚恢复走同一路径；只补回已提交项，未动过的保留） */
 function editQueueRollback(msg){
   var backup=null; try{ backup=JSON.parse(localStorage.getItem('edit_queue_backup')||'null'); }catch(_e){ backup=null; }
   var list=(Array.isArray(backup)&&backup.length)?backup:((typeof _editQueueBackup!=='undefined'&&Array.isArray(_editQueueBackup))?_editQueueBackup:[]);

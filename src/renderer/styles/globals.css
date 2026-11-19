@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+/* ============================================================================
+ * PlanD shadcn New York 设计基座 · Phase 0（§6 / §8.1 / §9）
+ * 视觉基线：docs/shadcn-redesign-preview.html 顶部 .shadcn-app tokens（只读引用，
+ * 未复制业务 JS）。不引入外部字体/CDN。
+ * ========================================================================== */
+
+:root {
+  --background: #ffffff;
+  --foreground: #09090b;
+  --canvas: #f4f4f5;
+  --chrome: #fafafa;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --destructive-foreground: #fef2f2;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #18181b;
+  --cobalt: #2563eb;
+  --cobalt-soft: #eff6ff;
+  --cobalt-border: #bfdbfe;
+  --emerald: #059669;
+  --emerald-soft: #ecfdf5;
+  --amber: #d97706;
+  --amber-soft: #fffbeb;
+  --sky: #0284c7;
+  --sky-soft: #f0f9ff;
+  --rose: #e11d48;
+  --rose-soft: #fff1f2;
+  --radius: 0.625rem;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --shadow-sm: 0 1px 2px 0 rgb(9 9 11 / 0.05);
+  --shadow-md: 0 4px 12px -2px rgb(9 9 11 / 0.08), 0 2px 4px -2px rgb(9 9 11 / 0.04);
+  --shadow-lg: 0 16px 36px -8px rgb(9 9 11 / 0.14), 0 4px 12px -4px rgb(9 9 11 / 0.06);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* §8.1 硬性约束：左侧栏宽度覆写为 236px（效果图比例）。 */
+  --sidebar-width: 236px;
+}
+
+/* Tailwind v4 语义色映射：组件里可直接用 bg-background / text-muted-foreground 等。 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-canvas: var(--canvas);
+  --color-chrome: var(--chrome);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-cobalt: var(--cobalt);
+  --color-cobalt-soft: var(--cobalt-soft);
+  --color-cobalt-border: var(--cobalt-border);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius-xl);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+}
+
+/* 基础字号 13px（§9）；按钮 12.5px 见 buttonVariants；小字 11–12px 各组件自理。 */
+body {
+  background: var(--canvas);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 全局细圆角滚动条：6px（§9）。 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa;
+}
+
+/* 统一焦点环：--cobalt 只用于链接 / 焦点 / 少量强调（§9），禁用态/loading/empty 各组件自理。 */
+:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------------------------
+ * --cobalt 使用红线（§9）：链接、焦点环、拾取准星等少量强调可用；左侧原型列表
+ * 选中态禁用蓝色。本次 Phase 0 不写列表组件，选中规范只留给 Wave2：
+ *   方案一：纯白卡片 + 深墨（--primary #18181b）左指示条；
+ *   方案二：灰底（--accent） + 深墨圆点；
+ *   文件夹不显示右侧计数数字；悬停显示 6 点拖拽手柄。
+ * -------------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------------
+ * 文档面板布局规则差异（§8.1，为 Wave3 留档，本次不写死同一套分栏）：
+ *   PC 端   = 右侧独立悬浮弹层（含遮罩 + Esc 关闭），绝不挤压 PC 原型，
+ *             严禁用 Resizable 做 PC 分栏；
+ *   移动端 = Flex 并排挤压舞台，视窗固定 375×780 逻辑像素，默认「自适应」，
+ *             外层等比缩放盒 + ResizeObserver 随窗口/文档挤压实时缩放，
+ *             避免外层滚轮上下翻。
+ * -------------------------------------------------------------------------- */
+
+/* .dark tokens 占位：首期只验收 light，dark 单独排期为二期（§9），此处不写死。 */
+/* TODO(二期): 补全 .dark 下全套 tokens（--background/--foreground/--card/--popover/--border 等反转）。 */
+.dark {
+}

@@ -263,7 +263,7 @@ function testA9_WriteChannelSrc() {
   assert.ok(!/ipcRenderer\.invoke\(['"]inline/.test(editSrc), '不得经 ipcRenderer 新增 inline 通道');
 }
 
-// ── A10 脚本清单（Wave-D/G: 开发11不变 + EXPORT轻量2解耦；白名单17不变 js/**已覆盖export-template） ──
+// ── A10 脚本清单（Wave-D/G: 开发11不变 + EXPORT轻量2解耦；白名单=legacy12+bak排除6+dist/renderer/**） ──
 function testA10_NoNewScript() {
   const scripts = [...htmlSrc.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)].map(x => x[1].replace(/\\/g, '/'));
   assert.strictEqual(scripts.length, 18, `HTML script 须为 18 个(16经典+utils/store ESM, Wave-D/G), 实际${scripts.length}: ${scripts.join(',')}`);
@@ -277,10 +277,64 @@ function testA10_NoNewScript() {
   assert.ok(!/id="inlineEditPop"/.test(htmlSrc), '浮层须 JS 动态创建，HTML 不得预置 #inlineEditPop（零污染）');
   const pkg = JSON.parse(pkgSrc);
   const filesList = (((pkg || {}).build || {}).files || []);
-  assert.strictEqual(filesList.length, 18, `build.files 白名单须为 18 条(12白+6bak排除，Wave-B新增main/**，UI规范新增design-specs/**)，实际${filesList.length}`);
-  assert.strictEqual(filesList.filter(p => String(p).startsWith('!')).length, 6, '新增6条须全为!排除项(防借机偷渡文件进包)');
+  // Phase0：不再断言“恰好18条”，改为“必需项齐全 + 6条bak排除 + 9条node_modules瘦身剪枝 + 无违禁/无夹带”，
+  // 与 tests/check-pack.js §1/§2/§5 同源口径（legacy 12 项 + dist/renderer/**）。
+  // P2-2 瘦身：build.files 新增 9 条 `!**/node_modules/**` 负向剪枝（安装器 ~91MiB），
+  // 故“排除项恰 6 条”改为“按用途分类计数”：.bak 恰 6 条、node_modules 剪枝恰 9 条且逐条登记。
+  const REQUIRED_FILES = [
+    'main.js', 'main/**', 'preload.js', 'app.css', 'js/**',
+    'runtimes/**', 'providers/**', 'platform/**', 'git/**',
+    '原型+文档.html', 'toolPrompt.md', 'design-specs/**',
+    'dist/renderer/**',
+  ];
+  const BAK_EXCLUSIONS = ['!js/**/*.bak', '!runtimes/**/*.bak', '!providers/**/*.bak',
+    '!platform/**/*.bak', '!git/**/*.bak', '!**/*.bak'];
+  const NM_PRUNES = [
+    '!**/node_modules/**/*.map',
+    '!**/node_modules/**/*.md',
+    '!**/node_modules/**/{test,tests,__tests__}/**',
+    '!**/node_modules/**/*.{test,spec}.js',
+    '!**/node_modules/zod/src/**',
+    '!**/node_modules/bare-*/prebuilds/{android-*,darwin-*,ios-*,linux-*,win32-arm64}/**',
+    '!**/node_modules/@esbuild/**',
+    '!**/node_modules/lightningcss-win32-x64-msvc/**',
+    '!**/node_modules/@tailwindcss/oxide-win32-x64-msvc/**',
+  ];
+  for (const need of REQUIRED_FILES) {
+    assert.ok(filesList.includes(need), `build.files 缺必需项: ${need}（legacy 12 项 + dist/renderer/**）`);
+  }
+  const excludes = filesList.filter(p => String(p).startsWith('!'));
+  const bakExcludes = excludes.filter(p => String(p).includes('.bak'));
+  const nmExcludes = excludes.filter(p => !String(p).includes('.bak'));
+  assert.strictEqual(bakExcludes.length, BAK_EXCLUSIONS.length,
+    `.bak 排除须恰为${BAK_EXCLUSIONS.length}条(防借机偷渡文件进包)，实际${bakExcludes.length}: ${bakExcludes.join(',')}`);
+  for (const exc of BAK_EXCLUSIONS) {
+    assert.ok(excludes.includes(exc), `build.files 缺bak排除项: ${exc}`);
+  }
+  assert.strictEqual(nmExcludes.length, NM_PRUNES.length,
+    `node_modules 瘦身剪枝须恰为${NM_PRUNES.length}条(P2-2)，实际${nmExcludes.length}: ${nmExcludes.join(',')}`);
+  for (const prune of NM_PRUNES) {
+    assert.ok(excludes.includes(prune), `build.files 缺node_modules剪枝: ${prune}`);
+  }
+  // 排除项只许两类合法用途：.bak 清理 / `**/node_modules/**` 瘦身剪枝。
+  // 其余任何 `!` 一律失败（不得排除运行时必需文件，如 !js/core-docs.js）。
+  for (const p of excludes) {
+    const s = String(p);
+    const legal = s.includes('.bak') || /^!\*\*\/node_modules\/.+/.test(s);
+    assert.ok(legal, `非法排除项（只允许 .bak 或 **/node_modules/** 剪枝）: ${s}`);
+  }
+  // 防夹带：正例只允许 REQUIRED_FILES；负例只允许上述两类登记条目（13正例+6bak+9剪枝=28条）。
+  const legalNegatives = new Set([...BAK_EXCLUSIONS, ...NM_PRUNES]);
+  const extras = filesList.filter(p => !REQUIRED_FILES.includes(String(p)) && !legalNegatives.has(String(p)));
+  assert.deepStrictEqual(extras, [], `build.files 不得夹带未登记条目，实际多出: ${JSON.stringify(extras)}`);
+  assert.strictEqual(new Set(filesList).size, filesList.length, 'build.files 不得有重复条目');
+  // 违禁项（与 check-pack.js §5 同口径）
+  for (const bad of ['tests/**', '.devdata', '*.log', '桌面端/', '桌面端']) {
+    assert.ok(!filesList.includes(bad), `违禁项不得进包: ${bad}`);
+  }
   assert.ok(filesList.includes('main/**'), 'Wave-B主进程拆分目录须进包');
   assert.ok(filesList.includes('design-specs/**'), 'UI规范种子目录须进包');
+  assert.ok(filesList.includes('dist/renderer/**'), 'Phase0 React 产物目录 dist/renderer/** 须进包');
 }
 
 // ── A11 浮层样式（app.css 纯色多行浮层：宽440+按钮内嵌右下小尺寸） ──

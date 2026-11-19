@@ -2,11 +2,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 /**
  * preload.js — Wave-E 预加载安全网关契约 (contextBridge.exposeInMainWorld)
- * 72 通道冻结 (去重后与 main/ipc-contract.js 一致, 详见该文件 IPC_CHANNELS).
+ * 70 通道冻结 (去重后与 main/ipc-contract.js 一致, 详见该文件 IPC_CHANNELS).
  * 安全: 仅暴露 invoke 白名单, 永不透传 AI 明文 (ai:get-config 返掩码) 与 Git token (返 hasToken).
- * @typedef {Object} ProtoAPINamespace 预加载命名空间 (app/log/snapshot/doc/docwin/aiwin/sandbox/ai/links/annotations/spec/uilib/projectBinding/git)
+ * @typedef {Object} ProtoAPINamespace 预加载命名空间 (app/log/snapshot/doc/docwin/sandbox/ai/links/annotations/spec/uilib/projectBinding/git)
  * @typedef {Object} IpcInvokeResult 各通道返回 {ok, error?, cancelled?} (见 main/ipc-contract.js IpcOk)
- * @param {string} channel IPC 通道名 (72 冻结之一)
+ * @param {string} channel IPC 通道名 (70 冻结之一)
  * @param {...*} args 通道载荷 (对象传参, 1MB 上限由主进程 Service 侧校验)
  * @returns {Promise<IpcInvokeResult>} 主进程处理结果
  */
@@ -73,14 +73,6 @@ contextBridge.exposeInMainWorld('protoAPI', {
     mirrorBack: (o) => ipcRenderer.invoke('doc:mirror-back', o),
     onMirror: (cb) => onDocMirror(cb)
   },
-  aiwin: {
-    open: (o) => ipcRenderer.invoke('aiwin:open', o),
-    close: () => ipcRenderer.invoke('aiwin:close'),
-    toggle: () => ipcRenderer.invoke('aiwin:toggle'),
-    mirrorPush: (o) => ipcRenderer.invoke('doc:mirror-push', o),
-    mirrorBack: (o) => ipcRenderer.invoke('doc:mirror-back', o),
-    onMirror: (cb) => onDocMirror(cb)
-  },
   sandbox: {
     list: (project) => ipcRenderer.invoke('sandbox:list', project),
     write: (o) => ipcRenderer.invoke('sandbox:write', o),
@@ -111,7 +103,6 @@ contextBridge.exposeInMainWorld('protoAPI', {
     ask: (prompt, sessionId, sandboxDir, model, extra) => ipcRenderer.invoke('ai:ask', prompt, sessionId, sandboxDir, model, extra),
     cancel: () => ipcRenderer.invoke('ai:cancel'),
     isBusy: () => ipcRenderer.invoke('ai:is-busy'),
-    remoteSend: (o) => ipcRenderer.invoke('ai:remote-send', o),
     openTerminal: (dir) => ipcRenderer.invoke('ai:open-terminal', dir),
     /* S5 范围确认回复：渲染层确认弹窗点选后经此回执主进程（事件投递，对应 ai-controller 的 ipcMain.on）。
      * @param {Object} payload {id:string, decision:'allow-once'|'allow-always'|'deny'} 确认回复

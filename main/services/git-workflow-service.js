@@ -14,7 +14,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('node:os');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const gitAuth = require('../../git/auth');
 const gitConfigStore = require('../../git/config-store');
 const shared = require('../state');
@@ -22,6 +22,185 @@ const paths = require('../paths');
 /* 分支名/路径/日志目录校验单源复用（sandbox-storage-service、platform/process 已导出；此前漏引导致 git:status/fetch-diff 等通道 ReferenceError） */
 const { isValidBranch, isSafeGitRel, isSubPath, logsDir } = require('./sandbox-storage-service');
 const { killProcessTree } = require('../../platform/process');
+
+/* P2-1：Git 子进程统一非交互环境（禁止 GCM/askpass 凭据弹窗；保留用户既有 env） */
+const GIT_NONINTERACTIVE_ENV = Object.freeze({
+  GCM_INTERACTIVE: 'never',
+  GIT_TERMINAL_PROMPT: '0',
+  GIT_ASKPASS: 'echo',
+  SSH_ASKPASS: 'echo',
+});
+/* P1：所有 git 子进程注入空 credential helper（等价 -c credential.helper=）。
+ * 即使 token 未被接受，git 也只会直接鉴权失败，绝不会回落到 manager/GCM 等系统 helper；
+ * 该参数位于业务 args 之前，调用方无法覆盖。 */
+const GIT_CREDENTIAL_HELPER_ARGS = Object.freeze(['-c', 'credential.helper=']);
+/* P2-1：活跃 Git 子进程集合（spawn 即登记；close/error/超时/取消/退出统一移除） */
+const activeGitChildren = new Set();
+
+/**
+ * 构造 git 子进程环境：继承 process.env，叠加调用方 envAdd，最后强制非交互键（不可被覆盖）。
+ * @param {Object} [envAdd] 调用方附加环境（如 GIT_HTTP_EXTRAHEADER）
+ * @returns {Object} 可直接传给 spawn 的 env
+ */
+function buildGitChildEnv(envAdd) {
+  const extra = (envAdd && typeof envAdd === 'object') ? envAdd : {};
+  return Object.assign({}, process.env, extra, GIT_NONINTERACTIVE_ENV, { LC_ALL: 'C.UTF-8' });
+}
+
+/**
+ * 构造 git 进程 argv：统一前置 core.quotepath=false 与空 credential helper。
+ * runGit 与集成测试共用本函数，保证“所有 git 命令都不会启动 GCM”可被单测锁定。
+ * @param {string[]} args 业务参数（可含 auth.argsPrefix，如 -c http.extraHeader=...）
+ * @returns {string[]} 可直接传给 spawn('git', argv) 的完整参数
+ */
+function buildGitSpawnArgs(args) {
+  const list = Array.isArray(args) ? args : [];
+  return ['-c', 'core.quotepath=false', ...GIT_CREDENTIAL_HELPER_ARGS, ...list];
+}
+
+/**
+ * 是否具备可用的远端凭据（token 是唯一能构造 extraHeader 的凭据；仅用户名无法鉴权）。
+ * @param {{username?:string, token?:string}} [cred]
+ * @returns {boolean} 有 token 才返回 true
+ */
+function hasUsableGitCredential(cred) {
+  try { return !!(cred && String(cred.token == null ? '' : cred.token).trim()); } catch (e) { return false; }
+}
+
+/**
+ * 无凭据时统一返回的非交互错误（不启动任何远端命令，不拉起 GCM）。
+ * @param {Object} [extra] 额外字段（如本地分支列表）
+ * @returns {{ok:false, code:'NEED_AUTH', error:string}} 通道错误结果
+ */
+function gitAuthRequiredResult(extra) {
+  return Object.assign({
+    ok: false,
+    code: 'NEED_AUTH',
+    error: '未配置 Git 账号或 Access Token：已跳过远程访问（不会弹出系统凭据窗口）。请先保存用户名与 Token 后重试'
+  }, (extra && typeof extra === 'object') ? extra : {});
+}
+
+/**
+ * 登记 git 子进程（同步维护 shared.gitCurrentChild 旧句柄）。
+ * @param {import('child_process').ChildProcess} child
+ * @returns {void}
+ */
+function trackGitChild(child) {
+  try { activeGitChildren.add(child); } catch (e) {}
+  try { shared.gitCurrentChild = child; } catch (e) {}
+}
+
+/**
+ * 注销 git 子进程（幂等；所有结束路径共用，防集合泄漏）。
+ * @param {import('child_process').ChildProcess} child
+ * @returns {void}
+ */
+function untrackGitChild(child) {
+  try { activeGitChildren.delete(child); } catch (e) {}
+  try { if (shared.gitCurrentChild === child) shared.gitCurrentChild = null; } catch (e) {}
+}
+
+/**
+ * 子进程是否仍存活（已退出/已发信号的一律跳过，避免 PID 复用误杀无关进程）。
+ * @param {import('child_process').ChildProcess} child
+ * @returns {boolean}
+ */
+function isGitChildAlive(child) {
+  try { return !!child && typeof child.pid === 'number' && child.exitCode == null && child.signalCode == null; } catch (e) { return false; }
+}
+
+/**
+ * 同步终止单个 git 子进程树（仅进程退出等必须同步的兜底路径）。
+ * Windows 走 taskkill /T /F；其他平台 SIGTERM → SIGKILL。
+ * @param {import('child_process').ChildProcess} child
+ * @returns {void}
+ */
+function killGitChildSync(child) {
+  if (!isGitChildAlive(child)) return;
+  const pid = child.pid;
+  if (process.platform === 'win32') {
+    try { spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 3000 }); } catch (e) {}
+    try { child.kill('SIGKILL'); } catch (e) {}
+    return;
+  }
+  try { child.kill('SIGTERM'); } catch (e) {}
+  try { process.kill(-pid, 'SIGKILL'); } catch (e) { try { process.kill(pid, 'SIGKILL'); } catch (ee) {} }
+  try { child.kill('SIGKILL'); } catch (e) {}
+}
+
+/**
+ * 异步终止单个 git 子进程树。
+ * Windows 走 taskkill /T /F；其他平台 SIGTERM，宽限 300ms 后 SIGKILL。
+ * @param {import('child_process').ChildProcess} child
+ * @returns {Promise<void>}
+ */
+function killGitChild(child) {
+  if (!isGitChildAlive(child)) return Promise.resolve();
+  const pid = child.pid;
+  if (process.platform === 'win32') {
+    return killProcessTree(pid).then(() => {
+      try { child.kill('SIGKILL'); } catch (e) {}
+    }, () => {
+      try { child.kill('SIGKILL'); } catch (e) {}
+    });
+  }
+  try { child.kill('SIGTERM'); } catch (e) {}
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        if (isGitChildAlive(child)) killProcessTree(pid).then(() => resolve(), () => resolve());
+        else resolve();
+      } catch (e) { resolve(); }
+    }, 300);
+    if (timer.unref) timer.unref();
+  });
+}
+
+/**
+ * 终止全部活跃 git 子进程并清空集合（before-quit / window-all-closed 异步路径）。
+ * @returns {Promise<number>} 本次处理的子进程数量
+ */
+function killAllGitChildren() {
+  const children = Array.from(activeGitChildren);
+  if (!children.length) {
+    try { shared.gitCurrentChild = null; } catch (e) {}
+    return Promise.resolve(0);
+  }
+  const tasks = children.map((child) => {
+    /* 逐个杀完再移除：若退出竞态触发同步兜底，集合里仍能看到未收尾的子进程 */
+    const release = () => {
+      try { activeGitChildren.delete(child); } catch (e) {}
+      try { if (shared.gitCurrentChild === child) shared.gitCurrentChild = null; } catch (e) {}
+    };
+    try { return killGitChild(child).then(release, release); } catch (e) { release(); return Promise.resolve(); }
+  });
+  return Promise.all(tasks).then(() => {
+    try { if (!activeGitChildren.size) shared.gitCurrentChild = null; } catch (e) {}
+    return children.length;
+  });
+}
+
+/**
+ * 同步终止全部活跃 git 子进程并清空集合（process exit 兜底）。
+ * @returns {number} 本次处理的子进程数量
+ */
+function killAllGitChildrenSync() {
+  const children = Array.from(activeGitChildren);
+  activeGitChildren.clear();
+  try { shared.gitCurrentChild = null; } catch (e) {}
+  for (const child of children) {
+    try { killGitChildSync(child); } catch (e) {}
+  }
+  return children.length;
+}
+
+/**
+ * 当前活跃 git 子进程数量（诊断/验证用，不影响业务）。
+ * @returns {number}
+ */
+function getActiveGitChildCount() {
+  return activeGitChildren.size;
+}
 
 const GIT_STATUS_MAP={M:'mod',A:'add',D:'del',R:'mod',C:'mod',U:'add',T:'mod','?':'add'};
 function gitHandledPath(handledSet, relPath){ if(!relPath||handledSet.has(relPath)) return true; handledSet.add(relPath); return false; }
@@ -206,20 +385,19 @@ function runGit(cwd, args, timeoutMs = 30000, extraEnv) {
   }
   return new Promise((resolve) => {
     try {
-      const gitArgs = ['-c', 'core.quotepath=false', ...args];
+      const gitArgs = buildGitSpawnArgs(args);
       const child = spawn('git', gitArgs, {
         cwd,
-        env: Object.assign({}, process.env, {
-          GIT_TERMINAL_PROMPT: '0',
-          LC_ALL: 'C.UTF-8'
-        }, envAdd || {}),
-        windowsHide: true
+        env: buildGitChildEnv(envAdd),
+        windowsHide: true,
+        /* P2-1：stdin 置空，避免凭据交互等待父进程 stdio；stdout/stderr 仍走管道供业务解析 */
+        stdio: ['ignore', 'pipe', 'pipe']
       });
-      try { shared.gitCurrentChild = child; } catch (e) {}
+      trackGitChild(child);
       let stdout = '', stderr = '';
       let timer = null;
       let settled = false;
-      const done = (obj) => { if (settled) return; settled = true; try { if (timer) clearTimeout(timer); } catch (e) {} try { if (shared.gitCurrentChild === child) shared.gitCurrentChild = null; } catch (e) {} resolve(obj); };
+      const done = (obj) => { if (settled) return; settled = true; try { if (timer) clearTimeout(timer); } catch (e) {} untrackGitChild(child); resolve(obj); };
       if (timeout > 0) {
         timer = setTimeout(async () => {
           if (settled) return;
@@ -240,6 +418,141 @@ function runGit(cwd, args, timeoutMs = 30000, extraEnv) {
       resolve({ status: -1, stdout: '', stderr: String(e && e.message || e), timedOut: false });
     }
   });
+}
+
+/**
+ * 判断 branch.<name>.remote 的值是否是“被误写成远端地址”（历史 `git push -u <url>` 遗留）。
+ * 合法值应是 remote 名（如 origin），URL / scp 形式 / 本地路径都不是。
+ * @param {string} value branch.<name>.remote 的当前值
+ * @returns {boolean} 是地址形态返回 true
+ */
+function isGitRemoteUrlValue(value) {
+  const v = String(value == null ? '' : value).trim();
+  if (!v) return false;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return true;
+  if (/^[^/\s@]+@[^/\s:]+:/.test(v)) return true;
+  if (/^[A-Za-z]:[\\/]/.test(v)) return true;
+  if (/^[\\/]/.test(v)) return true;
+  return false;
+}
+
+/**
+ * 自愈 branch.*.remote 被写成 URL 的仓库配置（本地命令，不联网、不涉及凭据）：
+ * 1) 地址形态的 branch.<name>.remote 改写为 origin；
+ * 2) origin 不存在时按应用配置 URL 创建，存在则校准为配置 URL；
+ * 3) 补齐缺失的 branch.<name>.merge=refs/heads/<name>，恢复 ahead/behind 与 @{u}。
+ * @param {string} cwd 仓库工作区（如 paths.SANDBOX_ROOT）
+ * @param {string} branch 当前分支（作为兜底检查对象）
+ * @param {string} [remoteUrl] 应用配置中的远端地址（无凭据裸 URL）
+ * @returns {Promise<{healed:boolean, branches:string[], changes:string[], error?:string}>} 修复摘要
+ */
+async function healGitUpstream(cwd, branch, remoteUrl) {
+  const result = { healed: false, branches: [], changes: [] };
+  try {
+    const base = String(cwd || '');
+    const url = String(remoteUrl == null ? '' : remoteUrl).trim();
+    if (!base || !fs.existsSync(base)) return result;
+    const probe = await runGit(base, ['rev-parse', '--git-dir'], 5000);
+    if (probe.status !== 0) return result;
+
+    const entries = [];
+    const seen = new Set();
+    const addEntry = (name, value) => {
+      const n = String(name == null ? '' : name).trim();
+      if (!n || seen.has(n)) return;
+      seen.add(n);
+      entries.push({ name: n, value: String(value == null ? '' : value).trim() });
+    };
+    const listRes = await runGit(base, ['config', '--local', '--get-regexp', '^branch\\..*\\.remote$'], 5000);
+    if (listRes.status === 0 && listRes.stdout) {
+      String(listRes.stdout).split(/\r?\n/).forEach((line) => {
+        const s = String(line || '');
+        const sp = s.search(/\s/);
+        if (sp < 0) return;
+        const key = s.slice(0, sp);
+        if (!key.startsWith('branch.') || !key.endsWith('.remote')) return;
+        addEntry(key.slice('branch.'.length, -'.remote'.length), s.slice(sp + 1));
+      });
+    }
+    if (isValidBranch(String(branch || ''))) addEntry(branch, '');
+
+    for (const ent of entries) {
+      if (!isValidBranch(ent.name)) continue;
+      const mergeKey = 'branch.' + ent.name + '.merge';
+      let mergeVal = '';
+      const mergeRes = await runGit(base, ['config', '--local', '--get', mergeKey], 5000);
+      if (mergeRes.status === 0) mergeVal = String(mergeRes.stdout || '').trim();
+
+      const remoteIsUrl = isGitRemoteUrlValue(ent.value);
+      if (remoteIsUrl) {
+        /* 先保证 origin 指向应用配置地址（配置优先，其次沿用旧 URL 值） */
+        const target = url || ent.value;
+        const remotesRes = await runGit(base, ['remote'], 5000);
+        const remoteNames = String(remotesRes.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        let originReady = false;
+        if (remoteNames.indexOf('origin') >= 0) {
+          const setRes = target ? await runGit(base, ['remote', 'set-url', 'origin', target], 5000) : { status: 0 };
+          originReady = setRes.status === 0;
+        } else if (target) {
+          const addRes = await runGit(base, ['remote', 'add', 'origin', target], 5000);
+          originReady = addRes.status === 0;
+        }
+        if (!originReady) continue;
+        const cfgRes = await runGit(base, ['config', '--local', 'branch.' + ent.name + '.remote', 'origin'], 5000);
+        if (cfgRes.status !== 0) continue;
+        result.changes.push('branch.' + ent.name + '.remote: URL -> origin');
+        result.branches.push(ent.name);
+        result.healed = true;
+        if (!mergeVal) {
+          const mr = await runGit(base, ['config', '--local', mergeKey, 'refs/heads/' + ent.name], 5000);
+          if (mr.status === 0) result.changes.push(mergeKey + '=refs/heads/' + ent.name);
+        }
+      } else if (ent.value === 'origin' && !mergeVal) {
+        /* 已是 origin 但 merge 缺失：补齐，恢复 @{u}/ahead-behind */
+        const mr = await runGit(base, ['config', '--local', mergeKey, 'refs/heads/' + ent.name], 5000);
+        if (mr.status === 0) {
+          result.changes.push(mergeKey + '=refs/heads/' + ent.name);
+          result.branches.push(ent.name);
+          result.healed = true;
+        }
+      }
+    }
+  } catch (e) {
+    result.error = String((e && e.message) || e);
+  }
+  return result;
+}
+
+/**
+ * 收集本地分支到给定集合（纯本地；用于无凭据时仍能展示可选分支）。
+ * @param {Set<string>} [branches] 目标集合（复用调用方已有集合）
+ * @returns {Promise<Set<string>>} 补全后的分支集合
+ */
+async function collectLocalGitBranches(branches) {
+  const set = (branches instanceof Set) ? branches : new Set();
+  try {
+    if (fs.existsSync(path.join(paths.SANDBOX_ROOT, '.git'))) {
+      const locRes = await runGit(paths.SANDBOX_ROOT, ['branch', '--list']);
+      if (locRes.status === 0 && locRes.stdout) {
+        locRes.stdout.split(/\r?\n/).forEach((b) => {
+          const name = b.replace(/^[\*\s]+/, '').trim();
+          if (name && name !== '(HEAD' && !name.startsWith('(')) set.add(name);
+        });
+      }
+    }
+  } catch (e) {}
+  return set;
+}
+
+/* 初始化失败弹窗：dialog 仅 Electron 主进程存在，惰性 require 兼容纯 Node 测试环境；
+   取不到 dialog 时静默跳过，不影响主流程继续抛出原始错误（错误详情由调用方脱敏返回）。 */
+function showGitInitErrorDialog(e) {
+  try {
+    const { dialog: dlg } = require('electron');
+    if (dlg && typeof dlg.showMessageBoxSync === 'function') {
+      dlg.showMessageBoxSync({ type: 'error', title: 'Git初始化失败', message: gitAuth.redactSecrets(String((e && e.message) || e)) });
+    }
+  } catch (_e) {}
 }
 
 /**
@@ -284,6 +597,8 @@ async function ensureSandboxGitRepo(cfg) {
       await runGit(paths.SANDBOX_ROOT, ['remote', 'add', 'origin', String(cfg.remoteUrl).trim()]);
     }
   }
+  /* P1 自愈：历史 `push -u <url>` 会把 branch.*.remote 写成 URL，启动/保存配置/每次 git 操作入口统一纠正为 origin */
+  try { await healGitUpstream(paths.SANDBOX_ROOT, branch, cfg && cfg.remoteUrl); } catch (e) {}
   if (cfg && cfg.authorName) {
     await runGit(paths.SANDBOX_ROOT, ['config', 'user.name', cfg.authorName]);
   }
@@ -291,7 +606,7 @@ async function ensureSandboxGitRepo(cfg) {
     await runGit(paths.SANDBOX_ROOT, ['config', 'user.email', cfg.authorEmail]);
   }
   return { ok: true, nested: [] };
-  }catch(e){ try{ dialog.showMessageBoxSync({type:'error', title:'Git初始化失败', message: gitAuth.redactSecrets(String(e.message))}); }catch(_e){} throw e; }
+  }catch(e){ try{ showGitInitErrorDialog(e); }catch(_e){} throw e; }
 }
 
 function gitConfigGetImpl(ev, projectName) {
@@ -393,6 +708,17 @@ async function gitListBranchesImpl(ev, o) {
     }
   } catch (e) {}
 
+  /* P1：无 Token 时绝不发起 ls-remote（否则 git 会回落到系统 credential helper，拉起 GCM/凭据弹窗）。
+   * 明确返回 NEED_AUTH，同时附带本地分支，前端仍可展示但不会触发任何网络/凭据交互。 */
+  if (!hasUsableGitCredential(cred)) {
+    await collectLocalGitBranches(branches);
+    return gitAuthRequiredResult({
+      branches: Array.from(branches).filter(Boolean),
+      currentBranch: cfg.branch || 'main',
+      remoteConfigured: true
+    });
+  }
+
   if (remoteUrl) {
     // P0：extraHeader + 裸 URL（特殊字符 Token 免编码，绝不拼 Token URL）
     const auth = gitAuth.buildGitAuthEnv({ username, token });
@@ -442,6 +768,8 @@ async function gitTestConnectionImpl(ev, cfg) {
     if ((username === '' || username == null) && saved && saved.username) username = String(saved.username);
     if ((token === '' || token == null) && saved && saved.token) token = String(saved.token);
   } catch (e) {}
+  /* P1：无 Token 时不发起探测，避免 git 回落到 GCM 弹窗 */
+  if (!hasUsableGitCredential({ username, token })) return gitAuthRequiredResult();
   const auth = gitAuth.buildGitAuthEnv({ username, token });
   const t0 = Date.now();
   let res = null;
@@ -461,6 +789,8 @@ async function gitTestConnectionImpl(ev, cfg) {
 }
 async function gitStatusImpl(ev, o) {
   return withGitLock('read', 'status', async () => {
+  /* P1：本通道全程只读本地仓库（status/rev-parse/diff/ls-tree/config），不发起任何远端请求；
+   * 因此无 Token 时也不会触发 GCM。即便未来新增远端命令，runGit 也已强制空 credential helper + 非交互环境。 */
   const projName = (typeof o === 'string' ? o : (o && o.project)) || '';
   const targetBranch = (o && o.branch) || (getProjectGitConfig(projName).branch) || 'main';
   if (!isValidBranch(targetBranch)) return { ok: false, error: '非法分支名' };
@@ -608,6 +938,10 @@ async function gitPushImpl(ev, o) {
   const auth = gitAuth.buildGitAuthEnv(cred);
   const plainUrl = String(cfg.remoteUrl).trim();
 
+  /* P1：无 Token 时在暂存/提交之前就明确失败，不发起远端交互，避免 GCM 弹窗；
+   * 也避免产生一个注定推不上去的本地提交。 */
+  if (!hasUsableGitCredential(cred)) return gitAuthRequiredResult();
+
   // 1. 重置当前暂存区
   await runGit(paths.SANDBOX_ROOT, ['reset']);
 
@@ -651,7 +985,9 @@ async function gitPushImpl(ev, o) {
 
   // 4. 推送到远程分支（HEAD:refs/heads/${branch}，支持 --force 覆盖远程清空/分叉）
   // P0：extraHeader + 裸 URL（特殊字符 Token 免编码）
-  const pushArgs = [...auth.argsPrefix, 'push', '-u'];
+  // P1：禁止 `push -u <url>`——-u 会把 branch.<name>.remote 写成 URL，导致 upstream 失效；
+  //     这里只按显式 refspec 推送，upstream 由 ensureSandboxGitRepo 的自愈逻辑统一维护为 origin。
+  const pushArgs = [...auth.argsPrefix, 'push'];
   if (force) pushArgs.push('--force');
   pushArgs.push(plainUrl, `HEAD:refs/heads/${branch}`);
 
@@ -682,6 +1018,8 @@ async function gitPushImpl(ev, o) {
   }
   /* 推送成功即远端==HEAD：同步追踪，下次状态比对不再把已推文件算成新增 */
   try { await gitSyncOriginRef(branch); } catch (e) {}
+  /* P1：推送后再次自愈（若历史遗留 branch.*.remote=URL，确保改回 origin + merge） */
+  try { await healGitUpstream(paths.SANDBOX_ROOT, branch, plainUrl); } catch (e) {}
 
   return { ok: true, message: force ? '强制覆盖发布成功' : '发布成功', filesCount: stagedList.length, branch, forced: force };
   });
@@ -823,6 +1161,9 @@ async function gitFetchDiffImpl(ev, o) {  return withGitLock('read', 'fetch-diff
   const auth = gitAuth.buildGitAuthEnv(cred);
   const plainUrl = String(cfg.remoteUrl).trim();
 
+  /* P1：无 Token 时不 fetch，直接明确报错（避免系统凭据弹出） */
+  if (!hasUsableGitCredential(cred)) return gitAuthRequiredResult();
+
   // 静默 Fetch 目标分支
   let fetchRes = null;
   try {
@@ -942,6 +1283,9 @@ async function gitPullImpl(ev, o) {
   const auth = gitAuth.buildGitAuthEnv(cred);
   const plainUrl = String(cfg.remoteUrl).trim();
 
+  /* P1：无 Token 时不 fetch，直接明确报错（避免系统凭据弹出） */
+  if (!hasUsableGitCredential(cred)) return gitAuthRequiredResult();
+
   // 1. Fetch
   let fetchRes = null;
   try {
@@ -1048,10 +1392,9 @@ async function gitCancelImpl() {
   try {
     if (!shared.gitState.busy) return { ok: true, cancelled: false };
     const op = shared.gitState.busy.op;
-    try { if (shared.gitCurrentChild && shared.gitCurrentChild.pid) await killProcessTree(shared.gitCurrentChild.pid); } catch (e) {}
-    try { if (shared.gitCurrentChild) shared.gitCurrentChild.kill('SIGKILL'); } catch (e) {}
+    /* P2-1：取消时统一终止全部活跃 git 子进程树并清空集合（含超时/失败前残留） */
+    try { await killAllGitChildren(); } catch (e) {}
     shared.gitState.busy = null;
-    try { shared.gitCurrentChild = null; } catch (e) {}
     return { ok: true, cancelled: true, op };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -1127,6 +1470,8 @@ async function gitHealRepairImpl(ev, o) {
         else await runGit(paths.SANDBOX_ROOT, ['remote', 'add', 'origin', String(cfg.remoteUrl).trim()]);
       } catch (e) {}
     }
+    /* P1 自愈：修复 branch.*.remote=URL / 缺 merge 的历史配置 */
+    try { await healGitUpstream(paths.SANDBOX_ROOT, branch, cfg && cfg.remoteUrl); } catch (e) {}
     if (cfg && cfg.authorName) { try { await runGit(paths.SANDBOX_ROOT, ['config', 'user.name', cfg.authorName]); } catch (e) {} }
     if (cfg && cfg.authorEmail) { try { await runGit(paths.SANDBOX_ROOT, ['config', 'user.email', cfg.authorEmail]); } catch (e) {} }
   } catch (e) {
@@ -1152,6 +1497,16 @@ module.exports = {
   getProjectGitConfig,
   sanitizeGitError,
   decodeGitOctal,
+  buildGitChildEnv,
+  buildGitSpawnArgs,
+  hasUsableGitCredential,
+  gitAuthRequiredResult,
+  isGitRemoteUrlValue,
+  healGitUpstream,
+  collectLocalGitBranches,
+  killAllGitChildren,
+  killAllGitChildrenSync,
+  getActiveGitChildCount,
   runGit,
   ensureSandboxGitRepo,
   gitConfigGetImpl,

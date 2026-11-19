@@ -28,7 +28,19 @@ const { applyAgentLaunchEnv } = require('../../platform/env');
 const shared = require('../state');
 const paths = require('../paths');
 const aiConfigStore = require('./ai-config-store');
+const aiThinkingCache = require('./ai-thinking-cache');
 const sandboxStorage = require('./sandbox-storage-service');
+const acpRuntime = require('../acp/acp-runtime');
+const acpProcessLifecycle = require('../acp/acp-process-lifecycle');
+const { isAcpEnabled } = acpRuntime;
+const { resolveAgentCommand } = require('../acp/acp-registry');
+const {
+  ACP_MODEL_FALLBACKS,
+  normalizeModelCatalog,
+  mergeVisibleModels,
+  resolveModelChoice
+} = require('../acp/acp-config');
+const { createAcpModelCache, buildCacheKey } = require('../acp/acp-model-cache');
 
 /* ═══════ UI 设计规范注入（出厂内置 specs/ + 用户可替换） ═══════
  * 渲染层 aiDoSend 保持直通原文 t（回滚锁）；规范由主进程在下发前按原型端别拼到 prompt 头部。
@@ -199,7 +211,7 @@ function buildSkillMapSection(staged) {
  * （允许本次/总是允许这类/拒绝），120 秒无应答按“仅沙箱内放行 + trace 注明”处理，不卡死。
  * 请求复用既有 ai:event 通道（前端 onEvent 已有多播，不新增主→渲通道）；
  * 回复走新通道 'ai:scope-confirm'（ai-controller.js 内 ipcMain.on + preload send，
- * 不占 ipcMain.handle 计数，72 通道冻结门禁保持全绿；无新依赖）。
+ * 不占 ipcMain.handle 计数，70 通道冻结门禁保持全绿；无新依赖）。
  * “总是允许这类”记进程内内存 Map（key=cwd，不落盘，落盘是下一步的事）。
  * @param {string} text 下发前 finalPrompt 全文（指针 + 用户原文）
  * @param {string} cwd 沙箱工作目录（允许范围基准）
@@ -465,6 +477,20 @@ function resolveCliPermissionMode(aiCfg, defId) {
     const v = m[id];
     return (typeof v === 'string') ? v.trim() : '';
   } catch (e) { return ''; }
+}
+/**
+ * 读取单个 Agent 的 ACP 配置（cfg.acp.agents[id]）；缺失/非法一律回空对象。
+ * @param {Object} aiCfg loadAiConfigFull() 全量配置
+ * @param {string} agentId Agent id
+ * @returns {Object} Agent ACP 配置
+ */
+function resolveAgentAcpConfig(aiCfg, agentId) {
+  try {
+    const agents = aiCfg && aiCfg.acp && aiCfg.acp.agents;
+    if (!agents || typeof agents !== 'object' || Array.isArray(agents)) return {};
+    const entry = agents[String(agentId || '')];
+    return (entry && typeof entry === 'object' && !Array.isArray(entry)) ? entry : {};
+  } catch (e) { return {}; }
 }
 /* ═══════ 沙箱根越界守卫（任务前后快照对比，性能有界） ═══════
  * 任务前对沙箱根计数，超 SANDBOX_GUARD_TOTAL_MAX_FILES 则跳过快照并 trace 注明；
@@ -746,33 +772,384 @@ function parseLineBasedModels(out, def) {
     return ids;
   } catch (e) { return []; }
 }
-function execCliListModels(resolvedBin, def) {
+/* CLI 原生模型探测：超时 / 取消 / 失败时按进程树收尾。
+ * .cmd/.bat 经 cmd.exe 包装后会派生 node 子进程；只 child.kill() 会留下 node + conhost，
+ * 并让它们继续继承 Electron 的 fd3/fd4。统一交给 acp-process-lifecycle：
+ * taskkill /pid <cmdPid> /T /F，同时销毁 stdout/stderr，确保探测结束即释放管道。 */
+function execCliListModels(resolvedBin, def, options) {
+  const opts = (options && typeof options === 'object') ? options : {};
   return new Promise((resolve) => {
+    let child = null;
+    let timer = null;
+    let done = false;
+    let removeAbort = null;
+    const cleanup = () => {
+      if (timer) { try { clearTimeout(timer); } catch (e) {} timer = null; }
+      if (removeAbort) { try { removeAbort(); } catch (e) {} removeAbort = null; }
+    };
+    const finish = (items, killTree) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      let stopping = null;
+      try {
+        stopping = killTree
+          ? acpProcessLifecycle.killPidTree(child && child.pid, 'cli-list-models')
+          : Promise.resolve(acpProcessLifecycle.releaseChild(child));
+      } catch (e) {
+        stopping = null;
+      }
+      Promise.resolve(stopping).catch(() => {}).then(() => resolve(items));
+    };
     try {
       const args = (def && def.listModels && Array.isArray(def.listModels.args)) ? def.listModels.args : ['models'];
       const timeoutMs = (def && def.listModels && def.listModels.timeoutMs) || 5000;
       const invocation = createCommandInvocation({ command: resolvedBin, args, env: applyAgentLaunchEnv() });
-      const child = spawn(invocation.command, invocation.args, { cwd: os.tmpdir(), windowsVerbatimArguments: invocation.windowsVerbatimArguments });
+      child = spawn(invocation.command, invocation.args, {
+        cwd: os.tmpdir(),
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments
+      });
+      try {
+        acpProcessLifecycle.registerChild(child, {
+          kind: 'cli-list-models',
+          label: String(resolvedBin || invocation.command || ''),
+          command: String(invocation.command || '')
+        });
+      } catch (e) {}
+
+      const signal = opts.signal;
+      if (signal && typeof signal.addEventListener === 'function') {
+        if (signal.aborted) { finish(null, true); return; }
+        const onAbort = () => finish(null, true);
+        try {
+          signal.addEventListener('abort', onAbort, { once: true });
+          removeAbort = () => { try { signal.removeEventListener('abort', onAbort); } catch (e) {} };
+        } catch (e) {}
+      }
+
       let out = ''; let err = '';
-      let done = false;
-      const finish = (items) => { if (!done) { done = true; try { child.kill(); } catch (e) {} resolve(items); } };
-      const timer = setTimeout(() => finish(null), timeoutMs);
-      child.stdout.on('data', (d) => { out += d.toString('utf8'); });
-      child.stderr.on('data', (d) => { err += d.toString('utf8'); });
-      child.on('error', () => { clearTimeout(timer); finish(null); });
+      timer = setTimeout(() => finish(null, true), timeoutMs);
+      if (timer && typeof timer.unref === 'function') { try { timer.unref(); } catch (e) {} }
+      if (child.stdout) child.stdout.on('data', (d) => { out += d.toString('utf8'); });
+      if (child.stderr) child.stderr.on('data', (d) => { err += d.toString('utf8'); });
+      child.on('error', () => { finish(null, true); });
       child.on('close', () => {
-        clearTimeout(timer);
         if (done) return;
-        done = true;
+        let items = null;
         try {
           const parse = def && def.listModels && typeof def.listModels.parse === 'function' ? def.listModels.parse : null;
-          let items = parse ? parse(out, err) : parseLineBasedModels(out, def);
+          items = parse ? parse(out, err) : parseLineBasedModels(out, def);
           if (!Array.isArray(items)) items = [];
-          resolve(items);
-        } catch (e) { resolve(null); }
+        } catch (e) { items = null; }
+        finish(items, false);
       });
-    } catch (e) { resolve(null); }
+    } catch (e) { finish(null, false); }
   });
+}
+
+/* ═══════ ACP 模型探测（B1） ═══════
+ * ai:models 的 ACP 分支：先按 T1 的 resolveAgentCommand 解析选中 Agent 的启动命令，
+ * 再调 acpx inspectAgentModels（只做 initialize/session/new 探测，不发送 prompt）。
+ * 命令解析失败显性返回 ACP_BACKEND_MISSING，不再拿 legacy def.fallbackModels 冒充成功；
+ * 探测失败/返回空才落到 acp-config 的 ACP_MODEL_FALLBACKS（全部为 ACP id）。 */
+const ACP_MODELS_TIMEOUT_MS = 15000;
+/** @type {Promise<{inspectAgentModels:Function}>|null} acpx 模块加载缓存 */
+let acpxModelsModulePromise = null;
+
+/* ═══════ ACP 模型目录磁盘缓存 + 后台刷新（T7a） ═══════
+ * 首屏路径：内存缓存 -> userData/acp-model-catalog.json -> CLI 原生 models -> ACP fallback。
+ * ACP inspectAgentModels 只在后台跑（stale-while-revalidate），完成后经 ai:event 的
+ * acp_catalog 事件回推；同一 key 的刷新在进程内去重，失败保留旧目录不发空列表。
+ * 测试可注入 inspectAgentModels / CLI / 命令解析 / 缓存实例，纯 Node 不启 Electron。 */
+const acpModelCatalog = createAcpModelCache();
+/** @type {Map<string,Promise<Object>>} `<agentId>::<command>` → 进行中的刷新 */
+const acpCatalogRefreshMap = new Map();
+let acpCatalogRequestSeq = 0;
+/** @type {Set<AbortController>} 进行中的 ACP 模型目录探测（退出/取消时统一 abort） */
+const acpCatalogAbortControllers = new Set();
+/** @type {Set<string>} ACP 探测命令签名（退出兜底扫描 inspectAgentModels 这类无 processLifecycle 的进程） */
+const acpProbeCommandSignatures = new Set();
+/** @type {boolean} 本次生命周期是否已做过后代树兜底扫描（避免 will-quit / exit 重复 PowerShell 查询） */
+let acpOrphanSweepDone = false;
+
+/**
+ * 记录 ACP 探测命令签名，供退出时按后代树兜底清理。
+ * 只取长度 >= 5 的命令/路径片段，避免用 node/cmd 等通用词误杀。
+ * @param {string[]} agentCommand 解析后的启动命令
+ * @returns {void}
+ */
+function rememberAcpProbeCommand(agentCommand) {
+  try {
+    const argv = Array.isArray(agentCommand) ? agentCommand : [];
+    for (const raw of argv) {
+      const s = String(raw || '').trim();
+      if (s.length < 5 || s.charAt(0) === '-') continue;
+      acpProbeCommandSignatures.add(s.toLowerCase());
+      try {
+        const base = path.basename(s).toLowerCase().replace(/\.(cmd|bat|exe)$/, '');
+        if (base.length >= 5) acpProbeCommandSignatures.add(base);
+      } catch (e) {}
+    }
+    acpProbeCommandSignatures.add('--acp');
+    acpOrphanSweepDone = false;
+  } catch (e) {}
+}
+
+/**
+ * 中止所有后台 ACP 模型目录探测，避免应用退出后仍持有 agent 子进程。
+ * @param {string} [reason] 中止原因（仅诊断）
+ * @returns {number} 中止数量
+ */
+function abortAcpCatalogRefreshes(reason) {
+  let n = 0;
+  for (const controller of Array.from(acpCatalogAbortControllers)) {
+    try {
+      controller.abort(new Error(String(reason || 'acp-catalog-aborted')));
+      n += 1;
+    } catch (e) {}
+  }
+  acpCatalogAbortControllers.clear();
+  return n;
+}
+
+/**
+ * 等待被 abort 的 ACP 目录探测自行收尾（acpx 会在 finally 中 close agent）。
+ * 超时后继续退出流程，由进程树登记兜底。
+ * @param {number} timeoutMs 最长等待毫秒
+ * @returns {Promise<void>}
+ */
+function waitForAcpCatalogRefreshes(timeoutMs) {
+  const pending = [];
+  try {
+    for (const promise of acpCatalogRefreshMap.values()) pending.push(promise);
+  } catch (e) {}
+  if (!pending.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, Math.max(1, timeoutMs));
+    if (timer && typeof timer.unref === 'function') {
+      try { timer.unref(); } catch (e) {}
+    }
+    Promise.allSettled(pending).then(finish, finish);
+  });
+}
+
+const acpModelsTestHooks = {
+  inspectAgentModels: null,
+  execCliListModels: null,
+  resolveLaunchCommand: null,
+  cache: null,
+  previewModelConfig: null,
+  /* undefined = 未注入（生产走真实磁盘缓存）；false = 显式禁用；实例 = 注入 */
+  thinkingCache: undefined,
+  /* 是否装了任何 ai:models 探测钩子：装了默认隔离真实用户缓存，保证用例可重复 */
+  installed: false
+};
+
+/**
+ * 注入 ACP 模型目录依赖（仅测试使用；传空对象恢复真实实现）。
+ * @param {Object} [hooks] {inspectAgentModels, execCliListModels, resolveLaunchCommand, cache, previewModelConfig, thinkingCache}
+ * @returns {void}
+ */
+function __setAcpModelsTestHooks(hooks) {
+  const h = (hooks && typeof hooks === 'object') ? hooks : {};
+  acpModelsTestHooks.inspectAgentModels = typeof h.inspectAgentModels === 'function' ? h.inspectAgentModels : null;
+  acpModelsTestHooks.execCliListModels = typeof h.execCliListModels === 'function' ? h.execCliListModels : null;
+  acpModelsTestHooks.resolveLaunchCommand = typeof h.resolveLaunchCommand === 'function' ? h.resolveLaunchCommand : null;
+  acpModelsTestHooks.cache = (h.cache && typeof h.cache.get === 'function' && typeof h.cache.set === 'function')
+    ? h.cache
+    : null;
+  acpModelsTestHooks.previewModelConfig = typeof h.previewModelConfig === 'function' ? h.previewModelConfig : null;
+  /* 思考缓存只认显式声明：false 禁用；合法实例注入；其余回到「未注入」 */
+  if (h.thinkingCache === false) acpModelsTestHooks.thinkingCache = false;
+  else if (h.thinkingCache && typeof h.thinkingCache.get === 'function' && typeof h.thinkingCache.set === 'function') {
+    acpModelsTestHooks.thinkingCache = h.thinkingCache;
+  } else acpModelsTestHooks.thinkingCache = undefined;
+  acpModelsTestHooks.installed = !!(acpModelsTestHooks.inspectAgentModels
+    || acpModelsTestHooks.execCliListModels
+    || acpModelsTestHooks.resolveLaunchCommand
+    || acpModelsTestHooks.previewModelConfig);
+}
+
+/**
+ * 生成一次 ai:models / acp_catalog 关联 id（UI 可据此丢弃过期事件）。
+ * @returns {string} 请求 id
+ */
+function nextAcpCatalogRequestId() {
+  acpCatalogRequestSeq += 1;
+  return 'acpcat-' + Date.now().toString(36) + '-' + acpCatalogRequestSeq;
+}
+
+/**
+ * 在项目根 / 当前目录的 node_modules/.bin 内查找适配器命令（与 acp-runtime 默认解析保持一致）。
+ * @param {string} name 适配器或命令名
+ * @returns {string|null} 可执行文件绝对路径或 null
+ */
+function resolveAcpLocalBin(name) {
+  const base = String(name || '').trim();
+  if (!base) return null;
+  const roots = [];
+  try { roots.push(path.join(__dirname, '..', '..')); } catch (e) {}
+  try { roots.push(process.cwd()); } catch (e) {}
+  const isWin = process.platform === 'win32';
+  const suffixes = isWin ? ['.cmd', '.exe', '.bat', ''] : [''];
+  for (const root of roots) {
+    if (!root) continue;
+    for (const suffix of suffixes) {
+      try {
+        const full = path.join(root, 'node_modules', '.bin', base + suffix);
+        if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+/**
+ * 解析适配器 / 专用命令名：node_modules/.bin 优先，其次 PATH / npm 全局。
+ * @param {string} name 适配器或命令名
+ * @returns {Promise<string|null>} 可执行文件绝对路径或 null
+ */
+async function resolveAcpCommandName(name) {
+  const local = resolveAcpLocalBin(name);
+  if (local) return local;
+  try {
+    return await resolveAgentExecutable({ id: String(name || ''), bin: String(name || ''), fallbackBins: [] }, '');
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 汇总用户自定义 CLI 路径（cliPaths 优先，旧 cliPath 兜底 opencode）。
+ * @param {Object} cfg AI 配置
+ * @returns {Object<string,string>} id → 自定义路径
+ */
+function collectAcpCustomPaths(cfg) {
+  const out = {};
+  try {
+    const map = cfg && cfg.cliPaths;
+    if (map && typeof map === 'object') {
+      for (const id of Object.keys(map)) {
+        const v = map[id] == null ? '' : String(map[id]).trim();
+        if (v) out[String(id)] = v;
+      }
+    }
+  } catch (e) {}
+  try {
+    const legacy = cfg && cfg.cliPath ? String(cfg.cliPath).trim() : '';
+    if (legacy && !out.opencode) out.opencode = legacy;
+  } catch (e) {}
+  return out;
+}
+
+/**
+ * 解析选中 Agent 的 ACP 启动命令（自定义路径 > adapter/command > 原生 bin）。
+ * @param {Object} def Agent 定义
+ * @param {Object} cfg AI 配置
+ * @returns {Promise<{command:string[]|null, unresolved:Object|null}>} 解析结果
+ */
+async function resolveAcpLaunchCommand(def, cfg) {
+  const customPaths = collectAcpCustomPaths(cfg);
+  try {
+    return await resolveAgentCommand(def, {
+      customPaths,
+      resolveBin: (d) => resolveAgentExecutable(d, customPaths[(d && d.id) || ''] || ''),
+      resolveAdapter: (name) => resolveAcpCommandName(name),
+      resolveCommand: (name) => resolveAcpCommandName(name)
+    });
+  } catch (e) {
+    return {
+      command: null,
+      unresolved: {
+        reason: 'resolve_failed',
+        candidates: [],
+        error: String((e && e.message) || e).slice(0, 300)
+      }
+    };
+  }
+}
+
+/**
+ * 加载 acpx 模块里的 inspectAgentModels（ESM 动态 import，失败转 ACP_BACKEND_MISSING）。
+ * @returns {Promise<{inspectAgentModels:Function}>} 探测器
+ */
+async function loadAcpxModelsModule() {
+  if (!acpxModelsModulePromise) {
+    acpxModelsModulePromise = import('acpx/runtime').then((mod) => {
+      const fn = mod && (mod.inspectAgentModels || (mod.default && mod.default.inspectAgentModels));
+      if (typeof fn !== 'function') {
+        const err = new Error('acpx/runtime 未导出 inspectAgentModels');
+        err.code = 'ACP_BACKEND_MISSING';
+        throw err;
+      }
+      return { inspectAgentModels: fn };
+    }).catch((e) => {
+      acpxModelsModulePromise = null;
+      if (e && e.code === 'ACP_BACKEND_MISSING') throw e;
+      const err = new Error('ACP 运行时不可用：未安装 acpx，或 acpx/runtime 无法加载。');
+      err.code = 'ACP_BACKEND_MISSING';
+      err.cause = e;
+      throw err;
+    });
+  }
+  return acpxModelsModulePromise;
+}
+
+/**
+ * 探测用工作目录：优先 hint 显式目录，其次沙箱根，最后临时目录 / 当前目录。
+ * @param {Object} hint ai:models 的 hint
+ * @returns {string} 存在的目录绝对路径
+ */
+function resolveAcpModelsCwd(hint) {
+  const cands = [];
+  try {
+    const own = hint && (hint.cwd || hint.sandboxDir);
+    if (own) cands.push(String(own));
+  } catch (e) {}
+  try { cands.push(paths.SANDBOX_ROOT); } catch (e) {}
+  try { cands.push(os.tmpdir()); } catch (e) {}
+  for (const c of cands) {
+    try {
+      if (c && fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
+    } catch (e) {}
+  }
+  return process.cwd();
+}
+
+/**
+ * 组装 ACP_BACKEND_MISSING 的 detail（可读候选链，已脱敏且截断 800 字）。
+ * @param {Object} def Agent 定义
+ * @param {Object} unresolved resolveAgentCommand 的失败明细
+ * @returns {string} detail 文本
+ */
+function formatAcpBackendMissingDetail(def, unresolved) {
+  const u = (unresolved && typeof unresolved === 'object') ? unresolved : {};
+  const acp = (def && def.acp && typeof def.acp === 'object') ? def.acp : {};
+  const expected = acp.command || acp.adapter || (def && def.bin) || (def && def.id) || 'unknown';
+  const parts = ['ACP 启动命令解析失败：' + String(expected)];
+  if (u.reason) parts.push('reason=' + String(u.reason));
+  const chain = [];
+  const cands = Array.isArray(u.candidates) ? u.candidates.slice(0, 8) : [];
+  for (const c of cands) {
+    if (!c || typeof c !== 'object') continue;
+    const seg = [];
+    if (c.kind) seg.push(String(c.kind));
+    if (c.name) seg.push(String(c.name));
+    if (c.reason) seg.push(String(c.reason));
+    if (seg.length) chain.push(seg.join(':'));
+  }
+  if (chain.length) parts.push('candidates=' + chain.join(' -> '));
+  if (u.error) parts.push('error=' + String(u.error).slice(0, 300));
+  return parts.join('；').slice(0, 800);
 }
 
 /* L4统一IPC：ai:test-connection -> testProviderConnection（兼容旧前端 {ok,latency,error}） */
@@ -787,11 +1164,34 @@ async function aiCheckImpl() {
       if (aiCfg && aiCfg.cliPath) customPaths.opencode = customPaths.opencode || aiCfg.cliPath;
     } catch (e) {}
     const agents = await detectAllAgents(customPaths);
-    const oc = (agents || []).find(a => a && a.id === 'opencode') || null;
-    if (oc && oc.available) return { found: true, path: oc.path, version: oc.version, agents };
-    const anyOk = (agents || []).find(a => a && a.available) || null;
-    if (anyOk) return { found: true, path: anyOk.path, version: anyOk.version, agents };
-    return { found: false, path: null, version: null, agents: agents || [] };
+    /* Phase 1：探测结果只附加静态 transport/acp 元数据，不做 ACP initialize（26 个 Agent 全量握手太慢）。 */
+    const acpEnabled = !!(aiCfg && aiCfg.acp && aiCfg.acp.enabled === true);
+    const agentDefsById = {};
+    try {
+      for (const d of getAllAgentDefs()) { if (d && d.id) agentDefsById[d.id] = d; }
+    } catch (e) {}
+    const withTransport = (agents || []).map((a) => {
+      if (!a || typeof a !== 'object') return a;
+      let def = agentDefsById[a.id] || null;
+      if (!def) { try { def = getAgentDef(a.id) || null; } catch (e) { def = null; } }
+      const transport = (def && def.transport) || 'legacy';
+      const acpDef = (def && def.acp && typeof def.acp === 'object') ? def.acp : {};
+      return Object.assign({}, a, {
+        transport,
+        acp: {
+          supported: transport === 'acp',
+          adapter: !!acpDef.adapter,
+          adapterName: acpDef.adapter ? String(acpDef.adapter) : '',
+          command: acpDef.command ? String(acpDef.command) : '',
+          enabled: acpEnabled
+        }
+      });
+    });
+    const oc = (withTransport || []).find(a => a && a.id === 'opencode') || null;
+    if (oc && oc.available) return { found: true, path: oc.path, version: oc.version, agents: withTransport };
+    const anyOk = (withTransport || []).find(a => a && a.available) || null;
+    if (anyOk) return { found: true, path: anyOk.path, version: anyOk.version, agents: withTransport };
+    return { found: false, path: null, version: null, agents: withTransport || [] };
   } catch (e) {
     return { found: false, path: null, version: null, agents: [] };
   }
@@ -836,10 +1236,386 @@ async function aiTestConnectionImpl(ev, apiCfg) {
   }
 
 }
+
+/* ═══════ 思考强度缓存（主进程后台） ═══════
+ * ACP previewModelConfig 要拉起 Agent 子进程，不能让「打开设置 / 保存模型 / 应用启动」等它。
+ * 缓存落在 userData/ai-thinking-cache.json（见 services/ai-thinking-cache），key = `agentId|model`：
+ * - 命中（ready / unsupported）直接回上次 configOptions，不解析命令、不启动 ACP；
+ * - hint.background=true 立刻回 {status:'probing'}，真实探测丢后台队列，同 key 单飞去重；
+ * - 探测完成（无论成功/失败）回写缓存，供下次秒回。
+ * 只存 UI 元数据，敏感键在 cache 模块内递归剔除。 */
+/** @type {Object|null} 真实磁盘缓存实例（惰性创建；失败回 null 按无缓存处理） */
+let thinkingCacheSingleton = null;
+/** @type {Map<string,Promise<Object>>} `<agentId>|<model>` → 进行中的后台探测（同 key 单飞） */
+const thinkingProbeInflight = new Map();
+/** @type {Promise<Object>|null} 启动预热 promise（只跑一次；并发调用复用） */
+let thinkingWarmPromise = null;
+
+/**
+ * 取真实磁盘缓存实例（惰性；构造失败不抛）。
+ * @returns {Object|null} 缓存实例
+ */
+function getThinkingCacheInstance() {
+  if (thinkingCacheSingleton) return thinkingCacheSingleton;
+  try {
+    thinkingCacheSingleton = aiThinkingCache.createThinkingCache();
+  } catch (e) {
+    thinkingCacheSingleton = null;
+  }
+  return thinkingCacheSingleton;
+}
+
+/**
+ * 选本次可用的缓存实例（测试可注入 / 可禁用）。
+ * - 注入实例优先；
+ * - 显式 false 或装了任何 ai:models 探测钩子（用例）→ 不碰真实用户缓存，保证用例可重复；
+ * - 生产无钩子 → 真实磁盘缓存。
+ * @returns {Object|null} 缓存实例或 null
+ */
+function resolveThinkingCache() {
+  const injected = acpModelsTestHooks.thinkingCache;
+  if (injected && typeof injected.get === 'function' && typeof injected.set === 'function') return injected;
+  if (injected === false) return null;
+  if (acpModelsTestHooks.installed) return null;
+  if (String(process.env.PLAND_THINKING_CACHE || '') === '0') return null;
+  return getThinkingCacheInstance();
+}
+
+/**
+ * 诊断输出：默认静默（不弹窗、不打断流程），需要时用 PLAND_AI_TRACE=1 打开。
+ * @param {string} text 说明
+ * @param {boolean} [force] 是否强制输出（启动预热失败用，每次启动至多一行）
+ * @returns {void}
+ */
+function traceThinking(text, force) {
+  try {
+    if (!force && !process.env.PLAND_AI_TRACE) return;
+    console.warn('[ai-thinking-cache] ' + String(text || ''));
+  } catch (e) {}
+}
+
+/**
+ * 读缓存命中项：只有 ready / unsupported 算命中（error 视为未命中，允许重探）。
+ * @param {Object|null} cache 缓存实例
+ * @param {string} key `<agentId>|<model>`
+ * @returns {Object|null} 命中记录
+ */
+function readThinkingCacheHit(cache, key) {
+  if (!cache) return null;
+  let entry = null;
+  try { entry = cache.get(key); } catch (e) { return null; }
+  if (!entry || typeof entry !== 'object') return null;
+  if (entry.status !== 'ready' && entry.status !== 'unsupported') return null;
+  if (entry.status === 'ready' && !(Array.isArray(entry.configOptions) && entry.configOptions.length)) return null;
+  return entry;
+}
+
+/**
+ * 把一次探测结果回写缓存（成功 / 不支持 / 失败都记，失败记录不参与命中）。
+ * @param {Object|null} cache 缓存实例
+ * @param {{agentId:string, model:string}} meta 目标 agent/模型
+ * @param {Object} result probeAcpModelConfig 结果
+ * @returns {Object|null} 写入的记录
+ */
+function writeThinkingCacheOutcome(cache, meta, result) {
+  if (!cache) return null;
+  try {
+    const r = (result && typeof result === 'object') ? result : {};
+    const agentId = String((meta && meta.agentId) || r.agentId || '').trim();
+    const model = String((meta && meta.model) || r.model || '').trim();
+    if (!agentId || !model) return null;
+    const errorCode = String(r.error || '');
+    const status = r.ok === true ? 'ready' : (errorCode === 'ACP_MODEL_UNSUPPORTED' ? 'unsupported' : 'error');
+    const payload = {
+      agentId,
+      model,
+      configOptions: (status === 'ready' && Array.isArray(r.configOptions)) ? r.configOptions : [],
+      modelConfigId: status === 'ready' ? String(r.modelConfigId || '') : '',
+      status
+    };
+    if (status !== 'ready') {
+      payload.error = (errorCode + (r.detail ? ':' + String(r.detail) : '')) || 'ACP_PROBE_FAILED';
+    }
+    return cache.set(aiThinkingCache.buildCacheKey(agentId, model), payload);
+  } catch (e) {
+    traceThinking('write failed: ' + String((e && e.message) || e));
+    return null;
+  }
+}
+
+/**
+ * 后台探测排队 + 同 key 单飞：立刻返回 promise，实际执行推到下一轮事件循环。
+ * @param {string} key `<agentId>|<model>`
+ * @param {Function} run 返回 Promise 的探测任务
+ * @returns {Promise<Object|null>} 任务结果（永不 reject）
+ */
+function startBackgroundThinkingProbe(key, run) {
+  const k = String(key || '');
+  if (!k || typeof run !== 'function') return Promise.resolve(null);
+  const running = thinkingProbeInflight.get(k);
+  if (running) return running;
+  const task = new Promise((resolve) => {
+    const kick = () => {
+      Promise.resolve().then(run).then(resolve, (err) => {
+        traceThinking('probe failed: ' + String((err && err.message) || err));
+        resolve(null);
+      });
+    };
+    try { setImmediate(kick); } catch (e) { kick(); }
+  }).finally(() => {
+    try { thinkingProbeInflight.delete(k); } catch (e) {}
+  });
+  thinkingProbeInflight.set(k, task);
+  return task;
+}
+
+/**
+ * 读当前配置里「最近的模型」：显式 cfg.model → 当前 Agent 的 CLI 可见首个 → 旧全局可见首个。
+ * agentId 参与隔离，换 Agent 不会串档。
+ * @param {Object} cfg 完整 AI 配置
+ * @param {string} agentId 当前 Agent id
+ * @returns {string} 模型 id（可能为空）
+ */
+function resolveConfiguredModel(cfg, agentId) {
+  const c = (cfg && typeof cfg === 'object') ? cfg : {};
+  const direct = String(c.model || '').trim();
+  if (direct) return direct;
+  const id = String(agentId || '').trim();
+  const cli = c.visibleModelsCli;
+  const firstOf = (list) => {
+    if (!Array.isArray(list)) return '';
+    for (const item of list) {
+      const m = String(item == null ? '' : item).trim();
+      if (m) return m;
+    }
+    return '';
+  };
+  let picked = '';
+  if (cli && typeof cli === 'object' && !Array.isArray(cli) && id) picked = firstOf(cli[id]);
+  if (!picked) picked = firstOf(cli);
+  if (!picked) picked = firstOf(c.visibleModels);
+  return picked;
+}
+
+/**
+ * 启动预热：当前 Agent + 模型下，ACP 启用时后台探测一次思考档位并写入缓存。
+ * 只执行一次（并发复用同一 promise）；失败只 trace，不弹窗、不阻塞启动。
+ * @param {Object} [options] {force?:boolean} 强制重探（忽略缓存命中）
+ * @returns {Promise<Object>} {ok, agentId, model, cached?/skipped?/scheduled?, task?}
+ */
+function warmThinkingCache(options) {
+  if (thinkingWarmPromise) return thinkingWarmPromise;
+  const opts = (options && typeof options === 'object') ? options : {};
+  thinkingWarmPromise = (async () => {
+    let agentId = '';
+    let model = '';
+    try {
+      const cfg = aiConfigStore.loadAiConfigFull();
+      agentId = String(cfg.agentId || cfg.mainAgent || 'opencode');
+      model = resolveConfiguredModel(cfg, agentId);
+      if (!model) return { ok: true, agentId, model, skipped: 'no-model' };
+      const def = getAgentDef(agentId);
+      if (!def) return { ok: true, agentId, model, skipped: 'agent-not-found' };
+      if (!isAcpEnabled(cfg, def)) return { ok: true, agentId, model, skipped: 'acp-disabled' };
+      const cache = resolveThinkingCache();
+      const key = aiThinkingCache.buildCacheKey(agentId, model);
+      if (!opts.force && readThinkingCacheHit(cache, key)) {
+        return { ok: true, agentId, model, cached: true };
+      }
+      /* 直接排非 background 任务：background 分支只负责「立刻返回占位」，
+       * 预热本身已经在后台队列里，不能再绕一层占位。 */
+      const task = startBackgroundThinkingProbe(key, () => probeAcpModelConfig({
+        engine: 'cli',
+        probeModel: model,
+        agentId,
+        background: false,
+        force: opts.force === true
+      }, model, cfg));
+      task.catch(() => {});
+      return { ok: true, agentId, model, scheduled: true, task };
+    } catch (e) {
+      traceThinking('warm failed: ' + String((e && e.message) || e), true);
+      return { ok: false, agentId, model, error: String((e && e.message) || e) };
+    }
+  })();
+  return thinkingWarmPromise;
+}
+
+/**
+ * 等所有后台思考探测收尾（测试用；退出时也可用来观察）。
+ * @returns {Promise<void>} 全部 settle 后 resolve
+ */
+function waitForThinkingProbes() {
+  const pending = [];
+  try {
+    for (const task of thinkingProbeInflight.values()) pending.push(task);
+  } catch (e) {}
+  if (!pending.length) return Promise.resolve();
+  return Promise.allSettled(pending).then(() => undefined, () => undefined);
+}
+
+/**
+ * 重置启动预热的「只跑一次」标记（仅测试使用）。
+ * @returns {void}
+ */
+function __resetThinkingWarmForTest() {
+  thinkingWarmPromise = null;
+}
+
+/**
+ * ai:models 的 ACP 配置预探测分支（hint.probeModel）。
+ *
+ * 只读取单个模型的 configOptions（尤其思考强度），不跑目录探测、
+ * 不返回完整模型列表、不启动 turn；因此不会触发 15s 模型目录预算。
+ * 复用既有 ai:models 通道，不新增 IPC。
+ *
+ * 时序：
+ * 1) 缓存命中且非 force → 立刻返回 {ok:true, cached:true, configOptions}，不拉起 ACP；
+ * 2) hint.background=true → 立刻返回缓存或 {status:'probing'}，真实探测丢后台队列（同 key 单飞）；
+ * 3) 其余情况保持等待探测，完成后回写缓存。
+ *
+ * @param {Object} hint ai:models hint（probeModel/agentId/uiSessionId/cwd/background/force）
+ * @param {string} model 目标模型 id
+ * @param {Object} cfg 完整 AI 配置
+ * @returns {Promise<Object>} {ok,probe,model,configOptions,modelConfigId} / {ok:false,error,detail,availableModels}
+ */
+async function probeAcpModelConfig(hint, model, cfg) {
+  const h = (hint && typeof hint === 'object') ? hint : {};
+  const hintAgent = String(h.agentId || h.agent || '').trim();
+  const agentId = hintAgent || String((cfg && (cfg.agentId || cfg.mainAgent)) || 'opencode');
+  const target = String(model || '').trim();
+  const force = h.force === true;
+  /* __run：后台队列真正执行时置 true，避免再次排队（防自递归） */
+  const background = h.background === true && h.__run !== true;
+  const base = {
+    ok: false,
+    probe: true,
+    engine: 'cli',
+    transport: 'acp',
+    agentId,
+    model: target
+  };
+  if (!target) {
+    return Object.assign({}, base, {
+      error: 'ACP_MODEL_EMPTY',
+      detail: '未指定模型，无法读取思考档位',
+      availableModels: []
+    });
+  }
+  const cache = resolveThinkingCache();
+  const cacheKey = aiThinkingCache.buildCacheKey(agentId, target);
+
+  /* 1) 缓存优先：命中即秒回，不解析启动命令、不拉起子进程。 */
+  if (!force) {
+    const hit = readThinkingCacheHit(cache, cacheKey);
+    if (hit && hit.status === 'unsupported') {
+      /* 与真实探测的「模型不支持」保持同一出入参：ok:false + ACP_MODEL_UNSUPPORTED */
+      return Object.assign({}, base, {
+        cached: true,
+        error: 'ACP_MODEL_UNSUPPORTED',
+        availableModels: []
+      });
+    }
+    if (hit) {
+      return Object.assign({}, base, {
+        ok: true,
+        cached: true,
+        status: hit.status,
+        agentId: hit.agentId || agentId,
+        model: hit.model || target,
+        configOptions: Array.isArray(hit.configOptions) ? hit.configOptions : [],
+        modelConfigId: String(hit.modelConfigId || '')
+      });
+    }
+  }
+
+  /* 2) 后台模式：立刻给占位，探测丢队列（同 key 单飞，完成后回写缓存）。 */
+  if (background) {
+    startBackgroundThinkingProbe(cacheKey, () => probeAcpModelConfig(
+      Object.assign({}, h, { background: false, __run: true, force: true }),
+      target,
+      cfg
+    ));
+    return Object.assign({}, base, {
+      ok: true,
+      probe: true,
+      status: 'probing',
+      scheduled: true,
+      configOptions: []
+    });
+  }
+
+  /* 3) 前台等待探测（缓存未命中）：保持既有语义，失败原因原样返回。 */
+  const def = getAgentDef(agentId);
+  if (!def) {
+    const miss = Object.assign({}, base, {
+      error: 'ACP_AGENT_NOT_FOUND',
+      detail: '未找到 Agent 适配器：' + agentId,
+      availableModels: []
+    });
+    writeThinkingCacheOutcome(cache, { agentId, model: target }, miss);
+    return miss;
+  }
+  if (!isAcpEnabled(cfg, def)) {
+    const off = Object.assign({}, base, {
+      error: 'ACP_DISABLED',
+      detail: '当前 Agent 未启用 ACP：' + agentId,
+      availableModels: []
+    });
+    writeThinkingCacheOutcome(cache, { agentId, model: target }, off);
+    return off;
+  }
+  const previewArgs = {
+    def,
+    aiCfg: cfg,
+    cwd: resolveAcpModelsCwd(h),
+    uiSessionId: String(h.uiSessionId || h.sessionId || ''),
+    model: target
+  };
+  try {
+    const preview = acpModelsTestHooks.previewModelConfig;
+    const result = preview ? await preview(previewArgs) : await acpRuntime.previewModelConfig(previewArgs);
+    const r = (result && typeof result === 'object') ? result : {};
+    if (r.ok) {
+      const okOut = Object.assign({}, base, {
+        ok: true,
+        agentId: def.id,
+        model: String(r.model || target),
+        configOptions: Array.isArray(r.configOptions) ? r.configOptions : [],
+        modelConfigId: String(r.modelConfigId || '')
+      });
+      writeThinkingCacheOutcome(cache, { agentId: def.id, model: target }, okOut);
+      return okOut;
+    }
+    const available = Array.isArray(r.availableModels) ? r.availableModels.slice() : [];
+    const failOut = Object.assign({}, base, {
+      agentId: def.id,
+      error: String(r.error || 'ACP_PROBE_FAILED'),
+      detail: String(r.detail || ''),
+      availableModels: available
+    });
+    writeThinkingCacheOutcome(cache, { agentId: def.id, model: target }, failOut);
+    return failOut;
+  } catch (e) {
+    const errOut = Object.assign({}, base, {
+      agentId: def.id,
+      error: String((e && e.code) || 'ACP_PROBE_FAILED'),
+      detail: String((e && e.message) || e || '').slice(0, 800),
+      availableModels: []
+    });
+    writeThinkingCacheOutcome(cache, { agentId: def.id, model: target }, errOut);
+    return errOut;
+  }
+}
+
 async function aiModelsImpl(ev, hint) {
   const cfg = aiConfigStore.loadAiConfigFull();
   /* 设置面板按当前UI引擎预览：显式hint优先，仅无hint时回退落盘判定（兼容旧前端与对话下拉） */
   const h = (hint && typeof hint === 'object') ? hint : (typeof hint === 'string' ? { engine: hint } : {});
+  /* 模型级联预探测：选中模型即经 ACP 读取该模型的 configOptions。
+   * 必须早于 isApi / inspectAgentModels / 缓存读取，避免把 15s 模型目录探测带进来。 */
+  const probeModel = String((h && h.probeModel) || '').trim();
+  if (probeModel) return probeAcpModelConfig(h, probeModel, cfg);
   const hintEngine = (h.engine === 'cli' || h.engine === 'api') ? h.engine : null;
   const isApi = hintEngine ? hintEngine === 'api' : (cfg.mode === 'api' || cfg.providerType === 'api' || cfg.engine === 'api');
   let visible = null;
@@ -894,7 +1670,8 @@ async function aiModelsImpl(ev, hint) {
       };
       const label = labelMap[dispProv] || dispProv;
       const defModel = String(src.model || cfg.model || ((Array.isArray(list) && list[0] && list[0].id) || 'default'));
-      return { ok: true, groups: [{ provider: dispProv, label, models: listWithReasoning }], default: defModel, engine: 'api', visibleModels: visible || [] };
+      const apiGroups = [{ provider: dispProv, label, models: listWithReasoning }];
+      return { ok: true, groups: apiGroups, allGroups: apiGroups, default: defModel, engine: 'api', visibleModels: visible || [] };
     } catch (e) {
       const fbReasoning = [
         { id: 'default', label: '默认推荐', default: true },
@@ -906,12 +1683,327 @@ async function aiModelsImpl(ev, hint) {
         { id: 'deepseek-chat', label: 'deepseek-chat', reasoningOptions: fbReasoning },
         { id: 'deepseek-reasoner', label: 'deepseek-reasoner', reasoningOptions: fbReasoning }
       ];
-      return { ok: true, groups: [{ provider: 'custom', label: '自定义 API', models: fb }], default: 'deepseek-chat', engine: 'api', visibleModels: visible || [] };
+      const fbGroups = [{ provider: 'custom', label: '自定义 API', models: fb }];
+      return { ok: true, groups: fbGroups, allGroups: fbGroups, default: 'deepseek-chat', engine: 'api', visibleModels: visible || [] };
     }
   }
   const agentId = cfg.agentId || cfg.mainAgent || 'opencode';
   const def = getAgentDef(agentId) || getAgentDef('opencode');
   if (!def) return { ok: false, error: '未找到 Agent 适配器', engine: 'cli', visibleModels: visible || [] };
+  /* Phase 1 ACP：解析选中 Agent 的启动命令，真实探测模型目录（不再只回 legacy fallbackModels）。 */
+  if (isAcpEnabled(cfg, def)) {
+    /* 白名单：visibleModelsCli[id] 优先；缺省回退旧全局 visibleModels；显式空数组表示不过滤。 */
+    let whitelist = pickCliList(cfg.visibleModelsCli, def.id);
+    if (whitelist === null) {
+      whitelist = (Array.isArray(cfg.visibleModels) && cfg.visibleModels.length) ? cfg.visibleModels : null;
+    }
+    const launch = typeof acpModelsTestHooks.resolveLaunchCommand === 'function'
+      ? await acpModelsTestHooks.resolveLaunchCommand(def, cfg)
+      : await resolveAcpLaunchCommand(def, cfg);
+    if (!launch || !Array.isArray(launch.command) || !launch.command.length) {
+      return {
+        ok: false,
+        error: 'ACP_BACKEND_MISSING',
+        detail: formatAcpBackendMissingDetail(def, launch && launch.unresolved),
+        engine: 'cli',
+        transport: 'acp',
+        agentId: def.id,
+        visibleModels: whitelist || []
+      };
+    }
+    const agentCommand = launch.command.map((v) => String(v));
+    const commandText = agentCommand.join(' ');
+    /* 缓存 key 带 Agent 与完整启动命令：换 Agent / 换自定义路径后天然不串缓存；save-config 会 clear。 */
+    const cacheKey = 'acp:' + def.id + ':' + agentCommand.join(' ');
+    const catalogKey = buildCacheKey(def.id, commandText);
+    const catalogCache = acpModelsTestHooks.cache || acpModelCatalog;
+    const requestId = String((h && h.requestId) || '').trim() || nextAcpCatalogRequestId();
+    const hintCliVersion = String((h && (h.cliVersion || h.agentVersion || h.version)) || '').trim();
+    const now = Date.now();
+    const refreshCwd = resolveAcpModelsCwd(h);
+    /* 首屏只读缓存：内存 -> 磁盘。过期条目也立即返回（stale-while-revalidate），刷新放后台。 */
+    let catalog = null;
+    let stale = false;
+    /* ACP 刷新与首屏缓存 / CLI 并行启动，仅后台跑（首屏不 await）；同一 key 进程内去重。 */
+    const acpRefreshPromise = startAcpCatalogRefresh();
+    try {
+      const hit = shared.cliModelsCache.get(cacheKey);
+      if (hit && Array.isArray(hit.models) && hit.models.length) {
+        catalog = {
+          models: hit.models,
+          defaultModel: String(hit.defaultModel || ''),
+          source: String(hit.source || 'first-advertised'),
+          ts: Number(hit.ts) || 0
+        };
+        stale = !((now - catalog.ts) < shared.CLI_MODELS_CACHE_TTL);
+      }
+    } catch (e) {}
+    if (!catalog) {
+      try {
+        const cached = catalogCache.get(catalogKey);
+        if (cached && Array.isArray(cached.models) && cached.models.length) {
+          catalog = {
+            models: cached.models,
+            defaultModel: String(cached.defaultModel || ''),
+            source: String(cached.source || 'first-advertised'),
+            ts: Number(cached.ts) || 0
+          };
+          stale = !catalogCache.isFresh(catalog.ts, shared.CLI_MODELS_CACHE_TTL);
+          /* CLI 版本变化：旧目录立即视为 stale，后台刷新会覆盖；不阻塞首屏。 */
+          const cachedVersion = String(cached.cliVersion || '').trim();
+          if (hintCliVersion && cachedVersion && cachedVersion !== hintCliVersion) stale = true;
+        }
+      } catch (e) {}
+    }
+    if (catalog) {
+      /* 回填进程内缓存：后续打开弹窗不再读盘；TTL 与磁盘一致（10 分钟）。 */
+      try {
+        shared.cliModelsCache.set(cacheKey, {
+          ts: catalog.ts,
+          models: catalog.models,
+          defaultModel: catalog.defaultModel,
+          source: catalog.source
+        });
+      } catch (e) {}
+    }
+    let advertised = (catalog && Array.isArray(catalog.models)) ? catalog.models.slice() : [];
+    let catalogSource = catalog ? String(catalog.source || 'none') : 'none';
+    let catalogDefault = catalog ? String(catalog.defaultModel || '') : '';
+    let firstScreenSource = 'cache';
+    let catalogWarning = null;
+    if (catalog) {
+      catalogWarning = stale ? 'catalog-stale' : null;
+    } else {
+      /* 无缓存：CLI 原生 models（def.listModels，5-10s 预算）优先；ACP 握手只放后台，不阻塞首屏。 */
+      let cliItems = [];
+      try {
+        if (def.listModels && Array.isArray(def.listModels.args) && agentCommand[0]) {
+          const listFn = typeof acpModelsTestHooks.execCliListModels === 'function'
+            ? acpModelsTestHooks.execCliListModels
+            : execCliListModels;
+          const raw = await listFn(agentCommand[0], def);
+          if (Array.isArray(raw) && raw.length) cliItems = normalizeCliModelIds(raw);
+        }
+      } catch (e) { cliItems = []; }
+      if (cliItems.length) {
+        advertised = cliItems.map((m) => ({
+          id: String(m.id),
+          name: String(m.label || m.id),
+          description: ''
+        }));
+        catalogSource = 'cli';
+        catalogDefault = advertised.length ? advertised[0].id : '';
+        firstScreenSource = 'cli';
+      } else {
+        /* CLI 不可用：仅使用 acp-config 的 ACP id 兜底，绝不回退 legacy def.fallbackModels。 */
+        advertised = (ACP_MODEL_FALLBACKS[def.id] || []).map((id) => ({
+          id: String(id),
+          name: String(id),
+          description: ''
+        }));
+        catalogSource = 'fallback';
+        catalogDefault = advertised.length ? advertised[0].id : '';
+        firstScreenSource = 'fallback';
+        catalogWarning = 'catalog-fallback';
+      }
+    }
+    /**
+     * 后台 ACP 刷新：同一 key 进程内去重；成功写磁盘/内存缓存，失败保留旧目录。
+     * @returns {Promise<Object>} 归一化缓存记录
+     */
+    function startAcpCatalogRefresh() {
+      let existing = null;
+      try { existing = acpCatalogRefreshMap.get(catalogKey) || null; } catch (e) { existing = null; }
+      if (existing) return existing;
+      const inspectAgentModels = typeof acpModelsTestHooks.inspectAgentModels === 'function'
+        ? acpModelsTestHooks.inspectAgentModels
+        : async (args) => {
+          const acpx = await loadAcpxModelsModule();
+          return acpx.inspectAgentModels(args);
+        };
+      rememberAcpProbeCommand(agentCommand);
+      const promise = (async () => {
+        const abortController = new AbortController();
+        try {
+          acpCatalogAbortControllers.add(abortController);
+          /* 首屏预算 15s 之外，后台刷新给到 30s（ACP_MODELS_TIMEOUT_MS + 15s），超时由 acpx 处理。
+           * signal 供应用退出 / 统一收尾时中止探测，让 acpx 的 finally 关闭 agent 子进程。 */
+          const inspection = await inspectAgentModels({
+            agentCommand,
+            cwd: refreshCwd,
+            timeoutMs: ACP_MODELS_TIMEOUT_MS + 15000,
+            signal: abortController.signal
+          });
+          const fresh = normalizeModelCatalog(inspection);
+          if (!fresh || !Array.isArray(fresh.models) || !fresh.models.length) {
+            const emptyErr = new Error('ACP 模型目录为空');
+            emptyErr.code = 'ACP_MODEL_CATALOG_EMPTY';
+            throw emptyErr;
+          }
+          const ts = Date.now();
+          const entry = {
+            agentId: def.id,
+            command: commandText,
+            models: fresh.models,
+            defaultModel: String(fresh.defaultModel || ''),
+            source: String(fresh.source || 'first-advertised'),
+            ts,
+            cliVersion: String((h && (h.cliVersion || h.agentVersion || h.version)) || '').trim() || undefined
+          };
+          try { catalogCache.set(catalogKey, entry); } catch (e) {}
+          try {
+            shared.cliModelsCache.set(cacheKey, {
+              ts,
+              models: fresh.models,
+              defaultModel: entry.defaultModel,
+              source: entry.source
+            });
+          } catch (e) {}
+          return entry;
+        } finally {
+          try { acpCatalogAbortControllers.delete(abortController); } catch (e) {}
+        }
+      })();
+      try { acpCatalogRefreshMap.set(catalogKey, promise); } catch (e) {}
+      const clear = () => {
+        try {
+          if (acpCatalogRefreshMap.get(catalogKey) === promise) acpCatalogRefreshMap.delete(catalogKey);
+        } catch (e) {}
+      };
+      promise.then(clear, clear);
+      return promise;
+    }
+    /* 刷新事件只回发起本次 ai:models 的窗口；窗口销毁则静默丢弃。 */
+    function emitAcpCatalog(payload) {
+      try {
+        const sender = ev && ev.sender;
+        if (sender && typeof sender.send === 'function'
+          && !(typeof sender.isDestroyed === 'function' && sender.isDestroyed())) {
+          sender.send('ai:event', payload);
+        }
+      } catch (e) {}
+    }
+    /* 刷新结果回调：成功回推完整目录，失败保留旧缓存并回 warning/error。 */
+    try {
+      acpRefreshPromise.then((entry) => {
+        const visibleFresh = mergeVisibleModels(entry.models, whitelist);
+        const eventModels = visibleFresh.models.map((m) => ({
+          id: String(m.id),
+          name: String(m.name || m.label || m.id),
+          description: String(m.description || '')
+        }));
+        let eventDefault = String(entry.defaultModel || '');
+        if (!eventModels.some((m) => m.id === eventDefault)) {
+          eventDefault = eventModels.length ? eventModels[0].id : '';
+        }
+        emitAcpCatalog({
+          type: 'acp_catalog',
+          agentId: def.id,
+          command: commandText,
+          models: eventModels,
+          defaultModel: eventDefault,
+          source: 'acp',
+          stale: false,
+          requestId,
+          ts: entry.ts
+        });
+      }).catch((err) => {
+        emitAcpCatalog({
+          type: 'acp_catalog',
+          agentId: def.id,
+          command: commandText,
+          error: String((err && err.code) || 'ACP_MODEL_REFRESH_FAILED'),
+          warning: 'ACP 模型目录刷新失败，已保留' + (catalog ? '旧缓存' : '兜底列表') + '：'
+            + String((err && err.message) || err || '').slice(0, 200),
+          stale: true,
+          requestId,
+          ts: Date.now()
+        });
+      });
+    } catch (e) {
+      emitAcpCatalog({
+        type: 'acp_catalog',
+        agentId: def.id,
+        command: commandText,
+        error: 'ACP_MODEL_REFRESH_FAILED',
+        warning: 'ACP 模型目录刷新启动失败：' + String((e && e.message) || e).slice(0, 200),
+        stale: true,
+        requestId,
+        ts: Date.now()
+      });
+    }
+    const visibleResult = mergeVisibleModels(advertised, whitelist);
+    const reasoningForModel = (Array.isArray(def.reasoningOptions) && def.reasoningOptions.length)
+      ? def.reasoningOptions
+      : null;
+    const toModelEntry = (model) => {
+      const id = String((model && model.id) || '').trim();
+      if (!id) return null;
+      return {
+        id,
+        name: String((model && (model.name || model.label)) || id),
+        reasoningOptions: reasoningForModel
+      };
+    };
+    const finalModels = [];
+    for (const model of visibleResult.models) {
+      const entry = toModelEntry(model);
+      if (entry) finalModels.push(entry);
+    }
+    /* 管理页数据源：ACP 全量公告目录，不受 visibleModelsCli 白名单裁剪。
+     * groups 仍保持白名单交集语义（对话下拉），allGroups 只供模型管理/获取模型弹窗展示。 */
+    const allModels = [];
+    const allModelIds = new Set();
+    for (const model of advertised) {
+      const entry = toModelEntry(model);
+      if (!entry || allModelIds.has(entry.id)) continue;
+      allModelIds.add(entry.id);
+      allModels.push(entry);
+    }
+    /* 列表阶段只认 UI hint 显式传入的模型；cfg.model 是 API/legacy 全局值，绝不作为 ACP 默认。 */
+    const requestedModel = String((h && (h.model || h.requestedModel)) || '').trim();
+    const agentCfg = (cfg.acp && cfg.acp.agents && cfg.acp.agents[def.id]) || {};
+    const choice = resolveModelChoice({
+      requestedModel,
+      modelSource: requestedModel ? 'ui' : '',
+      agentConfigModel: String(agentCfg.model || ''),
+      currentModelId: catalogSource === 'agent-current' ? catalogDefault : '',
+      advertised: finalModels,
+      globalModel: String(cfg.model || cfg.defaultModel || '')
+    });
+    let defaultModel = choice.model || (finalModels[0] && finalModels[0].id) || '';
+    let defaultSource = choice.source || 'none';
+    let warning = visibleResult.warning || choice.warning || null;
+    if (choice.error) {
+      /* 显式选择不受支持：列表照常返回，ask 阶段按 ACP_MODEL_UNSUPPORTED 拒绝，避免静默改模型。 */
+      defaultSource = 'none';
+      warning = choice.error;
+    }
+    /* 默认模型必须来自本次真实目录（cache / CLI / fallback / ACP）：deepseek-chat 等 legacy 全局值永不外泄。 */
+    if (!defaultModel || !finalModels.some((m) => m.id === defaultModel)) {
+      defaultModel = (finalModels[0] && finalModels[0].id) || '';
+      defaultSource = defaultModel ? 'first-advertised' : 'none';
+    }
+    return {
+      ok: true,
+      groups: [{ provider: def.id, label: def.name || def.id, models: finalModels }],
+      allGroups: [{ provider: def.id, label: def.name || def.id, models: allModels }],
+      default: defaultModel,
+      engine: 'cli',
+      transport: 'acp',
+      visibleModels: whitelist || [],
+      agentId: def.id,
+      reasoningOptions: def.reasoningOptions || null,
+      configOptions: null,
+      defaultSource,
+      refreshing: true,
+      stale: !!stale,
+      source: firstScreenSource,
+      catalogWarning: catalogWarning || null,
+      requestId,
+      warning
+    };
+  }
   const fms = Array.isArray(def.fallbackModels) ? def.fallbackModels : [];
   /* 动态执行 def.listModels（如 opencode models），5s熔断+10分钟缓存，失败降级fallback */
   let dynItems = [];
@@ -987,7 +2079,7 @@ async function aiModelsImpl(ev, hint) {
     if (d0 && d0.id) defId = d0.id;
   } catch (e) {}
   return {
-    ok: true, groups, default: process.env.PROTO_AI_MODEL || cfg.model || defId,
+    ok: true, groups, allGroups: groups, default: process.env.PROTO_AI_MODEL || cfg.model || defId,
     engine: 'cli', visibleModels: visible || [], agentId: def.id,
     reasoningOptions: def.reasoningOptions || null
   };
@@ -1013,21 +2105,15 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
   }
   const aiCfg = aiConfigStore.loadAiConfigFull();
   const webContents = ev.sender;
-  /* iter25: 记录事件归属，支持关窗后转主窗口续跑 */
-  try { shared.aiEventTarget = ev.sender; shared.aiTransferToMain = false; } catch (e) {}
   function emitAiEvent(payload) {
     try {
-      var target = null;
-      try {
-        if (shared.aiTransferToMain && shared.mainWin && !shared.mainWin.isDestroyed()) target = shared.mainWin.webContents;
-        else target = shared.aiEventTarget || webContents;
-      } catch (e) { target = webContents; }
-      try { if (target && !target.isDestroyed()) target.send('ai:event', payload); } catch (e) {}
+      if (webContents && !webContents.isDestroyed()) webContents.send('ai:event', payload);
     } catch (e) {}
   }
   const isApiMode = aiCfg.mode === 'api' || aiCfg.providerType === 'api' || aiCfg.engine === 'api';
   let def = null;
   let resolvedBin = null;
+  let useAcp = false;
   const rawModel = String(model || '').trim();
   let normModel = (!rawModel || rawModel === '__none__' || rawModel === 'default') ? '' : rawModel;
   /* free 独立模型：原样透传，由服务商做免费路由；若未选模型则空置，使用 CLI 原生配置 */
@@ -1041,6 +2127,7 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
   }
   let executionOptions = { ...extraOpts };
   delete executionOptions.sessionId; // 坚决剔除前端 Tab ID，杜绝同名覆盖
+  delete executionOptions.acpConfig; // acpConfig 只经 requestedConfig 下发，不得进入 legacy 执行选项
   if (agentSessionToken && !agentSessionToken.startsWith('s_')) {
     executionOptions.sessionId = agentSessionToken;
   }
@@ -1097,17 +2184,21 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
     try {
       if (aiCfg.cliPaths && aiCfg.cliPaths[def.id]) customPath = aiCfg.cliPaths[def.id];
     } catch (e) {}
-    resolvedBin = await resolveAgentExecutable(def, customPath);
-    if (!resolvedBin) {
-      emitAiEvent({
-        type: 'error', code: 'CLI_NOT_FOUND', title: ('未检测到 ' + def.name),
-        message: ('未找到 ' + def.name + ' 可执行文件，请在终端执行安装或在设置中心指定路径。')
-      });
-      return { ok: false, success: false, error: '未检测到 ' + def.name };
-    }
-    executionOptions.model = (targetModel && targetModel !== '__none__') ? targetModel : '';
-    if (extraOpts && extraOpts.reasoning && targetModel) {
-      executionOptions.reasoning = String(extraOpts.reasoning).trim();
+    /* Phase 1：ACP 开启时由 acpx 解析 Agent / 适配器，不再要求原生 bin 存在（Claude/Codex 走 adapter）。 */
+    useAcp = isAcpEnabled(aiCfg, def);
+    if (!useAcp) {
+      resolvedBin = await resolveAgentExecutable(def, customPath);
+      if (!resolvedBin) {
+        emitAiEvent({
+          type: 'error', code: 'CLI_NOT_FOUND', title: ('未检测到 ' + def.name),
+          message: ('未找到 ' + def.name + ' 可执行文件，请在终端执行安装或在设置中心指定路径。')
+        });
+        return { ok: false, success: false, error: '未检测到 ' + def.name };
+      }
+      executionOptions.model = (targetModel && targetModel !== '__none__') ? targetModel : '';
+      if (extraOpts && extraOpts.reasoning && targetModel) {
+        executionOptions.reasoning = String(extraOpts.reasoning).trim();
+      }
     }
   }
   /* permissionMode 从配置读取：aiConfig.cliPermissionModes[defId]，没有就当没配（零行为变化）；
@@ -1201,6 +2292,134 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
     }
   } catch (e) {}
 
+  /* ═══════ Phase 1 ACP 分流（默认关闭：!isApiMode && acp.enabled===true && def.transport==='acp'） ═══════
+   * 复用上面的 prompt 前缀、S5 scope confirm、before signature / 内容快照与沙箱根快照；
+   * 事件由 acp-runtime 按现有 ai:event 契约发出，这里只提供文件变更与收尾回调。 */
+  if (useAcp) {
+    function collectAcpFileChanges() {
+      let fileChanges = [];
+      try {
+        const afterSignature = sandboxStorage.getProtoFileSignature(cwd);
+        try {
+          let afterContents = null;
+          try {
+            if (sandboxStorage.snapshotProtoFileContents) afterContents = sandboxStorage.snapshotProtoFileContents(cwd);
+          } catch (e) { afterContents = null; }
+          if (beforeContents instanceof Map && afterContents instanceof Map) {
+            fileChanges = sandboxStorage.diffFileSignatures(beforeSignature, afterSignature, beforeContents, afterContents);
+          } else {
+            fileChanges = sandboxStorage.diffFileSignatures(beforeSignature, afterSignature);
+          }
+        } catch (err2) {
+          try { fileChanges = sandboxStorage.diffFileSignatures(beforeSignature, afterSignature); }
+          catch (e) { fileChanges = []; }
+        }
+      } catch (err) {
+        fileChanges = [];
+      }
+      try {
+        if (!Array.isArray(fileChanges)) return [];
+        const clean = [];
+        for (let i = 0; i < fileChanges.length; i++) {
+          try {
+            const fc = fileChanges[i] || {};
+            const p = String(fc.path || fc.file || fc.name || '');
+            if (!p) continue;
+            const item = { path: p, action: String(fc.action || 'modified') };
+            const a = Number(fc.added);
+            const d = Number(fc.deleted);
+            if (fc.added != null && isFinite(a)) item.added = Math.max(0, Math.floor(a));
+            if (fc.deleted != null && isFinite(d)) item.deleted = Math.max(0, Math.floor(d));
+            clean.push(item);
+          } catch (e) {}
+        }
+        clean.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+        return clean;
+      } catch (e) { return []; }
+    }
+
+    function finalizeAcpTurn(info) {
+      const cancelled = !!(info && info.cancelled);
+      const fileChanges = (info && Array.isArray(info.fileChanges)) ? info.fileChanges : [];
+      /* 沙箱根越界守卫（任务后对比）：同 legacy onClose，只 trace-warn，不打断流程。 */
+      try {
+        if (!sandboxGuardSkipped && sandboxGuardBefore instanceof Map) {
+          let outs = [];
+          try {
+            let rootDir2 = null;
+            try { rootDir2 = paths.SANDBOX_ROOT; } catch (e2) { rootDir2 = null; }
+            if (rootDir2 && sandboxStorage.diffSandboxRootAgainst) {
+              outs = sandboxStorage.diffSandboxRootAgainst(rootDir2, cwd, sandboxGuardBefore) || [];
+            }
+          } catch (e2) { outs = []; }
+          if (Array.isArray(outs) && outs.length) {
+            try {
+              const list = [];
+              for (let i = 0; i < outs.length && list.length < 20; i++) {
+                const pp = String((outs[i] && outs[i].path) || '').trim();
+                if (pp) list.push(pp);
+              }
+              emitAiEvent({ type: 'trace', trace: { tag: 'SANDBOX', level: 'warn', text: '检测到允许目录之外的变更（' + outs.length + ' 处）：' + list.join('、') } });
+            } catch (e2) {}
+          }
+        }
+      } catch (e) {}
+      /* 历史落盘：与 legacy onClose 同口径（取消不写）。 */
+      try {
+        if (!cancelled) {
+          let hr = null;
+          try { hr = appendHistoryRound(cwd, { user: userPromptText, answer: String((info && info.answer) || ''), fileChanges }); } catch (e) { hr = null; }
+          try {
+            if (hr && hr.alarm) {
+              let hk = '';
+              try { hk = historyFilePath(cwd) || String(cwd || ''); } catch (_) { hk = String(cwd || ''); }
+              if (hk && !historyAlarmWarned.has(hk)) {
+                try { historyAlarmWarned.add(hk); } catch (_) {}
+                try {
+                  let kb = 0;
+                  try { kb = Math.max(1, Math.round((readHistoryScale(cwd).bytes || 0) / 1024)); } catch (_) {}
+                  emitAiEvent({ type: 'trace', trace: { tag: 'HISTORY', level: 'warn', text: '对话历史 .context/history.md 已超 100KB 观测线（现约' + kb + 'KB，只增不减不截断，本轮仍已落盘；按需读取前情即可，溢出控制交给各 CLI）' } });
+                } catch (_) {}
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (e) {}
+    }
+
+    /* ═══ ACP 参数映射（B2） ═══
+     * - requestedModel 只认 UI 显式选择 normModel；aiCfg.model 是 API/legacy 全局值，
+     *   绝不作为 ACP 模型，只作为 acp-config 的 globalModel 用于识别/忽略泄漏。
+     * - resumeSessionId 只认 ACP 专用字段，不再回落到 legacy CLI 会话标识。 */
+    const agentAcpCfg = resolveAgentAcpConfig(aiCfg, def.id);
+    return acpRuntime.ask({
+      def,
+      cwd,
+      uiSessionId: (extraOpts && extraOpts.uiSessionId) || '',
+      prompt: finalPrompt,
+      requestedModel: normModel,
+      modelSource: normModel ? 'ui' : (agentAcpCfg.model ? 'agent-config' : ''),
+      agentConfigModel: String(agentAcpCfg.model || '').trim(),
+      requestedThought: String((extraOpts && extraOpts.reasoning) || agentAcpCfg.thoughtLevel || '').trim(),
+      requestedConfig: (extraOpts && extraOpts.acpConfig && typeof extraOpts.acpConfig === 'object')
+        ? extraOpts.acpConfig
+        : {},
+      globalModel: String(aiCfg.model || aiCfg.defaultModel || '').trim(),
+      freshSession: !!((extraOpts && (extraOpts.freshSession === true || extraOpts.resetSession === true))),
+      extra: executionOptions,
+      aiCfg,
+      resumeSessionId: String(
+        (extraOpts && (extraOpts.acpSessionId || extraOpts.resumeSessionId))
+        || ''
+      ),
+      handlers: {
+        emit: emitAiEvent,
+        getFileChanges: collectAcpFileChanges,
+        onDone: finalizeAcpTurn
+      }
+    });
+  }
+
   function runAgentProcess(opts, isRetry = false) {
     let answerAcc = '';
     /* 本轮用量累加器：各事件 usage（tool_call/chunk 透传的 per-step 值）在此累加，onClose 报总量 */
@@ -1283,7 +2502,6 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
             return;
           }
           shared.activeExecution = null;
-          try { shared.aiTransferToMain = false; shared.aiEventTarget = null; } catch (e) {}
           try {
             emitAiEvent({ type: 'error', code: d.code || 'EXECUTION_FAILURE', title: d.title || '调用失败', message: d.message || '调用失败', action: d.action || 'retry' });
           } catch (e) {
@@ -1401,7 +2619,6 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
               } catch (_) {}
             }
           } catch (e) {}
-          try { shared.aiTransferToMain = false; shared.aiEventTarget = null; } catch (e) {}
         }
       }
     });
@@ -1411,32 +2628,24 @@ async function aiAskImpl(ev, prompt, sessionId, sandboxDir, model, extraOpts = {
   return { ok: true, success: true, pid: shared.activeExecution ? shared.activeExecution.pid : null };
 
 }
-/* 独立窗代发（ai:remote-send 实现）：主窗待提交列表委托独立窗发送时，
- * 把文本投给独立窗，由其走自己的 aiDoSend 全程落窗。独立窗不存在/已销毁/发送失败即回 false，调用方回落本地发送。
- * @param {Object} ev IPC 事件（未使用，签名对齐）
- * @param {Object} o {text:string, display?:string} 待发送全文与对话框展示简版
- * @returns {Promise<{ok:boolean, success:boolean, error?}>} */
-async function aiRemoteSendImpl(ev, o) {
-  try {
-    const p = (o && typeof o === 'object') ? o : {};
-    const text = String(p.text || '').trim();
-    if (!text) return { ok: false, success: false, error: 'empty' };
-    let win = null;
-    try { win = (shared.aiWin && !shared.aiWin.isDestroyed()) ? shared.aiWin : null; } catch (e) { win = null; }
-    if (!win) return { ok: false, success: false, error: 'no-window' };
-    try {
-      win.webContents.send('ai:event', { type: 'remote-send', text, display: String(p.display || '') });
-    } catch (e) { return { ok: false, success: false, error: String((e && e.message) || e) }; }
-    try { if (!win.isFocused()) win.focus(); } catch (e) {}
-    return { ok: true, success: true };
-  } catch (e) { return { ok: false, success: false, error: String((e && e.message) || e) }; }
-}
 async function aiCancelImpl() {
 /* 确认等待中的范围确认按拒绝解决（aiAskImpl 走 scope-denied 中止，不悬挂 120 秒） */
   try {
     for (const w of scopeConfirmWaiters.values()) { try { w.resolve('deny'); } catch (e) {} }
     scopeConfirmWaiters.clear();
     scopeConfirmPending = false;
+  } catch (e) {}
+  /* 本地 CLI 模型探测也按进程树收尾：只 kill cmd.exe 会留下 node/conhost 持有 fd3/fd4。 */
+  try {
+    await acpProcessLifecycle.shutdownAll({ kind: 'cli-list-models', reason: 'ai-cancel', timeoutMs: 1500 });
+  } catch (e) {}
+  /* Phase 1 ACP：turn.cancel + 2 秒兜底 + 权限等待清理统一由 acp-runtime 负责，这里不再二次 kill。 */
+  try {
+    if (shared.activeExecution && shared.activeExecution.kind === 'acp') {
+      try { await acpRuntime.cancel(); } catch (e) {}
+      shared.activeExecution = null;
+      return 'ok';
+    }
   } catch (e) {}
   try {
     if (shared.activeExecution) {
@@ -1445,11 +2654,72 @@ async function aiCancelImpl() {
     }
   } catch (e) {}
   shared.activeExecution = null;
-  try { shared.aiTransferToMain = false; shared.aiEventTarget = null; } catch (e) {}
   return 'ok';
 
 }
 function aiIsBusyImpl() { return !!shared.activeExecution;
+}
+
+/**
+ * 应用退出统一收尾：中止后台 ACP 目录探测，关闭 ACP runtime，并强杀仍在运行的探测进程树。
+ * 清理范围仅限本进程登记过的 PID，以及当前 Electron 后代树中带 ACP 命令签名的孤儿；
+ * 不按镜像名全盘清杀，不影响用户其它终端/进程。
+ * @param {{reason?:string,timeoutMs?:number}} [options] 收尾选项
+ * @returns {Promise<void>}
+ */
+async function shutdownAiProcesses(options) {
+  const opts = (options && typeof options === 'object') ? options : {};
+  const timeoutMs = Number.isFinite(Number(opts.timeoutMs)) ? Math.max(1, Number(opts.timeoutMs)) : 3000;
+  try { abortAcpCatalogRefreshes(opts.reason || 'app-quit'); } catch (e) {}
+  /* Windows 有后代树兜底扫描，acpx 的 AbortSignal/client.close 只需短暂让路；
+   * 其它平台没有 taskkill 兜底，保留更长等待。 */
+  const acpxWaitMs = process.platform === 'win32' ? 400 : 1200;
+  try { await waitForAcpCatalogRefreshes(Math.min(acpxWaitMs, timeoutMs)); } catch (e) {}
+  const acpShutdownMs = Math.min(1500, timeoutMs);
+  try { await acpRuntime.shutdown({ reason: opts.reason || 'app-quit', timeoutMs: acpShutdownMs }); } catch (e) {}
+  try {
+    await acpProcessLifecycle.shutdownAll({
+      kind: 'cli-list-models',
+      reason: opts.reason || 'app-quit',
+      timeoutMs
+    });
+  } catch (e) {}
+  /* acpRuntime.shutdown 内部已按 kind=acp 收尾；这里再兜一次，防止 runtime 创建失败时遗留登记。 */
+  try {
+    await acpProcessLifecycle.shutdownAll({ kind: 'acp', reason: opts.reason || 'app-quit', timeoutMs });
+  } catch (e) {}
+  /* inspectAgentModels 由 acpx 内部 client 管理，不暴露 processLifecycle：
+   * abort + client.close 有时赶不上 Electron 退出，按“后代树 + ACP 命令签名”再扫一次。 */
+  if (!acpOrphanSweepDone && acpProbeCommandSignatures.size) {
+    acpOrphanSweepDone = true;
+    try {
+      acpProcessLifecycle.sweepOrphanDescendants({
+        parentPid: process.pid,
+        signatures: Array.from(acpProbeCommandSignatures)
+      });
+    } catch (e) {}
+  }
+}
+
+/**
+ * 同步收尾（window-all-closed / process exit）：中止探测信号并强杀所有登记的 AI 进程树。
+ * @param {{sweep?:boolean}} [options] sweep=false 时只清理登记项（留给 before-quit 做后代树兜底）
+ * @returns {void}
+ */
+function shutdownAiProcessesSync(options) {
+  const opts = (options && typeof options === 'object') ? options : {};
+  try { abortAcpCatalogRefreshes('app-exit-sync'); } catch (e) {}
+  try { acpRuntime.shutdownSync(); } catch (e) {}
+  try { acpProcessLifecycle.killAllSync(); } catch (e) {}
+  if (opts.sweep !== false && !acpOrphanSweepDone && acpProbeCommandSignatures.size) {
+    acpOrphanSweepDone = true;
+    try {
+      acpProcessLifecycle.sweepOrphanDescendants({
+        parentPid: process.pid,
+        signatures: Array.from(acpProbeCommandSignatures)
+      });
+    } catch (e) {}
+  }
 }
 /* 本地 CLI 终端：纯组装（可单测），Windows 走 cmd start 开独立控制台窗口
  * @param {string} resolvedBin CLI 可执行文件（绝对路径或 PATH 名）
@@ -1535,11 +2805,18 @@ module.exports = {
   aiSaveConfigImpl,
   aiTestConnectionImpl,
   aiModelsImpl,
+  warmThinkingCache,
+  resolveConfiguredModel,
+  waitForThinkingProbes,
+  __resetThinkingWarmForTest,
   aiPickImpl,
   aiAskImpl,
   aiCancelImpl,
-  aiRemoteSendImpl,
   aiIsBusyImpl,
+  shutdownAiProcesses,
+  shutdownAiProcessesSync,
+  abortAcpCatalogRefreshes,
+  __setAcpModelsTestHooks,
   resolveUiSpecKind,
   buildUiSpecSection,
   buildToolPromptPointer,

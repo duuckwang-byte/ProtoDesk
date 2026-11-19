@@ -13,15 +13,10 @@ const CLI_MODELS_CACHE_TTL = 10 * 60 * 1000;
 const gitState = { busy: null };
 
 module.exports = {
-  // 窗口句柄
+  // 窗口句柄与 AI 执行状态
   mainWin: null,
   docWin: null,
-  aiWin: null,
-  // AI 执行与事件归属
   activeExecution: null,
-  aiEventTarget: null,
-  aiTransferToMain: false,
-  aiWinForceClose: false,
   // Git 并发与子进程句柄（对象引用共享，禁止整体重赋）
   gitState,
   gitCurrentChild: null,

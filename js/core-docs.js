@@ -1,7 +1,7 @@
 /* [js/core-docs.js] Wave-D/G index：文档域门面（逻辑分层+文件夹切分，物理行暂留兼容副本）
  * 域切分：js/doc/markdown-compiler.js（纯编译）/editor-controller.js（Store守卫）/toc-navigator.js（目录）
  *          /mirror-sync.js（EventBus桥，无monkey-patch）。本文件保留实现供 vm 门禁过渡，下波删副本。
- * SoC：mirrorPush/Back 已双发 MirrorSync；applyAiWinCloseGuard 已删 window.closeAi 裸挂（见 verify-docwin C5 EventBus）。 */
+ * SoC：mirrorPush/Back 已双发 MirrorSync，无 window.closeAi 裸挂。 */
 
 var $=function(id){return document.getElementById(id);};
 window.Proto={$: $};
@@ -1404,7 +1404,6 @@ function positionToc(){
   }
  }catch(e){}
  try{ if(typeof isDocWinMode==='function'&&isDocWinMode()){ try{ docTocEl.style.top=''; docTocEl.style.left=''; docTocEl.style.width=''; docTocEl.style.height=''; docTocEl.style.maxHeight=''; }catch(e){} return; } }catch(e){}
- try{ if(typeof isAiWinMode==='function'&&isAiWinMode()) return; }catch(e){}
  var panel=document.querySelector('.docs-panel');
  if(!panel)return;
  var r=panel.getBoundingClientRect();
@@ -3930,11 +3929,10 @@ function switchDocTabCont(want){
  }
 }
 /* PC 目录常驻（与文档弹窗同显隐）：开面板则目录重建并保持可见；
- * 切 tab 只刷新内容不隐藏；仅关面板时一并隐藏。移动端/独立窗保持原行为。 */
+ * 切 tab 只刷新内容不隐藏；仅关面板时一并隐藏。移动端/文档窗保持原行为。 */
 function isTocPinMode(){
  try{
   if(typeof isDocWinMode==='function'&&isDocWinMode()) return false;
-  if(typeof isAiWinMode==='function'&&isAiWinMode()) return false;
   if(typeof pcMode==='function'&&pcMode()) return true;
  }catch(e){}
  try{ if(document.body&&document.body.classList.contains('kind-pc')) return true; }catch(e){}
@@ -3951,230 +3949,12 @@ function syncTocForTab(){
   }catch(e){}
  }catch(e){}
 }
-/* iter25: AI任务守卫+输入草稿镜像（纯色，无渐变）：toggle双向拒绝忙时切换，ai-draft两端收发，失败不抛错 */
+/* iter25: AI任务守卫（纯色，无渐变）：文档窗切换前拒绝忙时操作，失败不抛错 */
 function isAiTaskRunning(){
  try{ if(typeof aiBusy!=='undefined'&&aiBusy) return true; }catch(e){}
  try{ if(typeof window!=='undefined'&&window.aiBusy) return true; }catch(e){}
  try{ var _s=document.getElementById('aiSend'); if(_s&&_s.classList&&_s.classList.contains('stopping')) return true; }catch(e){}
  return false;
-}
-function getAiDraftText(){
- try{
-  var el=null;
-  try{ el=document.getElementById('aiInput'); }catch(e){ el=null; }
-  if(el&&typeof el.value==='string') return String(el.value);
- }catch(e){}
- return '';
-}
-function applyAiDraftText(text){
- try{
-  var el=null;
-  try{ el=document.getElementById('aiInput'); }catch(e){ el=null; }
-   if(!el) return false;
-   try{ el.value=String(text==null?'':text); }catch(e){ return false; }
-   try{ if(typeof aiAutosizeInput==='function') aiAutosizeInput(); }catch(e){} /* 草稿恢复后同步输入框高度 */
-   return true;
- }catch(e){ return false; }
-}
-/* iter26: 草稿pull+ACK+双保险+历史落定渲染（无渐变）：常驻变量+ts覆盖+localStorage+20次ACK停+pull一次+落定三件套 */
-var __aiDraftPendingText='';
-var __aiDraftPendingTs=0;
-var __aiDraftLastRecvTs=0;
-var __aiDraftAckedTs=0;
-var __aiDraftRetryTimer=null;
-var __aiDraftRetryTs=0;
-var AI_DRAFT_MIRROR_KEY='aiDraftMirror';
-function __aiDraftNowTs(){ try{ return Date.now(); }catch(e){ return 0; } }
-function readAiDraftMirror(){
- try{
-  var raw=null;
-  try{ raw=localStorage.getItem(AI_DRAFT_MIRROR_KEY); }catch(e){ raw=null; }
-  if(!raw) return null;
-  var o=null;
-  try{ o=JSON.parse(raw); }catch(e){ return null; }
-  if(!o||typeof o!=='object') return null;
-  var t='';
-  try{ t=String(o.text==null?'':o.text); }catch(e){ t=''; }
-  var ts=0;
-  try{ ts=Number(o.ts||0)||0; }catch(e){ ts=0; }
-  return {text:t,ts:ts};
- }catch(e){ return null; }
-}
-function writeAiDraftMirror(text,ts){
- try{
-  var t=String(text==null?'':text);
-  var n=Number(ts||0)||0;
-  try{ localStorage.setItem(AI_DRAFT_MIRROR_KEY,JSON.stringify({text:t,ts:n})); }catch(e){}
- }catch(e){}
-}
-function rememberAiDraft(text,ts){
- try{
-  var t=String(text==null?'':text);
-  var n=Number(ts||0)||0;
-  if(!n){ try{ n=__aiDraftNowTs(); }catch(e){ n=0; } }
-  try{ if(n&&__aiDraftPendingTs&&n<__aiDraftPendingTs) return {text:__aiDraftPendingText,ts:__aiDraftPendingTs}; }catch(e){}
-  try{ __aiDraftPendingText=t; }catch(e){}
-  try{ __aiDraftPendingTs=n; }catch(e){}
-  try{ window.__aiDraftPendingText=t; }catch(e){}
-  try{ window.__aiDraftPendingTs=n; }catch(e){}
-  try{ writeAiDraftMirror(t,n); }catch(e){}
-  return {text:t,ts:n};
- }catch(e){ return {text:String(text==null?'':text),ts:Number(ts||0)||0}; }
-}
-function restoreAiDraftFromMirror(){
- try{
-  var cur='';
-  try{ cur=getAiDraftText(); }catch(e){ cur=''; }
-  if(cur) return false;
-  var m=null;
-  try{ m=readAiDraftMirror(); }catch(e){ m=null; }
-  if(!m||!m.text) return false;
-  try{ if(m.ts&&__aiDraftLastRecvTs&&m.ts<__aiDraftLastRecvTs) return false; }catch(e){}
-  var ok=false;
-  try{ ok=applyAiDraftText(m.text); }catch(e){ ok=false; }
-  if(ok){
-   try{ if(m.ts>__aiDraftLastRecvTs) __aiDraftLastRecvTs=m.ts; }catch(e){}
-   try{ if(m.ts>__aiDraftPendingTs){ __aiDraftPendingText=m.text; __aiDraftPendingTs=m.ts; } }catch(e){}
-   return true;
-  }
-  return false;
- }catch(e){ return false; }
-}
-function sendAiDraftAck(ts){
- try{
-  var n=Number(ts||0)||0;
-  if(!n) return;
-  var payload={ts:n};
-  try{ docMirrorBCSend('ai-draft-ack',payload); }catch(e){}
-  try{ mirrorPush('ai-draft-ack',payload); }catch(e){}
-  try{ mirrorBack('ai-draft-ack',payload); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.doc&&typeof window.protoAPI.doc.mirrorPush==='function') window.protoAPI.doc.mirrorPush({kind:'ai-draft-ack',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.doc&&typeof window.protoAPI.doc.mirrorBack==='function') window.protoAPI.doc.mirrorBack({kind:'ai-draft-ack',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.mirrorPush==='function') window.protoAPI.aiwin.mirrorPush({kind:'ai-draft-ack',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.mirrorBack==='function') window.protoAPI.aiwin.mirrorBack({kind:'ai-draft-ack',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.docwin&&typeof window.protoAPI.docwin.mirrorPush==='function') window.protoAPI.docwin.mirrorPush({kind:'ai-draft-ack',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.docwin&&typeof window.protoAPI.docwin.mirrorBack==='function') window.protoAPI.docwin.mirrorBack({kind:'ai-draft-ack',payload:payload}); }catch(e){}
- }catch(e){}
-}
-function sendAiDraftPull(){
- try{
-  var payload={ts:__aiDraftNowTs()};
-  try{ docMirrorBCSend('ai-draft-pull',payload); }catch(e){}
-  try{ mirrorPush('ai-draft-pull',payload); }catch(e){}
-  try{ mirrorBack('ai-draft-pull',payload); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.doc&&typeof window.protoAPI.doc.mirrorPush==='function') window.protoAPI.doc.mirrorPush({kind:'ai-draft-pull',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.doc&&typeof window.protoAPI.doc.mirrorBack==='function') window.protoAPI.doc.mirrorBack({kind:'ai-draft-pull',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.mirrorPush==='function') window.protoAPI.aiwin.mirrorPush({kind:'ai-draft-pull',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.mirrorBack==='function') window.protoAPI.aiwin.mirrorBack({kind:'ai-draft-pull',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.docwin&&typeof window.protoAPI.docwin.mirrorPush==='function') window.protoAPI.docwin.mirrorPush({kind:'ai-draft-pull',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.docwin&&typeof window.protoAPI.docwin.mirrorBack==='function') window.protoAPI.docwin.mirrorBack({kind:'ai-draft-pull',payload:payload}); }catch(e){}
- }catch(e){}
-}
-function __aiDraftClearRetry(){
- try{ if(__aiDraftRetryTimer){ try{ clearInterval(__aiDraftRetryTimer); }catch(e){} __aiDraftRetryTimer=null; } }catch(e){}
-}
-function __aiDraftHealHistory(){
- try{ if(typeof aiEnsureCur==='function') aiEnsureCur(); }catch(e){}
- try{ if(typeof aiRenderBubbles==='function') aiRenderBubbles(); }catch(e){}
- try{ if(typeof aiSaveSesh==='function') aiSaveSesh(); }catch(e){}
-}
-function __aiDraftHealDoc(){
- try{ if(typeof loadDesc==='function') loadDesc(); }catch(e){}
- try{ if(typeof refreshToc==='function') refreshToc(); }catch(e){}
-}
-function setAiDraftWithRetry(text,ts){
- try{
-  var t=String(text==null?'':text);
-  var _ts=0;
-  try{ _ts=Number(ts||0)||0; }catch(e){ _ts=0; }
-  try{ if(_ts&&_ts<__aiDraftLastRecvTs) return; }catch(e){}
-  try{ if(_ts>__aiDraftLastRecvTs) __aiDraftLastRecvTs=_ts; }catch(e){}
-  try{ rememberAiDraft(t,_ts||__aiDraftNowTs()); }catch(e){}
-  var ok=false;
-  try{ ok=applyAiDraftText(t); }catch(e){ ok=false; }
-  if(ok) return;
-  var attempts=0;
-  var timer=setInterval(function(){
-   try{
-    attempts++;
-    var done=false;
-    try{ done=applyAiDraftText(t); }catch(e){ done=false; }
-    if(done||attempts>=3){ try{ clearInterval(timer); }catch(e){} }
-   }catch(e){
-    try{ if(attempts>=3) clearInterval(timer); }catch(e2){}
-   }
-  },500);
- }catch(e){}
-}
-function sendAiDraftViaMirror(text,ts){
- try{
-  var t=String(text==null?'':text);
-  var _ts=0;
-  try{ _ts=Number(ts||0)||0; }catch(e){ _ts=0; }
-  try{ if(!_ts) _ts=__aiDraftNowTs(); }catch(e){}
-  try{ rememberAiDraft(t,_ts); }catch(e){}
-  var payload={text:t,ts:_ts};
-  try{ docMirrorBCSend('ai-draft',payload); }catch(e){}
-  try{ mirrorPush('ai-draft',payload); }catch(e){}
-  try{ mirrorBack('ai-draft',payload); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.doc&&typeof window.protoAPI.doc.mirrorPush==='function') window.protoAPI.doc.mirrorPush({kind:'ai-draft',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.doc&&typeof window.protoAPI.doc.mirrorBack==='function') window.protoAPI.doc.mirrorBack({kind:'ai-draft',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.mirrorPush==='function') window.protoAPI.aiwin.mirrorPush({kind:'ai-draft',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.mirrorBack==='function') window.protoAPI.aiwin.mirrorBack({kind:'ai-draft',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.docwin&&typeof window.protoAPI.docwin.mirrorPush==='function') window.protoAPI.docwin.mirrorPush({kind:'ai-draft',payload:payload}); }catch(e){}
-  try{ if(window.protoAPI&&window.protoAPI.docwin&&typeof window.protoAPI.docwin.mirrorBack==='function') window.protoAPI.docwin.mirrorBack({kind:'ai-draft',payload:payload}); }catch(e){}
- }catch(e){}
-}
-function pushAiDraftWithRetry(text,ts){
- try{
-  var t=String(text==null?'':text);
-  var stamp=0;
-  try{ stamp=Number(ts||0)||0; }catch(e){ stamp=0; }
-  try{ if(!stamp) stamp=__aiDraftNowTs(); }catch(e){}
-  try{ rememberAiDraft(t,stamp); }catch(e){}
-  try{ sendAiDraftViaMirror(t,stamp); }catch(e){}
-  try{ __aiDraftClearRetry(); }catch(e){}
-  try{ __aiDraftRetryTs=stamp; }catch(e){}
-  var n=0;
-  var timer=setInterval(function(){
-   try{
-    n++;
-    var _acked=0;
-    try{ _acked=Number(__aiDraftAckedTs||0)||0; }catch(e){}
-    if(_acked>=stamp){ try{ clearInterval(timer); }catch(e){} try{ if(__aiDraftRetryTimer===timer) __aiDraftRetryTimer=null; }catch(e){} return; }
-    try{ sendAiDraftViaMirror(t,stamp); }catch(e){}
-    if(n>=20){ try{ clearInterval(timer); }catch(e){} try{ if(__aiDraftRetryTimer===timer) __aiDraftRetryTimer=null; }catch(e){} }
-    /* iter25 compat: n>=3 legacy cap, now n>=20 with ACK stop */
-   }catch(e){
-    try{ if(n>=20) clearInterval(timer); }catch(e2){}
-   }
-  },500);
-  try{ __aiDraftRetryTimer=timer; }catch(e){}
- }catch(e){}
-}
-function restoreAiBusyInMain(){
- try{
-  try{ if(typeof openAiForSwitchBack==='function') openAiForSwitchBack(); }catch(e){}
-  try{ if(typeof window.aiSetBusy==='function') window.aiSetBusy(true); }catch(e){}
-  try{
-   var s=document.getElementById('aiSend');
-   if(s){ s.classList.add('stopping'); s.textContent='\u23F9 \u505C\u6B62\u751F\u6210'; }
-   var inp=document.getElementById('aiInput'); if(inp) inp.disabled=true;
-   var mdl=document.getElementById('aiModel'); if(mdl) mdl.disabled=true;
-  }catch(e){}
-  try{
-   var g=null;
-   try{ if(typeof window.aiTraceBegin==='function'&&!window.aiStreaming) g=window.aiTraceBegin('\u72EC\u7ACB\u7A97\u53E3\u4EFB\u52A1\uFF08\u5DF2\u8F6C\u5165\u4E3B\u7A97\u53E3\uFF09'); }catch(e){}
-   try{
-    if(typeof window.aiAppendMsg==='function'&&!window.aiStreaming){
-     window.aiStreaming=window.aiAppendMsg('','ai');
-     try{ window.aiStreamText=''; window.aiStreamThink=''; }catch(e){}
-     try{ if(typeof window.aiRenderStream==='function') window.aiRenderStream(); }catch(e){}
-    }
-   }catch(e){}
-  }catch(e){}
-  try{ if(typeof showToast==='function') showToast('AI\u4EFB\u52A1\u5DF2\u8F6C\u5165\u4E3B\u7A97\u53E3\u7EE7\u7EED\u8FD0\u884C'); }catch(e){}
- }catch(e){}
 }
 function toggleDocWin(){
  try{
@@ -4521,40 +4301,20 @@ function bootDocWinMode(){
  try{ setTimeout(function(){ try{ var pm2=document.getElementById('projMask'); if(pm2)pm2.style.display='none'; }catch(e){} },600); }catch(e){}
   setTimeout(function(){ try{ if(typeof openToc==='function'){ try{ openToc(); }catch(e){} } }catch(e2){} },1200);
 }
-/* ======= iter18 独立窗联动状态（B2/B3/B4/B5，纯前端，不改后端） =======
-   __aiWinOpen 跟踪独立AI窗是否已开（toggle结果+ai-mode事件），供AI设计入口focus判定；
+/* 独立文档窗联动状态（B2/B3/B4/B5，纯前端，不改后端）：
    __docWinOpen 跟踪独立文档窗；reopen 显式切回才开，X关闭仅同步文案（防环经__docMirrorApplying）。 */
-var __aiWinOpen=false;
 var __docWinOpen=false;
-try{ window.__aiWinOpen=false; }catch(e){}
 try{ window.__docWinOpen=false; }catch(e){}
-function setAiWinOpen(v){ try{ __aiWinOpen=!!v; }catch(e){} try{ window.__aiWinOpen=__aiWinOpen; }catch(e){} }
 function setDocWinOpen(v){ try{ __docWinOpen=!!v; }catch(e){} try{ window.__docWinOpen=__docWinOpen; }catch(e){} }
-function aiWinMarkReopen(){
- try{ docMirrorBCSend('ai-mode',{mode:'ai-panel',reopen:true}); }catch(e){}
- try{ localStorage.setItem('aiWinReopen','1'); }catch(e){}
- try{ if(window.protoAPI&&window.protoAPI.doc&&window.protoAPI.doc.mirrorBack)window.protoAPI.doc.mirrorBack({kind:'ai-mode',mode:'ai-panel',reopen:true}); }catch(e){}
- try{ if(window.protoAPI&&window.protoAPI.aiwin&&window.protoAPI.aiwin.mirrorBack)window.protoAPI.aiwin.mirrorBack({kind:'ai-mode',mode:'ai-panel',reopen:true}); }catch(e){}
-}
 function docWinMarkReopen(){
  try{ docMirrorBCSend('mode',{mode:'panel',reopen:true}); }catch(e){}
  try{ localStorage.setItem('docWinReopen','1'); }catch(e){}
  try{ mirrorBack('mode',{mode:'panel',reopen:true}); }catch(e){}
 }
-function openAiForSwitchBack(){
- try{
-  var inAi=false;
-  try{ inAi=isAiWinMode(); }catch(e){}
-  if(inAi)return;
-  if(typeof openAi==='function'){ openAi(); return; }
-  if(typeof openAiDesign==='function'){ openAiDesign(); return; }
-  try{ var m=document.getElementById('aiMask'); if(m)m.style.display='flex'; }catch(e){}
- }catch(e){}
-}
 function openDocsForSwitchBack(){
  try{
   var inW=false;
-  try{ inW=isDocWinMode(); }catch(e){}
+  try{ inW=isDocWinMode(); }catch(e){ inW=false; }
   if(inW)return;
   __docMirrorApplying=true;
   try{
@@ -4575,590 +4335,6 @@ function openDocsForSwitchBack(){
   try{ syncDocWinBtn(); }catch(e){}
   try{ syncDocModeTabs(); }catch(e){}
  }catch(e){ try{ __docMirrorApplying=false; }catch(e2){} }
-}
-/* ======= iter15 AI对话独立窗口（复用docwin模式，同一HTML加?aiwin=1启动，仅留AI弹窗全屏） ======= */
-var AIWIN_QUERY_KEY='aiwin';
-function isAiWinMode(){
- try{
-  if(typeof URLSearchParams!=='undefined'&&location&&location.search){
-   return new URLSearchParams(location.search).get(AIWIN_QUERY_KEY)==='1';
-  }
- }catch(e){}
- try{ return String((location&&location.search)||'').indexOf('aiwin=1')>=0; }catch(e2){ return false; }
-}
-function aiWinToast(msg){
- try{ if(typeof showToast==='function') showToast(String(msg==null?'':msg)); }catch(e){}
-}
-function syncAiWinBtn(){
- try{
-  var b=null;
-  try{ b=document.getElementById('btnAiWinToggle'); }catch(e){ b=null; }
-  if(!b) return;
-  var isW=false;
-  try{ isW=isAiWinMode(); }catch(e){}
-  var txt=isW?'切换回弹窗':'独立窗口';
-  try{ if(b.textContent!==txt) b.textContent=txt; }catch(e){}
-  try{ b.title=isW?'关闭独立窗口，回到主窗口弹窗':'在独立窗口中打开AI对话'; }catch(e){}
- }catch(e){}
-}
-function ensureAiWinUI(){
- try{
-  var btn=null;
-  try{ btn=document.getElementById('btnAiWinToggle'); }catch(e){ btn=null; }
-  var head=null, tabBar=null, sbx=null;
-  try{ head=document.querySelector('.ai-head'); }catch(e){ head=null; }
-  try{ tabBar=document.querySelector('.ai-head .ai-tab-header'); }catch(e){ tabBar=null; }
-  if(!tabBar){ try{ tabBar=document.querySelector('.ai-tab-header'); }catch(e){ tabBar=null; } }
-  try{ sbx=document.getElementById('aiSbx'); }catch(e){ sbx=null; }
-  var host=head||null;
-  if(!host){
-   try{ host=document.querySelector('.ai-logs-toolbar'); }catch(e){ host=null; }
-  }
-  if(!btn&&host){
-   try{
-    var b=document.createElement('button');
-    b.type='button'; b.id='btnAiWinToggle'; b.className='docs-btn';
-    b.title='在独立窗口中打开AI对话'; b.textContent='独立窗口';
-    b.addEventListener('click',function(e){
-     try{ if(e.preventDefault) e.preventDefault(); }catch(err){}
-     try{ toggleAiWin(); }catch(err){}
-    });
-    try{
-     if(host===head){
-      if(sbx&&sbx.parentNode===head) head.insertBefore(b,sbx);
-      else if(tabBar&&tabBar.nextSibling) head.insertBefore(b,tabBar.nextSibling);
-      else head.appendChild(b);
-     }else{
-      host.appendChild(b);
-     }
-    }catch(e){ try{ host.appendChild(b); }catch(e2){} }
-   }catch(e){}
-  }else if(btn){
-   try{
-    if(head&&btn.parentNode!==head){
-     if(sbx&&sbx.parentNode===head) head.insertBefore(btn,sbx);
-     else if(tabBar&&tabBar.nextSibling) head.insertBefore(btn,tabBar.nextSibling);
-     else head.appendChild(btn);
-    }else if(head&&sbx&&sbx.parentNode===head){
-     var needMove=false;
-     try{ needMove=(btn.nextSibling!==sbx); }catch(e){ needMove=false; }
-     if(needMove){
-      try{ head.insertBefore(btn,sbx); }catch(e){}
-     }
-    }
-   }catch(e){}
-   try{
-    if(!btn._aiWinBound){
-     btn._aiWinBound=true;
-     btn.addEventListener('click',function(e){
-      try{ if(e.preventDefault) e.preventDefault(); }catch(err){}
-      try{ toggleAiWin(); }catch(err){}
-     });
-    }
-   }catch(e){}
-  }
- }catch(e){}
- try{ syncAiWinBtn(); }catch(e){}
-}
-function __aiWinHandleToggleResult(p){
- try{
-  if(!p||typeof p.then!=='function') return;
-  p.then(function(r){
-   try{
-    /* iter25: 后端忙时拒绝切换并提示 */
-    try{ if(r&&!r.ok&&String(r.error||'')==='busy'){ try{ aiWinToast('任务进行中，请先停止或等待完成后再切换'); }catch(e){} try{ if(typeof showToast==='function') showToast('任务进行中，请先停止或等待完成后再切换'); }catch(e){} return; } }catch(e){}
-    var m='';
-    try{ m=String((r&&r.mode)||''); }catch(e){ m=''; }
-    if(m==='ai-win'){ try{ setAiWinOpen(true); }catch(e){} }
-    else if(m==='ai-panel'){ try{ setAiWinOpen(false); }catch(e){} }
-    try{ syncAiWinBtn(); }catch(e){}
-    /* B2 打开独立窗后关闭应用内弹窗（仅主窗，防环） */
-    if(m==='ai-win'){
-     var inAi=false;
-     try{ inAi=isAiWinMode(); }catch(e){}
-     if(!inAi){
-      try{ if(typeof window.closeAi==='function')window.closeAi(); }catch(e){}
-      try{ if(typeof closeAi==='function')closeAi(); }catch(e){}
-     }
-    }
-   }catch(e){}
-  },function(){});
- }catch(e){}
-}
-function toggleAiWin(){
- try{
-  try{ if(isAiTaskRunning()){ try{ aiWinToast('任务进行中，请先停止或等待完成后再切换'); }catch(e){} try{ if(typeof showToast==='function') showToast('任务进行中，请先停止或等待完成后再切换'); }catch(e){} return; } }catch(e){}
-  var __aiDraftCache='';
-  try{ __aiDraftCache=getAiDraftText(); }catch(e){ __aiDraftCache=''; }
-  var __aiDraftStamp=0;
-  try{ __aiDraftStamp=__aiDraftNowTs(); }catch(e){}
-  try{
-   if(!__aiDraftCache){
-    var _lm=null;
-    try{ _lm=readAiDraftMirror(); }catch(e){ _lm=null; }
-    if(_lm&&_lm.text){ try{ __aiDraftCache=String(_lm.text); }catch(e){} try{ if(Number(_lm.ts||0)) __aiDraftStamp=Number(_lm.ts); }catch(e){} try{ applyAiDraftText(__aiDraftCache); }catch(e){} }
-   }
-  }catch(e){}
-  try{ rememberAiDraft(__aiDraftCache,__aiDraftStamp); }catch(e){}
-  var done=false;
-  var openArg=null;
-  try{
-   if(!isAiWinMode()){
-    var _proj='';
-    try{ _proj=(typeof currentProject!=='undefined')?String(currentProject||''):''; }catch(e){ try{ _proj=String(window.currentProject||''); }catch(e2){} }
-    var _proto='';
-    try{
-     var _cur=null;
-     try{ _cur=(typeof currentSource!=='undefined')?currentSource:null; }catch(e){}
-     if(_cur) _proto=String(_cur.displayName||_cur.name||'');
-    }catch(e){}
-    try{ _proto=String(_proto||'').replace(/\.(html?|md)$/i,''); }catch(e){}
-    if(_proj||_proto) openArg={project:_proj,proto:_proto};
-   }
-  }catch(e){ openArg=null; }
-   var __fromAiWin=false;
-   try{ __fromAiWin=isAiWinMode(); }catch(e){}
-   /* B3 切回显式标记：aiwin内点切换回弹窗先记reopen，主窗收到才即开 */
-   if(__fromAiWin){ try{ aiWinMarkReopen(); }catch(e){} }
-   try{
-    if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.toggle==='function'){
-     var _r0=null;
-     try{
-      if(openArg&&!isAiWinMode()){ try{ _r0=window.protoAPI.aiwin.toggle(openArg); }catch(e){ try{ _r0=window.protoAPI.aiwin.toggle(); }catch(e2){ _r0=null; } } }
-      else{ try{ _r0=window.protoAPI.aiwin.toggle(); }catch(e){ _r0=null; } }
-     }catch(e){ _r0=null; }
-     try{ __aiWinHandleToggleResult(_r0); }catch(e){}
-     done=true;
-    }
-   }catch(e){}
-    if(!done){
-     try{
-      if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.open==='function'&&!isAiWinMode()){
-       var _r1=null;
-       try{
-        if(openArg){ try{ _r1=window.protoAPI.aiwin.open(openArg); }catch(e){ try{ _r1=window.protoAPI.aiwin.open(); }catch(e2){ _r1=null; } } }
-        else{ try{ _r1=window.protoAPI.aiwin.open(); }catch(e){ _r1=null; } }
-       }catch(e){ _r1=null; }
-       try{ __aiWinHandleToggleResult(_r1); }catch(e){}
-       done=true;
-      }else if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.close==='function'&&isAiWinMode()){
-       try{ aiWinMarkReopen(); }catch(e){}
-       var _r2=null;
-       try{ _r2=window.protoAPI.aiwin.close(); }catch(e){ _r2=null; }
-       try{ __aiWinHandleToggleResult(_r2); }catch(e){}
-       done=true;
-      }
-     }catch(e){}
-    }
-   try{
-    if(done){
-     if(__fromAiWin){ try{ sendAiDraftViaMirror(__aiDraftCache,__aiDraftStamp); }catch(e){} try{ pushAiDraftWithRetry(__aiDraftCache,__aiDraftStamp); }catch(e){} }
-     else{ try{ pushAiDraftWithRetry(__aiDraftCache,__aiDraftStamp); }catch(e){} }
-     /* iter26 关窗竞态：aiwin切回等invoke落定后再调close，500ms超时兜底 */
-     try{
-      if(__fromAiWin){
-       var _wp=null;
-       try{ _wp=(_r0&&typeof _r0.then==='function')?_r0:((_r2&&typeof _r2.then==='function')?_r2:null); }catch(e){ _wp=null; }
-       if(_wp&&typeof _wp.then==='function'){
-        var _settled=false;
-        var _to=setTimeout(function(){ if(!_settled){ _settled=true; try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.close==='function') window.protoAPI.aiwin.close(); }catch(e){} } },500);
-        try{ _wp.then(function(){ if(!_settled){ _settled=true; try{ clearTimeout(_to); }catch(e){} } },function(){ if(!_settled){ _settled=true; try{ clearTimeout(_to); }catch(e){} try{ if(window.protoAPI&&window.protoAPI.aiwin&&typeof window.protoAPI.aiwin.close==='function') window.protoAPI.aiwin.close(); }catch(e){} } }); }catch(e){ try{ clearTimeout(_to); }catch(e2){} }
-       }
-      }
-     }catch(e){}
-    }
-   }catch(e){}
-  if(!done){ aiWinToast('当前环境不支持独立窗口'); }
-  }catch(e){ try{ aiWinToast('当前环境不支持独立窗口'); }catch(e2){} }
-}
-function getAiWinQueryParams(){
- try{
-  var q={project:'',proto:''};
-  try{
-   if(typeof URLSearchParams!=='undefined'&&location&&location.search){
-    var sp=new URLSearchParams(location.search);
-    try{ q.project=String(sp.get('project')||''); }catch(e){}
-    try{ q.proto=String(sp.get('proto')||''); }catch(e){}
-   }else{
-    try{
-     var s=String((location&&location.search)||'');
-     var m=/[?&]project=([^&]*)/.exec(s);
-     if(m){ try{ q.project=decodeURIComponent(m[1]||''); }catch(e){ q.project=m[1]||''; } }
-     var m2=/[?&]proto=([^&]*)/.exec(s);
-     if(m2){ try{ q.proto=decodeURIComponent(m2[1]||''); }catch(e){ q.proto=m2[1]||''; } }
-    }catch(e){}
-   }
-  }catch(e){}
-  try{ q.project=String(q.project||'').trim(); }catch(e){ q.project=''; }
-  try{ q.proto=String(q.proto||'').trim(); }catch(e){ q.proto=''; }
-  return q;
- }catch(e){ return {project:'',proto:''}; }
-}
-function aiWinFindSource(proto){
- try{
-  if(!proto) return null;
-  var list=[];
-  try{ list=(typeof sources!=='undefined')?sources:[]; }catch(e){ try{ list=window.sources||[]; }catch(e2){ list=[]; } }
-  if(!list||!list.length) return null;
-  var target=String(proto||'').trim();
-  if(!target) return null;
-  var noExt=function(v){ try{ return String(v||'').replace(/\.(html?|md)$/i,''); }catch(e){ return String(v||''); } };
-  for(var i=0;i<list.length;i++){
-   var s=list[i];
-   if(!s) continue;
-   try{
-    var disp=String(s.displayName||''), nm=String(s.name||''), main=String(s.mainHtmlFile||'');
-    var dir=String(s.sandboxDir||'');
-    var base='';
-    try{ var parts=dir.replace(/[\\/]+$/,'').split(/[\\/]/); base=String(parts[parts.length-1]||''); }catch(e){}
-    if(disp===target||nm===target||main===target||base===target||dir===target) return s;
-    if(noExt(disp)===noExt(target)||noExt(nm)===noExt(target)||noExt(main)===noExt(target)||noExt(base)===noExt(target)) return s;
-   }catch(e){}
-  }
-  return null;
- }catch(e){ return null; }
-}
-function aiWinScrollChatToBottom(){
- try{
-  var inAi=false;
-  try{ inAi=isAiWinMode(); }catch(e){ inAi=false; }
-  if(!inAi) return;
-  var doBottom=function(){
-   try{
-    var cv=null;
-    try{ cv=document.getElementById('aiChatView'); }catch(e){ cv=null; }
-    if(!cv){ try{ if(window.aiChatView) cv=window.aiChatView; }catch(e){} }
-    if(cv){ try{ cv.scrollTop=cv.scrollHeight; }catch(e){} }
-   }catch(e){}
-  };
-  try{ doBottom(); }catch(e){}
-  try{ if(window.requestAnimationFrame){ window.requestAnimationFrame(function(){ try{ doBottom(); }catch(e){} }); } }catch(e){}
-  try{ setTimeout(function(){ try{ doBottom(); }catch(e){} },120); }catch(e){}
- }catch(e){}
-}
-function aiWinSelectProto(proto){
- try{
-  if(!proto) return false;
-  var found=null;
-  try{ found=aiWinFindSource(proto); }catch(e){ found=null; }
-  if(found){
-   try{
-    __docMirrorApplying=true;
-    try{
-     if(typeof loadSource==='function'){ loadSource(found); }
-     else{ try{ currentSource=found; }catch(e){ try{ window.currentSource=found; }catch(e2){} } try { if (typeof window !== 'undefined' && window.Store && typeof window.Store.setCurrentSource === 'function') window.Store.setCurrentSource(found); } catch (e3) {} }
-    }catch(e){}
-   }finally{ try{ __docMirrorApplying=false; }catch(e){} }
-   try{ aiWinSyncTitleSbx(); }catch(e){}
-   try{ if(typeof aiEnsureCur==='function') aiEnsureCur(); }catch(e){}
-   try{ if(typeof aiRenderBubbles==='function') aiRenderBubbles(); }catch(e){}
-   try{ if(typeof aiSaveSesh==='function') aiSaveSesh(); }catch(e){}
-   try{ aiWinScrollChatToBottom(); }catch(e){}
-   return true;
-  }
-  try{
-   if(typeof loadSandboxSources==='function'){
-    var curProj='';
-    try{ curProj=(typeof currentProject!=='undefined')?currentProject:''; }catch(e){ try{ curProj=window.currentProject||''; }catch(e2){} }
-    if(curProj){
-     try{ loadSandboxSources(proto, true); }catch(e){}
-     return true;
-    }
-   }
-  }catch(e){}
-  return false;
- }catch(e){ return false; }
-}
-function aiWinSyncTitleSbx(){
- try{
-  var proj='';
-  try{ proj=(typeof currentProject!=='undefined')?String(currentProject||''):''; }catch(e){ try{ proj=String(window.currentProject||''); }catch(e2){} }
-  var src=null;
-  try{ src=(typeof currentSource!=='undefined')?currentSource:null; }catch(e){ try{ src=window.currentSource||null; }catch(e2){} }
-  var label='';
-  try{ if(src){ label=String(src.displayName||src.name||''); label=label.replace(/\.(html?|md)$/i,''); } }catch(e){}
-  try{
-   if(label) document.title='AI对话 · '+(proj?proj+' / ':'')+label;
-   else if(proj) document.title='AI对话 · '+proj;
-   else document.title='AI对话 · 原型工具';
-  }catch(e){}
-  try{ if(typeof aiRenderSbx==='function'){ aiRenderSbx(); } }catch(e){}
-  try{
-   var el=null;
-   try{ el=document.getElementById('aiSbx'); }catch(e){ el=null; }
-   if(el&&src){
-    try{
-     var d='';
-     try{ d=String(src.sandboxDir||''); }catch(e){}
-     var nm='';
-     try{ nm=String(src.displayName||src.name||'').replace(/\.(html?|md)$/i,''); }catch(e){}
-     if(nm) el.textContent='沙箱：'+nm;
-     if(d) el.title='当前沙箱（模型工作目录）：'+d;
-     el.className='ai-cli ok';
-    }catch(e){}
-   }
-  }catch(e){}
- }catch(e){}
-}
-function applyAiWinCloseGuard(){
- try{
-  var c=null;
-  try{ c=document.getElementById('aiClose'); }catch(e){ c=null; }
-  if(c){
-   try{ c.style.display='none'; }catch(e){}
-   try{ c.setAttribute('aria-hidden','true'); }catch(e){}
-   try{ c.onclick=function(e){ try{ if(e&&e.preventDefault) e.preventDefault(); }catch(err){} }; }catch(e){}
-  }
- }catch(e){}
-  try{
-   var inAi=false;
-   try{ inAi=isAiWinMode(); }catch(e){ inAi=false; }
-   /* Wave-D/G: window.closeAi monkey-patch 已删除（SoC修复）。独立窗禁关经 EventBus ai:request-close
-    * + __aiWinCloseGuard 标志由 AiDomain.requestClose 统一执行；此处仅隐藏占位 + 订阅守卫，不再写 window.closeAi。 */
-   try { if (typeof window !== 'undefined') window.__aiWinCloseGuard = !!inAi; } catch (e) {}
-   try {
-     if (typeof window !== 'undefined' && window.EventBus && typeof window.EventBus.on === 'function' && !window.__aiWinGuardSubscribed) {
-       window.EventBus.on('ai:request-close', function () {
-         try { if (typeof isAiWinMode === 'function' && isAiWinMode()) return false; } catch (e) {}
-       });
-       window.__aiWinGuardSubscribed = true;
-     }
-   } catch (e) {}
-   try { if (typeof MirrorSync !== 'undefined' && MirrorSync && typeof MirrorSync.requestAiClose === 'function' && inAi) { /* 桥接占位，无裸挂 */ } } catch (e2) {}
-  }catch(e){}
-}
-function applyAiWinLockSwitchers(){
- try{
-  var inAi=false;
-  try{ inAi=isAiWinMode(); }catch(e){ inAi=false; }
-  if(!inAi) return;
-  var ids=['sbProject','sbList','btnAddSource','btnAddGroup','btnSettings','sbTrigger','btnSbCollapse'];
-  for(var i=0;i<ids.length;i++){
-   try{
-    var el=document.getElementById(ids[i]);
-    if(el){
-     try{ el.style.display='none'; }catch(e){}
-     try{ el.setAttribute('aria-hidden','true'); }catch(e){}
-     try{ if('disabled' in el) el.disabled=true; }catch(e){}
-    }
-   }catch(e){}
-  }
-  try{
-   var sp=document.getElementById('sbProject');
-   if(sp&&!sp._aiWinLocked){
-    sp._aiWinLocked=true;
-    try{ sp.onclick=function(e){ try{ if(e&&e.preventDefault) e.preventDefault(); }catch(err){} }; }catch(e){}
-   }
-  }catch(e){}
-  try{ var pm=document.getElementById('projMask'); if(pm) pm.style.display='none'; }catch(e){}
- }catch(e){}
-}
-function aiWinGuardProjectPicker(){
- try{
-  var inAi=false;
-  try{ inAi=isAiWinMode(); }catch(e){ inAi=false; }
-  if(!inAi) return;
-  try{ var pm0=document.getElementById('projMask'); if(pm0) pm0.style.display='none'; }catch(e){}
-  try{
-   var orig=null;
-   try{ orig=window.showProjectPicker; }catch(e){ orig=null; }
-   if(typeof orig==='function'&&!orig._aiWinGuarded){
-    var guarded=function(projects,last){
-     try{
-      var inAi2=false;
-      try{ inAi2=isAiWinMode(); }catch(e){ inAi2=false; }
-      if(inAi2){
-       try{
-        var qp=null;
-        try{ qp=getAiWinQueryParams(); }catch(e){ qp=null; }
-        var target='';
-        try{ if(qp&&qp.project) target=qp.project; }catch(e){}
-        if(!target){ try{ target=last||''; }catch(e){} }
-        if(!target){
-         try{
-          var arr=(projects||[]).slice().sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||''),'zh-CN'); });
-          if(arr.length) target=arr[0].name;
-         }catch(e){}
-        }
-        if(target&&typeof enterProject==='function'){ try{ enterProject(target); }catch(e){} return; }
-        try{ var pm2=document.getElementById('projMask'); if(pm2) pm2.style.display='none'; }catch(e){}
-        return;
-       }catch(e){
-        try{ var pm3=document.getElementById('projMask'); if(pm3) pm3.style.display='none'; }catch(e2){}
-        return;
-       }
-      }
-     }catch(e){}
-     try{ return orig.apply(this,arguments); }catch(e){}
-    };
-    try{ guarded._aiWinGuarded=true; }catch(e){}
-    try{ window.showProjectPicker=guarded; }catch(e){}
-   }
-  }catch(e){}
- }catch(e){}
-}
-function aiWinBootProject(){
- try{
-  try{ aiWinGuardProjectPicker(); }catch(e){}
-  try{ var pm=document.getElementById('projMask'); if(pm) pm.style.display='none'; }catch(e){}
-  var qp=null;
-  try{ qp=getAiWinQueryParams(); }catch(e){ qp={project:'',proto:''}; }
-  var qproj='', qproto='';
-  try{ qproj=String((qp&&qp.project)||'').trim(); }catch(e){}
-  try{ qproto=String((qp&&qp.proto)||'').trim(); }catch(e){}
-  if(qproj){
-   try{
-    if(typeof enterProject==='function'){ try{ enterProject(qproj); }catch(e){} }
-    else{
-     try{ currentProject=qproj; }catch(e){ try{ window.currentProject=qproj; }catch(e2){} }
-     try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-     try{ if(typeof loadSandboxSources==='function') loadSandboxSources(qproto||undefined, true); }catch(e){}
-    }
-   }catch(e){}
-   if(qproto){
-    try{
-     setTimeout(function(){ try{ aiWinSelectProto(qproto); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },600);
-     setTimeout(function(){ try{ aiWinSelectProto(qproto); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },1500);
-    }catch(e){}
-   }else{
-    try{ setTimeout(function(){ try{ aiWinSyncTitleSbx(); }catch(e){} },600); }catch(e){}
-   }
-   try{ setTimeout(function(){ try{ aiWinSyncTitleSbx(); }catch(e){} },2000); }catch(e){}
-   return;
-  }
-  var last='';
-  try{ last=String(localStorage.getItem('protoLastProject')||''); }catch(e){}
-  if(last){
-   try{
-    if(typeof enterProject==='function'){ try{ enterProject(last); }catch(e){} }
-    else{
-     try{ currentProject=last; }catch(e){ try{ window.currentProject=last; }catch(e2){} }
-     try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-     try{ if(typeof loadSandboxSources==='function') loadSandboxSources(qproto||undefined, true); }catch(e){}
-    }
-   }catch(e){}
-   if(qproto){
-    try{
-     setTimeout(function(){ try{ aiWinSelectProto(qproto); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },600);
-     setTimeout(function(){ try{ aiWinSelectProto(qproto); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },1500);
-    }catch(e){}
-   }else{
-    try{ setTimeout(function(){ try{ aiWinSyncTitleSbx(); }catch(e){} },600); }catch(e){}
-   }
-   return;
-  }
-  try{
-   var hasSrc=false;
-   try{ var lst=(typeof sources!=='undefined')?sources:[]; hasSrc=!!(lst&&lst.length); }catch(e){ try{ var lst2=window.sources||[]; hasSrc=!!(lst2&&lst2.length); }catch(e2){} }
-   if(hasSrc){
-    try{
-     var cur=null;
-     try{ cur=(typeof currentSource!=='undefined')?currentSource:null; }catch(e){ try{ cur=window.currentSource||null; }catch(e2){} }
-     if(!cur){
-      try{
-       var l2=(typeof sources!=='undefined')?sources:[];
-       if(!l2||!l2.length){ try{ l2=window.sources||[]; }catch(e){} }
-       if(l2&&l2.length){
-        __docMirrorApplying=true;
-        try{ if(typeof loadSource==='function') loadSource(l2[0]); }catch(e){}
-        try{ __docMirrorApplying=false; }catch(e){}
-       }
-      }catch(e){ try{ __docMirrorApplying=false; }catch(e2){} }
-     }
-    }catch(e){}
-    try{ aiWinSyncTitleSbx(); }catch(e){}
-    return;
-   }
-  }catch(e){}
-  try{ if(typeof bootProjectFlow==='function'){ try{ bootProjectFlow(); }catch(e){} } }catch(e){}
-  try{ setTimeout(function(){ try{ aiWinSyncTitleSbx(); }catch(e){} try{ var pm2=document.getElementById('projMask'); if(pm2&&pm2.style.display!=='none'){ try{ pm2.style.display='none'; }catch(e){} } }catch(e){} },800); }catch(e){}
- }catch(e){}
-}
-function getAiSourcePayload(){
- try{
-  var proj='';
-  try{ proj=(typeof currentProject!=='undefined')?String(currentProject||''):''; }catch(e){ try{ proj=String(window.currentProject||''); }catch(e2){} }
-  var nm='', disp='', proto='';
-  try{
-   var cur=null;
-   try{ cur=(typeof currentSource!=='undefined')?currentSource:null; }catch(e){ try{ cur=window.currentSource||null; }catch(e2){} }
-   if(cur){
-    try{ nm=String(cur.name||''); }catch(e){}
-    try{ disp=String(cur.displayName||cur.name||''); }catch(e){}
-    try{
-     if(cur.sandboxDir){
-      var d=String(cur.sandboxDir).replace(/[\\/]+$/,'');
-      var parts=d.split(/[\\/]/);
-      proto=String(parts[parts.length-1]||disp||nm);
-     }else{ proto=disp||nm; }
-    }catch(e){ try{ proto=disp||nm; }catch(e2){} }
-    try{ if(!proto) proto=disp||nm; }catch(e){}
-   }
-  }catch(e){}
-  return {project:proj,proto:String(disp||proto||nm||''),sourceName:nm,displayName:disp};
- }catch(e){ return {project:'',proto:'',sourceName:'',displayName:''}; }
-}
-function pushAiSource(){
- try{
-  if(__docMirrorApplying) return;
-  try{ if(isAiWinMode()) return; }catch(e){ return; }
-  var p=null;
-  try{ p=getAiSourcePayload(); }catch(e){ p={}; }
-  try{ mirrorPush('ai-source',p||{}); }catch(e){}
- }catch(e){}
-}
-function bootAiWinMode(){
- try{ document.title='AI对话 · 原型工具'; }catch(e){}
- try{ restoreAiDraftFromMirror(); }catch(e){}
- try{ if(document.body) document.body.classList.add('aiwin-mode'); }catch(e){}
- try{ ensureAiWinUI(); }catch(e){}
- try{ syncAiWinBtn(); }catch(e){}
- try{ applyAiWinCloseGuard(); }catch(e){}
- try{ applyAiWinLockSwitchers(); }catch(e){}
- try{ aiWinBootProject(); }catch(e){}
- try{
-  var opened=false;
-  try{
-   if(typeof openAi==='function'){ openAi(); opened=true; }
-   else if(typeof openAiDesign==='function'){ openAiDesign(); opened=true; }
-  }catch(e){}
-  if(!opened){
-   try{
-    var m=document.getElementById('aiMask');
-    if(m) m.style.display='flex';
-   }catch(e){}
-  }
- }catch(e){}
- try{ syncAiWinBtn(); }catch(e){}
- try{ applyAiWinCloseGuard(); }catch(e){}
- try{ applyAiWinLockSwitchers(); }catch(e){}
- try{ aiWinSyncTitleSbx(); }catch(e){}
-  setTimeout(function(){
-  try{
-   var m2=document.getElementById('aiMask');
-   if(m2&&(m2.style.display==='none'||!m2.style.display)){
-    try{
-     if(typeof openAi==='function'){ openAi(); }
-     else{ m2.style.display='flex'; }
-    }catch(e){}
-   }
-  }catch(e){}
-  try{ syncAiWinBtn(); }catch(e){}
-  try{ applyAiWinCloseGuard(); }catch(e){}
-  try{ applyAiWinLockSwitchers(); }catch(e){}
-  try{ aiWinSyncTitleSbx(); }catch(e){}
-  try{ aiWinScrollChatToBottom(); }catch(e){}
- },800);
- setTimeout(function(){
-  try{ applyAiWinCloseGuard(); }catch(e){}
-  try{ applyAiWinLockSwitchers(); }catch(e){}
-  try{ aiWinSyncTitleSbx(); }catch(e){}
-  try{ syncAiWinBtn(); }catch(e){}
-  try{ aiWinScrollChatToBottom(); }catch(e){}
- },1500);
- /* iter26: 监听挂上且启动完成后主动pull一次，先读缓存再等镜像 */
- try{ setTimeout(function(){ try{ restoreAiDraftFromMirror(); }catch(e){} try{ sendAiDraftPull(); }catch(e){} },900); }catch(e){}
- try{ aiWinScrollChatToBottom(); }catch(e){}
 }
 function applyDocWinPanelMode(dwMode){
  try{
@@ -5296,56 +4472,6 @@ function handleDocMirror(msg){
      var protoHint='';
      try{ protoHint=String(payload.proto||''); }catch(e){}
      if(!nm&&protoHint){ try{ nm=protoHint; }catch(e){} }
-     var inAiS=false;
-     try{ inAiS=isAiWinMode(); }catch(e){ inAiS=false; }
-     if(inAiS&&projHint){
-      var curProjS='';
-      try{ curProjS=(typeof currentProject!=='undefined')?String(currentProject||''):''; }catch(e){ try{ curProjS=String(window.currentProject||''); }catch(e2){} }
-      if(curProjS&&projHint!==curProjS){
-       try{
-        if(typeof enterProject==='function'){ enterProject(projHint); }
-        else{
-         try{ currentProject=projHint; }catch(e){ try{ window.currentProject=projHint; }catch(e2){} }
-         try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-         try{ if(typeof loadSandboxSources==='function') loadSandboxSources(protoHint||nm||undefined, true); }catch(e){}
-        }
-       }catch(e){}
-       var _pp=protoHint||nm;
-       if(_pp){
-        try{
-         (function(pp){
-          setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },600);
-          setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },1500);
-         })(_pp);
-        }catch(e){}
-       }
-       try{ aiWinSyncTitleSbx(); }catch(e){}
-       try{ syncAiWinBtn(); }catch(e){}
-       try{ syncDocModeTabs(); }catch(e){}
-       return;
-      }else if(!curProjS){
-       try{
-        if(typeof enterProject==='function'){ enterProject(projHint); }
-        else{
-         try{ currentProject=projHint; }catch(e){ try{ window.currentProject=projHint; }catch(e2){} }
-         try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-         try{ if(typeof loadSandboxSources==='function') loadSandboxSources(protoHint||nm||undefined, true); }catch(e){}
-        }
-       }catch(e){}
-       var _pp2=protoHint||nm;
-       if(_pp2){
-        try{
-         (function(pp){
-          setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },600);
-          setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },1500);
-         })(_pp2);
-        }catch(e){}
-       }
-       try{ aiWinSyncTitleSbx(); }catch(e){}
-       try{ syncAiWinBtn(); }catch(e){}
-       return;
-      }
-     }
      var wantR=null;
      try{ if(payload.reqMode!=null) wantR=!!payload.reqMode; }catch(e){}
      if(wantR!=null){
@@ -5387,98 +4513,18 @@ function handleDocMirror(msg){
        }catch(e){}
        var tt2=curSourceTitle();
        try{ if(isDocWinMode()&&tt2) document.title='文档 · '+tt2; }catch(e){}
-       try{ if(inAiS){ aiWinSyncTitleSbx(); } }catch(e){}
-       try{ if(inAiS&&typeof aiEnsureCur==='function') aiEnsureCur(); }catch(e){}
-       try{ if(inAiS&&typeof aiRenderBubbles==='function') aiRenderBubbles(); }catch(e){}
-       try{ if(inAiS&&typeof aiSaveSesh==='function') aiSaveSesh(); }catch(e){}
        try{
         var _inDoc=false;
         try{ _inDoc=isDocWinMode(); }catch(e){ _inDoc=false; }
-        if(_inDoc&&!inAiS){ try{ if(typeof loadDesc==='function') loadDesc(); }catch(e){} try{ if(typeof refreshToc==='function') refreshToc(); }catch(e){} }
+        if(_inDoc){ try{ if(typeof loadDesc==='function') loadDesc(); }catch(e){} try{ if(typeof refreshToc==='function') refreshToc(); }catch(e){} }
        }catch(e){}
       }else if(nm){
       try{ if(typeof loadSandboxSources==='function') loadSandboxSources(nm, true); }catch(e){}
-      if(inAiS&&protoHint){
-       try{
-        (function(pp){
-         setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },800);
-        })(protoHint);
-       }catch(e){}
-      }
      }
      try{ syncDocModeTabs(); }catch(e){}
      try{ syncDocWinBtn(); }catch(e){}
-     try{ if(inAiS){ syncAiWinBtn(); } }catch(e){}
     }finally{ __docMirrorApplying=false; }
-   }else if(kind==='ai-source'){
-    var inAi2=false;
-    try{ inAi2=isAiWinMode(); }catch(e){ inAi2=false; }
-    if(!inAi2){
-     return;
-    }
-    __docMirrorApplying=true;
-    try{
-     var proj2='';
-     try{ proj2=String(payload.project||''); }catch(e){}
-     var proto2='';
-     try{ proto2=String(payload.proto||payload.displayName||payload.sourceName||''); }catch(e){}
-     var curProj2='';
-     try{ curProj2=(typeof currentProject!=='undefined')?String(currentProject||''):''; }catch(e){ try{ curProj2=String(window.currentProject||''); }catch(e2){} }
-     var curSrc2=null;
-     try{ curSrc2=(typeof currentSource!=='undefined')?currentSource:null; }catch(e){ try{ curSrc2=window.currentSource||null; }catch(e2){} }
-     var curLabel2='';
-     try{ if(curSrc2) curLabel2=String(curSrc2.displayName||curSrc2.name||''); }catch(e){}
-     var norm2=function(v){ try{ return String(v||'').replace(/\.(html?|md)$/i,'').trim(); }catch(e){ return ''; } };
-     if(proj2&&curProj2&&proj2!==curProj2){
-      try{
-       if(typeof enterProject==='function'){ enterProject(proj2); }
-       else{
-        try{ currentProject=proj2; }catch(e){ try{ window.currentProject=proj2; }catch(e2){} }
-        try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-        try{ if(typeof loadSandboxSources==='function') loadSandboxSources(proto2||undefined, true); }catch(e){}
-       }
-      }catch(e){}
-      if(proto2){
-       try{
-        (function(pp){
-         setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },600);
-         setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },1500);
-        })(proto2);
-       }catch(e){}
-      }
-     }else if(proj2&&!curProj2){
-      try{
-       if(typeof enterProject==='function'){ enterProject(proj2); }
-       else{
-        try{ currentProject=proj2; }catch(e){ try{ window.currentProject=proj2; }catch(e2){} }
-        try{ if(typeof updateProjectBar==='function') updateProjectBar(); }catch(e){}
-        try{ if(typeof loadSandboxSources==='function') loadSandboxSources(proto2||undefined, true); }catch(e){}
-       }
-      }catch(e){}
-      if(proto2){
-       try{
-        (function(pp){
-         setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },600);
-         setTimeout(function(){ try{ aiWinSelectProto(pp); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} },1500);
-        })(proto2);
-       }catch(e){}
-      }
-     }else{
-      if(proto2&&norm2(proto2)!==norm2(curLabel2)){
-       try{
-        if(!aiWinSelectProto(proto2)){
-         try{ if(typeof loadSandboxSources==='function'&&curProj2){ loadSandboxSources(proto2); } }catch(e){}
-        }
-       }catch(e){}
-      }
-     }
-     try{ aiWinSyncTitleSbx(); }catch(e){}
-     try{ syncAiWinBtn(); }catch(e){}
-     try{ if(typeof aiEnsureCur==='function') aiEnsureCur(); }catch(e){}
-     try{ if(typeof aiRenderBubbles==='function') aiRenderBubbles(); }catch(e){}
-     try{ if(typeof aiSaveSesh==='function') aiSaveSesh(); }catch(e){}
-    }finally{ try{ __docMirrorApplying=false; }catch(e2){} }
-   }else if(kind==='saved'){
+    }else if(kind==='saved'){
    __docMirrorApplying=true;
    try{
     var inReq=false;
@@ -5553,86 +4599,12 @@ function handleDocMirror(msg){
      }catch(e){ try{ __docMirrorApplying=false; }catch(e2){} }
      try{ syncDocModeTabs(); }catch(e){}
      try{ syncDocWinBtn(); }catch(e){}
-    }else if(kind==='ai-mode'){
-     try{
-      var am='';
-      try{ am=String((payload&&payload.mode)||(msg&&msg.mode)||''); }catch(e){ am=''; }
-      if(am==='ai-win'){ try{ setAiWinOpen(true); }catch(e){} }
-      else if(am==='ai-panel'){ try{ setAiWinOpen(false); }catch(e){} }
-      try{ syncAiWinBtn(); }catch(e){}
-      var __aiRe=false;
-      try{
-       if(payload&&payload.reopen)__aiRe=true;
-       else if(msg&&msg.reopen)__aiRe=true;
-       else if(typeof localStorage!=='undefined'&&localStorage.getItem('aiWinReopen')==='1')__aiRe=true;
-      }catch(e){}
-      if(__aiRe){
-       try{ localStorage.removeItem('aiWinReopen'); }catch(e){}
-       var inAi3=false;
-       try{ inAi3=isAiWinMode(); }catch(e){}
-       if(!inAi3&&(am==='ai-panel'||!am)){
-        try{ openAiForSwitchBack(); }catch(e){}
-       }
-      }
-     }catch(e){}
-    }else if(kind==='ai-draft'){
-     try{
-      var _dt='';
-      try{ _dt=String((payload&&payload.text!=null?payload.text:(msg&&msg.text!=null?msg.text:''))||''); }catch(e){ _dt=''; }
-      var _dts=0;
-      try{ _dts=Number((payload&&payload.ts!=null?payload.ts:(msg&&msg.ts!=null?msg.ts:0))||0)||0; }catch(e){ _dts=0; }
-      try{
-       if(_dts&&_dts<__aiDraftLastRecvTs){ try{ sendAiDraftAck(_dts); }catch(e){} }
-       else{
-        try{ if(_dts>__aiDraftLastRecvTs) __aiDraftLastRecvTs=_dts; }catch(e){}
-        try{ rememberAiDraft(_dt,_dts||__aiDraftNowTs()); }catch(e){}
-        try{ setAiDraftWithRetry(_dt,_dts||__aiDraftNowTs()); }catch(e){}
-        try{ sendAiDraftAck(_dts||__aiDraftLastRecvTs); }catch(e){}
-       }
-      }catch(e){}
-     }catch(e){}
-    }else if(kind==='ai-draft-pull'){
-     try{
-      var _isAi=false;
-      try{ _isAi=isAiWinMode(); }catch(e){ _isAi=false; }
-      if(!_isAi){
-       var _bestT='';
-       try{ _bestT=getAiDraftText(); }catch(e){ _bestT=''; }
-       var _bestTs=0;
-       try{ _bestTs=__aiDraftNowTs(); }catch(e){ _bestTs=0; }
-       try{
-        var _pt='';
-        try{ _pt=String((typeof __aiDraftPendingText!=='undefined'?__aiDraftPendingText:'')||''); }catch(e){}
-        if(!_pt){ try{ _pt=String(window.__aiDraftPendingText||''); }catch(e){} }
-        var _pts=0;
-        try{ _pts=Number((typeof __aiDraftPendingTs!=='undefined'?__aiDraftPendingTs:0)||0)||0; }catch(e){}
-        if(!_pts){ try{ _pts=Number(window.__aiDraftPendingTs||0)||0; }catch(e){} }
-        if(_pt&&(!_bestT||_pts>=_bestTs)){ _bestT=_pt; _bestTs=_pts||_bestTs; }
-       }catch(e){}
-       try{
-        var _lm=null;
-        try{ _lm=readAiDraftMirror(); }catch(e){ _lm=null; }
-        if(_lm&&_lm.text&&Number(_lm.ts||0)>_bestTs){ _bestT=_lm.text; _bestTs=Number(_lm.ts); }
-       }catch(e){}
-       try{ if(_bestT||_bestTs) sendAiDraftViaMirror(_bestT,_bestTs||__aiDraftNowTs()); }catch(e){}
-      }
-     }catch(e){}
-    }else if(kind==='ai-draft-ack'){
-     try{
-      var _ats=0;
-      try{ _ats=Number((payload&&payload.ts!=null?payload.ts:(msg&&msg.ts!=null?msg.ts:0))||0)||0; }catch(e){ _ats=0; }
-      try{ if(_ats>__aiDraftAckedTs) __aiDraftAckedTs=_ats; }catch(e){}
-      try{ window.__aiDraftAckedTs=__aiDraftAckedTs; }catch(e){}
-      try{ if(_ats&&_ats>=__aiDraftRetryTs){ try{ __aiDraftClearRetry(); }catch(e){} } }catch(e){}
-     }catch(e){}
-    }else if(kind==='ai-busy-restore'){
-     try{ restoreAiBusyInMain(); }catch(e){}
     }
  }catch(e){}
 }
 function registerDocMirrorListener(){
  try{
-  var cands=[['doc','onMirror'],['doc','onDocMirror'],['docwin','onMirror'],['docwin','onDocMirror'],['aiwin','onMirror'],['','onDocMirror'],['','onMirror']];
+  var cands=[['doc','onMirror'],['doc','onDocMirror'],['docwin','onMirror'],['docwin','onDocMirror'],['','onDocMirror'],['','onMirror']];
   for(var i=0;i<cands.length;i++){
    try{
     var o=cands[i][0], f=cands[i][1], fn=null;
@@ -5726,62 +4698,16 @@ function wrapDocWinPushers(){
         var p=null;
         try{ p=getSourcePayload(); }catch(e){ p={}; }
         try{ mirrorPush('source',p); }catch(e){}
-        try{
-         var inAiL=false;
-         try{ inAiL=isAiWinMode(); }catch(e){ inAiL=false; }
-         if(!inAiL){ try{ pushAiSource(); }catch(e){} }
-         else{ try{ aiWinSyncTitleSbx(); }catch(e){} }
-        }catch(e){}
        }
-       try{
-        var inAiL2=false;
-        try{ inAiL2=isAiWinMode(); }catch(e){ inAiL2=false; }
-        if(inAiL2){ try{ aiWinSyncTitleSbx(); }catch(e){} }
-       }catch(e){}
       }
      }catch(e){}
      try{ syncDocModeTabs(); }catch(e){}
      try{ syncDocWinBtn(); }catch(e){}
-     try{ syncAiWinBtn(); }catch(e){}
      return r;
     };
    });
   }catch(e){}
-  try{
-   wrapGlobalFn('enterProject',function(orig){
-    return function(name){
-     var r=null;
-     try{ r=orig.apply(this,arguments); }catch(e){ throw e; }
-     try{
-      if(!__docMirrorApplying){
-       var inAiE=false;
-       try{ inAiE=isAiWinMode(); }catch(e){ inAiE=false; }
-       if(!inAiE){ try{ pushAiSource(); }catch(e){} }
-       else{ try{ aiWinSyncTitleSbx(); }catch(e){} }
-      }
-     }catch(e){}
-     return r;
-    };
-   });
-  }catch(e){}
-  try{
-   wrapGlobalFn('loadSubPage',function(orig){
-    return function(s,sub){
-     var r=null;
-     try{ r=orig.apply(this,arguments); }catch(e){ throw e; }
-     try{
-      if(!__docMirrorApplying){
-       var inAiS2=false;
-       try{ inAiS2=isAiWinMode(); }catch(e){ inAiS2=false; }
-       if(!inAiS2){ try{ pushAiSource(); }catch(e){} }
-       else{ try{ aiWinSyncTitleSbx(); }catch(e){} }
-      }
-     }catch(e){}
-     return r;
-    };
-   });
-  }catch(e){}
- function wrapSaveFn(fname){
+function wrapSaveFn(fname){
   try{
    wrapGlobalFn(fname,function(orig){
     return function(){
@@ -5815,49 +4741,30 @@ function wrapDocWinPushers(){
 }
 function initDocWinFeature(){
  try{ ensureDocModeUI(); }catch(e){}
- try{ ensureAiWinUI(); }catch(e){}
  try{ syncDocWinBtn(); }catch(e){}
- try{ syncAiWinBtn(); }catch(e){}
  try{ syncDocModeTabs(); }catch(e){}
  try{ registerDocMirrorListener(); }catch(e){}
  try{ wrapDocWinPushers(); }catch(e){}
  try{ docWinGuardProjectPicker(); }catch(e){}
  try{ if(isDocWinMode()){ try{ var __pm=document.getElementById('projMask'); if(__pm)__pm.style.display='none'; }catch(e){} } }catch(e){}
  try{
-  if(isAiWinMode()){ bootAiWinMode(); }
-  else if(isDocWinMode()){ bootDocWinMode(); }
+   if(isDocWinMode()){ bootDocWinMode(); }
  }catch(e){}
  setTimeout(function(){
   try{ ensureDocModeUI(); }catch(e){}
-  try{ ensureAiWinUI(); }catch(e){}
   try{ wrapDocWinPushers(); }catch(e){}
   try{ registerDocMirrorListener(); }catch(e){}
   try{ syncDocWinBtn(); }catch(e){}
-  try{ syncAiWinBtn(); }catch(e){}
   try{ syncDocModeTabs(); }catch(e){}
   try{ if(isDocWinMode()){ try{ syncDocWinBtn(); }catch(e){} } }catch(e){}
-  try{ if(isAiWinMode()){ try{ syncAiWinBtn(); }catch(e){} try{ applyAiWinCloseGuard(); }catch(e){} try{ applyAiWinLockSwitchers(); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} } }catch(e){}
  },600);
  setTimeout(function(){
   try{ wrapDocWinPushers(); }catch(e){}
   try{ ensureDocModeUI(); }catch(e){}
-  try{ ensureAiWinUI(); }catch(e){}
-  try{ if(isAiWinMode()){ try{ applyAiWinCloseGuard(); }catch(e){} try{ applyAiWinLockSwitchers(); }catch(e){} try{ aiWinSyncTitleSbx(); }catch(e){} } }catch(e){}
  },1500);
 }
 try{ window.isDocWinMode=isDocWinMode; }catch(e){}
 try{ window.bootDocWinMode=bootDocWinMode; }catch(e){}
-try{ window.isAiWinMode=isAiWinMode; }catch(e){}
-try{ window.bootAiWinMode=bootAiWinMode; }catch(e){}
-try{ window.toggleAiWin=toggleAiWin; }catch(e){}
-try{ window.syncAiWinBtn=syncAiWinBtn; }catch(e){}
-try{ window.ensureAiWinUI=ensureAiWinUI; }catch(e){}
-try{ window.getAiWinQueryParams=getAiWinQueryParams; }catch(e){}
-try{ window.aiWinSyncTitleSbx=aiWinSyncTitleSbx; }catch(e){}
-try{ window.getAiSourcePayload=getAiSourcePayload; }catch(e){}
-try{ window.pushAiSource=pushAiSource; }catch(e){}
-try{ window.applyAiWinCloseGuard=applyAiWinCloseGuard; }catch(e){}
-try{ window.applyAiWinLockSwitchers=applyAiWinLockSwitchers; }catch(e){}
 try{ window.mirrorPush=mirrorPush; }catch(e){}
 try{ window.mirrorBack=mirrorBack; }catch(e){}
 try{ window.handleDocMirror=handleDocMirror; }catch(e){}
@@ -5870,22 +4777,8 @@ try{ window.getDocWinQueryParams=getDocWinQueryParams; }catch(e){}
 try{ window.docWinSelectProto=docWinSelectProto; }catch(e){}
 try{ window.docWinBootProject=docWinBootProject; }catch(e){}
 try{ window.docWinGuardProjectPicker=docWinGuardProjectPicker; }catch(e){}
-try{ window.openAiForSwitchBack=openAiForSwitchBack; }catch(e){}
 try{ window.openDocsForSwitchBack=openDocsForSwitchBack; }catch(e){}
-try{ window.setAiWinOpen=setAiWinOpen; }catch(e){}
 try{ window.setDocWinOpen=setDocWinOpen; }catch(e){}
 try{ window.isAiTaskRunning=isAiTaskRunning; }catch(e){}
-try{ window.getAiDraftText=getAiDraftText; }catch(e){}
-try{ window.applyAiDraftText=applyAiDraftText; }catch(e){}
-try{ window.setAiDraftWithRetry=setAiDraftWithRetry; }catch(e){}
-try{ window.sendAiDraftViaMirror=sendAiDraftViaMirror; }catch(e){}
-try{ window.pushAiDraftWithRetry=pushAiDraftWithRetry; }catch(e){}
-try{ window.readAiDraftMirror=readAiDraftMirror; }catch(e){}
-try{ window.writeAiDraftMirror=writeAiDraftMirror; }catch(e){}
-try{ window.rememberAiDraft=rememberAiDraft; }catch(e){}
-try{ window.restoreAiDraftFromMirror=restoreAiDraftFromMirror; }catch(e){}
-try{ window.sendAiDraftAck=sendAiDraftAck; }catch(e){}
-try{ window.sendAiDraftPull=sendAiDraftPull; }catch(e){}
-try{ window.restoreAiBusyInMain=restoreAiBusyInMain; }catch(e){}
 if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',initDocWinFeature); }
 else{ try{ initDocWinFeature(); }catch(e){} }

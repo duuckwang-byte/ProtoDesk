@@ -559,10 +559,9 @@ function test5_TopIdentity() {
   // CLI徽标点化：无文字 + 三色
   assert.ok(/aiCliEl\.textContent='';/.test(jsContent), 'CLI徽标须无文字');
   assert.ok(/\.ai-cli\s*\{[^}]*width\s*:\s*8px/.test(cssContent), 'CLI徽标须为圆点尺寸');
-  // 历史按钮：无图标 + 白底灰框 + 独立窗口右侧/徽标左侧
+  // 历史按钮：无图标 + 白底灰框 + 徽标左侧
   assert.ok(/id="aiHistBtn"[^>]*>历史</.test(htmlContent), '历史按钮须无图标纯文字');
-  assert.ok(htmlContent.indexOf('btnAiWinToggle') < htmlContent.indexOf('aiHistBtn')
-    && htmlContent.indexOf('aiHistBtn') < htmlContent.indexOf('aiAgentBadge'), '历史按钮须在独立窗口右侧、徽标左侧');
+  assert.ok(htmlContent.indexOf('aiHistBtn') < htmlContent.indexOf('aiAgentBadge'), '历史按钮须在徽标左侧');
   assert.ok(/\.ai-hist\s*\{[^}]*var\(--panel\)/.test(cssContent), '历史按钮须白底');
   // 徽标融合：服务商自定义名 + 三色点
   assert.ok(/function refreshAiTopIdentity/.test(jsContent), '缺顶栏身份融合函数');

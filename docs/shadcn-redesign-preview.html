@@ -1,0 +1,2328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PlanD · shadcn/ui (New York) 视觉重设计效果图（完善版）</title>
+<style>
+  /* ══════════════════════════════════════════════════════════════════
+     shadcn/ui New York Design Tokens (作用域挂在 .shadcn-app)
+     ══════════════════════════════════════════════════════════════════ */
+  .shadcn-app {
+    --background: #ffffff;
+    --foreground: #09090b;
+    --canvas: #f4f4f5;
+    --chrome: #fafafa;
+    --card: #ffffff;
+    --card-foreground: #09090b;
+    --popover: #ffffff;
+    --popover-foreground: #09090b;
+    --primary: #18181b;
+    --primary-foreground: #fafafa;
+    --secondary: #f4f4f5;
+    --secondary-foreground: #18181b;
+    --muted: #f4f4f5;
+    --muted-foreground: #71717a;
+    --accent: #f4f4f5;
+    --accent-foreground: #18181b;
+    --destructive: #dc2626;
+    --destructive-foreground: #fef2f2;
+    --border: #e4e4e7;
+    --input: #e4e4e7;
+    --ring: #18181b;
+    --cobalt: #2563eb;
+    --cobalt-soft: #eff6ff;
+    --cobalt-border: #bfdbfe;
+    --emerald: #059669;
+    --emerald-soft: #ecfdf5;
+    --amber: #d97706;
+    --amber-soft: #fffbeb;
+    --sky: #0284c7;
+    --sky-soft: #f0f9ff;
+    --rose: #e11d48;
+    --rose-soft: #fff1f2;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
+    --radius-xl: 14px;
+    --shadow-sm: 0 1px 2px 0 rgba(9, 9, 11, 0.05);
+    --shadow-md: 0 4px 12px -2px rgba(9, 9, 11, 0.08), 0 2px 4px -2px rgba(9, 9, 11, 0.04);
+    --shadow-lg: 0 16px 36px -8px rgba(9, 9, 11, 0.14), 0 4px 12px -4px rgba(9, 9, 11, 0.06);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--foreground);
+    background: var(--canvas);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; -webkit-font-smoothing: antialiased; background: #f4f4f5; }
+  button, input, textarea, select { font-family: inherit; color: inherit; }
+  button { background: none; border: none; cursor: pointer; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+
+  .ico { width: 15px; height: 15px; flex: none; display: inline-block; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+  .ico-sm { width: 13px; height: 13px; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .kbd { display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 5px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--chrome); box-shadow: 0 1px 0 var(--border); font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--muted-foreground); line-height: 1; }
+
+  /* ── shadcn Primitives ── */
+  .btn { height: 30px; padding: 0 11px; border-radius: var(--radius-md); font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; transition: background .12s, border-color .12s, color .12s, box-shadow .12s; border: 1px solid transparent; user-select: none; }
+  .btn-sm { height: 26px; padding: 0 9px; font-size: 12px; }
+  .btn-icon { width: 28px; height: 28px; padding: 0; }
+  .btn-primary { background: var(--primary); color: var(--primary-foreground); box-shadow: var(--shadow-sm); }
+  .btn-primary:hover { background: #27272a; }
+  .btn-cobalt { background: var(--cobalt); color: #fff; box-shadow: var(--shadow-sm); }
+  .btn-cobalt:hover { background: #1d4ed8; }
+  .btn-outline { background: var(--background); border-color: var(--border); color: var(--foreground); box-shadow: var(--shadow-sm); }
+  .btn-outline:hover { background: var(--accent); }
+  .btn-secondary { background: var(--secondary); color: var(--secondary-foreground); }
+  .btn-secondary:hover { background: #e4e4e7; }
+  .btn-ghost { color: var(--muted-foreground); }
+  .btn-ghost:hover { background: var(--accent); color: var(--foreground); }
+  .btn-destructive { background: var(--destructive); color: var(--destructive-foreground); }
+  .btn-destructive:hover { background: #b91c1c; }
+
+  .badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 99px; font-size: 11.5px; font-weight: 500; line-height: 1; white-space: nowrap; }
+  .badge-neutral { background: var(--secondary); color: var(--secondary-foreground); border: 1px solid var(--border); }
+  .badge-cobalt { background: var(--cobalt-soft); color: var(--cobalt); border: 1px solid var(--cobalt-border); }
+  .badge-emerald { background: var(--emerald-soft); color: var(--emerald); border: 1px solid #a7f3d0; }
+  .badge-amber { background: var(--amber-soft); color: var(--amber); border: 1px solid #fde68a; }
+  .badge-rose { background: var(--rose-soft); color: var(--rose); border: 1px solid #fecdd3; }
+
+  .input, .select { height: 32px; border: 1px solid var(--input); border-radius: var(--radius-md); background: var(--background); padding: 0 10px; font-size: 12.5px; color: var(--foreground); outline: none; transition: border-color .15s, box-shadow .15s; box-shadow: var(--shadow-sm); }
+  .input:focus, .select:focus, .textarea:focus { border-color: var(--ring); box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.08); }
+  .textarea { border: 1px solid var(--input); border-radius: var(--radius-md); background: var(--background); padding: 8px 10px; font-size: 12.5px; line-height: 1.55; outline: none; resize: vertical; }
+
+  .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+
+  /* ── Top Header (44px) ── */
+  .topbar { flex: none; height: 44px; background: var(--chrome); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; padding: 0 12px; position: relative; z-index: 40; }
+  .topbar-sep { width: 1px; height: 18px; background: var(--border); flex: none; margin: 0 2px; }
+  .proj-trigger { max-width: 210px; justify-content: space-between; font-weight: 600; }
+  .loc-pill { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: var(--radius-md); background: var(--muted); color: var(--muted-foreground); font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
+  .loc-pill b { color: var(--foreground); font-weight: 500; }
+
+  .seg { display: inline-flex; align-items: center; padding: 2px; border-radius: var(--radius-md); background: var(--muted); border: 1px solid var(--border); gap: 2px; flex: none; }
+  .seg-btn { height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; font-weight: 500; color: var(--muted-foreground); display: inline-flex; align-items: center; gap: 5px; transition: all .12s; white-space: nowrap; }
+  .seg-btn:hover { color: var(--foreground); }
+  .seg-btn.active { background: var(--background); color: var(--foreground); box-shadow: var(--shadow-sm); }
+
+  .zoom-combo { display: inline-flex; align-items: center; height: 28px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--background); box-shadow: var(--shadow-sm); overflow: hidden; flex: none; }
+  .zoom-fit-btn { height: 100%; padding: 0 8px; border-right: 1px solid var(--border); font-size: 11.5px; font-weight: 500; color: var(--muted-foreground); background: var(--chrome); display: inline-flex; align-items: center; gap: 4px; transition: all .12s; }
+  .zoom-fit-btn:hover { color: var(--foreground); background: var(--accent); }
+  .zoom-fit-btn.active { background: var(--primary); color: var(--primary-foreground); border-right-color: var(--primary); }
+  .zoom-combo input { width: 38px; height: 100%; border: none; outline: none; text-align: right; font-size: 12px; font-family: var(--font-mono); font-weight: 500; padding-right: 2px; background: transparent; }
+  .zoom-combo span.zoom-pct { font-size: 12px; color: var(--muted-foreground); padding-right: 4px; font-family: var(--font-mono); }
+  .zoom-combo select { height: 100%; border: none; border-left: 1px solid var(--border); background: var(--chrome); font-size: 12px; color: var(--muted-foreground); padding: 0 4px; outline: none; cursor: pointer; }
+
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+
+  /* Popover / Dropdown / ContextMenu */
+  .pop-wrap { position: relative; display: inline-flex; flex: none; }
+  .menu-pop { position: absolute; top: calc(100% + 6px); right: 0; min-width: 210px; background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 4px; z-index: 150; display: none; animation: popIn .12s ease-out; }
+  .menu-pop.left { right: auto; left: 0; min-width: 256px; }
+  .menu-pop.open { display: block; }
+  .ctx-pop { position: fixed; min-width: 176px; background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 4px; z-index: 160; display: none; animation: popIn .1s ease-out; }
+  .ctx-pop.open { display: block; }
+  @keyframes popIn { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+  .menu-label { padding: 6px 8px 4px; font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); }
+  .menu-sep { height: 1px; background: var(--border); margin: 4px -4px; }
+  .menu-item { width: 100%; padding: 7px 8px; border-radius: var(--radius-sm); display: flex; align-items: flex-start; gap: 8px; text-align: left; font-size: 12.5px; color: var(--foreground); transition: background .1s; }
+  .menu-item:hover { background: var(--accent); }
+  .menu-item .mi-sub { display: block; font-size: 11.5px; color: var(--muted-foreground); margin-top: 1px; }
+  .menu-item .mi-check { margin-left: auto; color: var(--cobalt); }
+  .cmd-search { display: flex; align-items: center; gap: 6px; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+  .cmd-search input { flex: 1; border: none; outline: none; font-size: 12.5px; background: transparent; }
+
+  /* ── Workspace & Sidebar ── */
+  .workspace { flex: 1; min-height: 0; display: flex; position: relative; overflow: hidden; }
+  .sidebar { width: 236px; flex: none; background: var(--chrome); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: width .2s cubic-bezier(.4,0,.2,1), border-color .2s; overflow: hidden; z-index: 20; }
+  .sidebar.collapsed { width: 0; border-right-color: transparent; }
+  .sb-inner { width: 236px; height: 100%; display: flex; flex-direction: column; }
+  .sb-head { flex: none; height: 40px; padding: 0 10px 0 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .sb-head-title { font-size: 12px; font-weight: 600; color: var(--muted-foreground); letter-spacing: .02em; }
+  .sb-tree { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .sb-folder { display: flex; flex-direction: column; border-radius: var(--radius-md); position: relative; transition: opacity .12s; }
+  .sb-proto-node { display: flex; flex-direction: column; position: relative; transition: opacity .12s; }
+  .sb-grp-btn { width: 100%; height: 28px; padding: 0 6px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--foreground); cursor: pointer; position: relative; }
+  .sb-grp-btn:hover { background: var(--accent); }
+  .sb-grp-children { padding-left: 10px; margin-left: 9px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; min-height: 6px; padding-top: 2px; padding-bottom: 2px; }
+  .sb-drag-grip { width: 14px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); opacity: 0; cursor: grab; flex: none; margin-left: -2px; border-radius: 3px; transition: opacity .1s, color .1s; }
+  .sb-drag-grip:active { cursor: grabbing; }
+  .sb-grp-btn:hover .sb-drag-grip, .sb-item:hover .sb-drag-grip, .sb-sub:hover .sb-drag-grip { opacity: 0.85; }
+  .sb-drag-grip:hover { opacity: 1 !important; color: var(--foreground); background: rgba(24,24,27,0.06); }
+
+  /* Non-blue shadcn monochrome Zinc Ink active styles */
+  .sb-item { width: 100%; min-height: 30px; padding: 4px 8px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted-foreground); text-align: left; position: relative; border: 1px solid transparent; transition: background .1s, color .1s, border-color .1s, box-shadow .1s; }
+  .sb-item:hover { background: var(--accent); color: var(--foreground); }
+  .sb-item.active { background: #ffffff; color: #09090b; font-weight: 600; box-shadow: 0 1px 2px rgba(9, 9, 11, 0.06); border-color: #d4d4d8; padding-left: 11px; }
+  .sb-item.active::before { content: ""; position: absolute; left: 4px; top: 6px; bottom: 6px; width: 2.5px; border-radius: 99px; background: #18181b; }
+  .sb-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-rename-inp { flex: 1; min-width: 0; height: 22px; border: 1px solid var(--ring); border-radius: 4px; padding: 0 5px; font-size: 12px; background: #fff; outline: none; }
+  .sb-item-more { opacity: 0; width: 20px; height: 20px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); flex: none; }
+  .sb-item:hover .sb-item-more { opacity: 1; }
+  .sb-item-more:hover { background: var(--border); color: var(--foreground); }
+  .sb-subpages { padding-left: 14px; margin-left: 12px; border-left: 1px dashed var(--border); display: flex; flex-direction: column; gap: 2px; margin-top: 2px; margin-bottom: 3px; }
+  .sb-sub { height: 26px; padding: 0 8px; border-radius: 5px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); position: relative; transition: background .1s, color .1s; text-align: left; }
+  .sb-sub:hover { background: var(--accent); color: var(--foreground); }
+  .sb-sub-dot { width: 5px; height: 5px; border-radius: 50%; background: #d4d4d8; flex: none; transition: background .1s, transform .1s; }
+  .sb-sub.active { color: #09090b; background: #e4e4e7; font-weight: 600; }
+  .sb-sub.active .sb-sub-dot { background: #18181b; transform: scale(1.15); }
+
+  /* Drag-and-drop visual states (all levels) */
+  .is-dragging { opacity: 0.42; }
+  .drop-before { box-shadow: inset 0 2px 0 0 #18181b !important; }
+  .drop-after { box-shadow: inset 0 -2px 0 0 #18181b !important; }
+  .drop-into { background: #e4e4e7 !important; border-radius: var(--radius-md); }
+
+  .sb-dock { flex: none; padding: 10px; border-top: 1px solid var(--border); background: var(--chrome); display: flex; flex-direction: column; gap: 6px; }
+  .sb-dock-row { display: grid; grid-template-columns: 1fr 1fr 30px; gap: 6px; }
+
+  .mini-dock { position: fixed; left: 14px; bottom: 14px; z-index: 35; display: none; align-items: center; gap: 4px; padding: 4px; border-radius: var(--radius-lg); background: rgba(255,255,255,0.92); backdrop-filter: blur(8px); border: 1px solid var(--border); box-shadow: var(--shadow-md); }
+  .mini-dock.show { display: flex; }
+
+  /* ── Stage + Docs Layout (CRITICAL: Mobile squeezes, PC floats over!) ── */
+  .stage-area { flex: 1; min-width: 0; display: flex; position: relative; overflow: hidden; }
+  .stage { flex: 1 1 0; min-width: 340px; position: relative; display: flex; flex-direction: column; overflow: hidden; background-color: var(--canvas); background-image: radial-gradient(#d4d4d8 1px, transparent 1px); background-size: 16px 16px; }
+  .stage-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 18px 20px 44px; position: relative; }
+  .stage-scroll.fit-active { overflow: hidden; }
+  body.kind-pc .stage-scroll { padding: 16px 16px 56px; align-items: stretch; justify-content: stretch; overflow: auto; }
+
+  .pick-banner { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 25; display: none; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; background: rgba(255,255,255,0.92); backdrop-filter: blur(10px); border: 1px solid var(--cobalt-border); box-shadow: var(--shadow-md); font-size: 12px; color: var(--foreground); white-space: nowrap; }
+  .pick-banner.show { display: flex; }
+  .pick-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cobalt); box-shadow: 0 0 0 3px rgba(37,99,235,0.2); }
+
+  /* Scaled outer box matches visual size so mobile phone fits browser viewport without outer scrolling */
+  .device-stage-box { position: relative; flex: none; margin: auto; transition: width .12s ease, height .12s ease; }
+  body.kind-pc .device-stage-box { width: 100% !important; height: 100% !important; margin: 0; display: flex; }
+  .device-wrap { transition: transform .12s ease; transform-origin: top left; position: relative; width: 375px; height: 780px; }
+  body.kind-pc .device-wrap { width: 100%; height: 100%; margin: 0; display: flex; transform: none !important; }
+  .device-mobile { width: 375px; height: 780px; border-radius: 38px; background: #ffffff; border: 8px solid #18181b; box-shadow: 0 24px 48px -12px rgba(9, 9, 11, 0.22), 0 0 0 1px rgba(9,9,11,0.08); overflow: hidden; display: flex; flex-direction: column; }
+  .device-pc { width: 100%; height: 100%; min-height: 520px; border-radius: var(--radius-lg); background: #ffffff; border: 1px solid var(--border); box-shadow: var(--shadow-md); overflow: hidden; display: flex; flex-direction: column; }
+  .device-notch { flex: none; height: 26px; background: #ffffff; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; font-size: 12px; font-weight: 600; color: var(--foreground); border-bottom: 1px solid #f4f4f5; }
+  .device-pc-bar { flex: none; height: 32px; background: var(--chrome); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+  .win-dots { display: flex; gap: 5px; }
+  .win-dots span { width: 9px; height: 9px; border-radius: 50%; background: #e4e4e7; }
+  .pc-url { flex: 1; max-width: 380px; margin: 0 auto; height: 20px; border-radius: 4px; background: var(--background); border: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); }
+
+  .proto-body { flex: 1; overflow-y: auto; padding: 14px; background: #f8fafc; position: relative; }
+  body.kind-pc .proto-body { padding: 20px 28px; }
+  .pc-cols { display: block; }
+  body.kind-pc .pc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .proto-el { position: relative; transition: outline .1s, background .1s; border-radius: 8px; }
+  .stage.pick-active .proto-el, .stage.inline-active .proto-el { cursor: crosshair; }
+  .stage.pick-active .proto-el:hover { outline: 1.5px dashed var(--cobalt); outline-offset: 2px; }
+  .stage.inline-active .proto-el:hover { outline: 1.5px dashed var(--amber); outline-offset: 2px; }
+  .proto-el.picked { outline: 2px solid var(--cobalt) !important; outline-offset: 2px; background: rgba(37, 99, 235, 0.04); }
+  .proto-el.picked::after { content: attr(data-sel); position: absolute; top: -20px; left: 0; background: var(--cobalt); color: #fff; font-family: var(--font-mono); font-size: 11px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; z-index: 10; pointer-events: none; }
+
+  /* Inline Edit Popover (Ctrl+Shift+Click) */
+  .inline-edit-pop { position: fixed; z-index: 145; width: 290px; background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 10px; display: none; flex-direction: column; gap: 8px; animation: popIn .12s ease-out; }
+  .inline-edit-pop.open { display: flex; }
+
+  .anno-pin { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; background: var(--cobalt); color: #fff; border: 2px solid #fff; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(37,99,235,0.45); cursor: pointer; z-index: 8; transition: transform .12s; }
+  .anno-pin:hover { transform: scale(1.12); }
+  .anno-hidden .anno-pin { display: none; }
+  .anno-popover { position: absolute; right: 24px; top: 0; width: 220px; background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 10px; font-size: 12px; color: var(--foreground); z-index: 30; display: none; text-align: left; }
+  .anno-pin:hover .anno-popover { display: block; }
+
+  .proto-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .proto-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .proto-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  body.kind-pc .proto-kpi-grid { grid-template-columns: repeat(4, 1fr); }
+  .proto-kpi { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; }
+  .proto-kpi .lbl { font-size: 12px; color: #64748b; }
+  .proto-kpi .val { font-size: 18px; font-weight: 700; color: #0f172a; margin-top: 2px; font-family: var(--font-mono); }
+
+  .pick-bar { position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%); width: min(580px, calc(100% - 32px)); background: rgba(255,255,255,0.96); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); padding: 10px; display: none; flex-direction: column; gap: 8px; z-index: 30; }
+  .pick-bar.show { display: flex; animation: popIn .15s ease-out; }
+  .pick-tags { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .pick-tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px; border-radius: 5px; background: var(--cobalt-soft); color: var(--cobalt); border: 1px solid var(--cobalt-border); font-family: var(--font-mono); font-size: 11.5px; }
+  .pick-tag button { color: var(--cobalt); opacity: .7; font-size: 12px; line-height: 1; }
+  .pick-tag button:hover { opacity: 1; }
+  .pick-row { display: flex; align-items: flex-end; gap: 6px; }
+  .pick-row textarea { flex: 1; min-height: 32px; max-height: 80px; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 10px; font-size: 12.5px; resize: none; outline: none; background: var(--background); }
+  .pick-row textarea:focus { border-color: var(--ring); }
+
+  .stage-hint { position: absolute; bottom: 12px; right: 14px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); background: rgba(255,255,255,0.9); backdrop-filter: blur(6px); padding: 4px 10px; border-radius: 99px; border: 1px solid var(--border); z-index: 20; }
+
+  /* ── Docs Panel: Mobile = Flex Squeeze, PC = Fixed Right Overlay Popup! ── */
+  .doc-overlay-mask { position: fixed; inset: 0; background: rgba(9, 9, 11, 0.22); backdrop-filter: blur(1px); z-index: 70; display: none; }
+  body.kind-pc.docs-open .doc-overlay-mask { display: block; }
+
+  /* Mobile default: Docked flex sibling that squeezes stage */
+  .docs-panel { flex: 0 0 46%; min-width: 360px; max-width: 580px; background: var(--background); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: flex-basis .22s ease, width .22s ease, min-width .22s ease; z-index: 22; }
+  .docs-panel.mobile-hidden { flex: 0 0 0px; min-width: 0; width: 0; border-left-color: transparent; }
+  .docs-panel.with-toc { flex-basis: 54%; max-width: 720px; }
+
+  /* PC Mode Override: Floating right-side popup drawer so PC preview NEVER gets squeezed */
+  body.kind-pc .docs-panel {
+    position: fixed;
+    top: 56px;
+    right: 16px;
+    bottom: 16px;
+    width: 62vw;
+    min-width: 480px;
+    max-width: 960px;
+    height: auto;
+    flex: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+    z-index: 75;
+    transform: translateX(calc(100% + 32px));
+    transition: transform .22s cubic-bezier(.16,1,.3,1), width .2s ease;
+  }
+  body.kind-pc.docs-open .docs-panel { transform: translateX(0); }
+  body.kind-pc.docs-open .docs-panel.with-toc { width: min(calc(62vw + 184px), calc(100vw - 32px)); max-width: 1140px; }
+
+  .docs-head { flex: none; height: 42px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--chrome); display: flex; align-items: center; gap: 6px; }
+  .docs-body-wrap { flex: 1; min-height: 0; display: flex; position: relative; overflow: hidden; }
+  .doc-toc { width: 176px; flex: none; border-right: 1px solid var(--border); background: var(--chrome); overflow-y: auto; padding: 10px 8px; display: none; flex-direction: column; gap: 2px; }
+  .doc-toc.show { display: flex; }
+  .toc-link { padding: 5px 8px; border-radius: 5px; font-size: 12px; color: var(--muted-foreground); text-align: left; border-left: 2px solid transparent; }
+  .toc-link:hover { background: var(--accent); color: var(--foreground); }
+  .toc-link.active { color: var(--foreground); font-weight: 600; border-left-color: var(--primary); background: var(--background); }
+  .toc-link.h3 { padding-left: 18px; font-size: 12px; }
+  .doc-scroll { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 20px; }
+  .doc-search { position: absolute; top: 10px; right: 14px; z-index: 15; display: none; align-items: center; gap: 4px; padding: 4px 6px; background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
+  .doc-search.show { display: flex; }
+  .doc-search input { width: 130px; height: 24px; border: none; outline: none; font-size: 12px; padding: 0 4px; }
+
+  /* Paragraph micro-edit hover affordance */
+  .md-block { position: relative; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; transition: background .12s; }
+  .md-block:hover { background: var(--chrome); }
+  .md-micro-trigger { position: absolute; top: 2px; right: 4px; opacity: 0; height: 20px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border); background: var(--background); font-size: 11px; color: var(--muted-foreground); box-shadow: var(--shadow-sm); transition: opacity .12s; }
+  .md-block:hover .md-micro-trigger { opacity: 1; }
+  .md-micro-trigger:hover { color: var(--foreground); border-color: #a1a1aa; }
+
+  .md h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .md h2 { font-size: 14px; font-weight: 600; margin: 18px 0 8px; display: flex; align-items: center; gap: 6px; }
+  .md p { font-size: 13px; line-height: 1.7; color: #3f3f46; margin-bottom: 10px; }
+  .md ul { padding-left: 18px; margin-bottom: 10px; }
+  .md li { font-size: 13px; line-height: 1.7; color: #3f3f46; margin-bottom: 3px; }
+  .md table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+  .md th { background: var(--chrome); text-align: left; padding: 7px 10px; font-weight: 600; border-bottom: 1px solid var(--border); }
+  .md td { padding: 7px 10px; border-bottom: 1px solid var(--border); color: #3f3f46; }
+  .md tr:last-child td { border-bottom: none; }
+  .md code { font-family: var(--font-mono); font-size: 12px; background: var(--muted); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); }
+  .md mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
+
+  /* ── Right Slide-Over Sheet ── */
+  .sheet-backdrop { position: fixed; inset: 0; background: rgba(9, 9, 11, 0.25); backdrop-filter: blur(1px); z-index: 80; display: none; }
+  .sheet-backdrop.open { display: block; }
+  .sheet { position: fixed; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92vw; background: var(--background); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg); z-index: 85; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .22s cubic-bezier(.16,1,.3,1); }
+  .sheet.open { transform: translateX(0); }
+  .sheet-head { flex: none; padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .sheet-title { font-size: 14.5px; font-weight: 600; }
+  .sheet-sub { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; }
+  .sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .sheet-foot { flex: none; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--chrome); display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+
+  .insp-sel-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border-radius: var(--radius-md); background: var(--chrome); border: 1px solid var(--border); font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); }
+  .acc-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); overflow: hidden; border-left-width: 3px; }
+  .acc-card.amber { border-left-color: var(--amber); }
+  .acc-card.emerald { border-left-color: var(--emerald); }
+  .acc-card.sky { border-left-color: var(--sky); }
+  .acc-hd { width: 100%; padding: 11px 12px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; text-align: left; }
+  .acc-hd:hover { background: var(--chrome); }
+  .acc-bd { display: none; padding: 10px 12px 12px; border-top: 1px solid var(--border); }
+  .acc-card.open .acc-bd { display: block; }
+  .acc-or { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); margin: -2px 0; }
+  .acc-or::before, .acc-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+  .switch { position: relative; width: 34px; height: 20px; border-radius: 99px; background: #d4d4d8; transition: background .15s; flex: none; cursor: pointer; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: transform .15s; }
+  .switch.on { background: var(--primary); }
+  .switch.on::after { transform: translateX(14px); }
+
+  /* ── Dialog Modal Backdrop ── */
+  .dialog-backdrop { position: fixed; inset: 0; background: rgba(9, 9, 11, 0.45); backdrop-filter: blur(2px); z-index: 100; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .dialog-backdrop.open { display: flex; animation: fadeIn .12s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .dialog { background: var(--background); border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; overflow: hidden; max-height: 90vh; width: 100%; }
+
+  /* ── AI Workbench Dialog ── */
+  .ai-dialog { max-width: 1060px; height: 84vh; }
+  .ai-head { flex: none; height: 48px; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--chrome); display: flex; align-items: center; gap: 10px; }
+  .ai-body-wrap { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+  .ai-sess-sb { width: 204px; flex: none; border-right: 1px solid var(--border); background: var(--chrome); display: flex; flex-direction: column; transition: width .18s; overflow: hidden; }
+  .ai-sess-sb.collapsed { width: 0; border-right: none; }
+  .ai-sess-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .ai-sess-item { padding: 8px 10px; border-radius: var(--radius-md); font-size: 12.5px; display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--muted-foreground); cursor: pointer; border: 1px solid transparent; }
+  .ai-sess-item:hover { background: var(--accent); color: var(--foreground); }
+  .ai-sess-item.active { background: var(--background); color: var(--foreground); font-weight: 600; border-color: var(--border); box-shadow: var(--shadow-sm); }
+  .ai-main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--background); position: relative; }
+  .ai-stream { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+
+  .ai-u-row { display: flex; justify-content: flex-end; }
+  .ai-u-bubble { max-width: 78%; background: var(--muted); color: var(--foreground); padding: 9px 14px; border-radius: 14px 14px 4px 14px; font-size: 13px; line-height: 1.6; }
+  .ai-think-row { display: flex; align-items: flex-start; gap: 8px; color: var(--muted-foreground); font-size: 12.5px; line-height: 1.6; }
+  .ai-tool-list { display: flex; flex-direction: column; gap: 6px; }
+  .ai-tool-pill { display: flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--chrome); font-size: 12.5px; }
+  .ai-tool-pill .tool-cmd { font-family: var(--font-mono); font-size: 12px; color: var(--foreground); font-weight: 500; }
+  .ai-tool-pill .tool-arg { font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+  .q-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--background); box-shadow: var(--shadow-sm); overflow: hidden; }
+  .q-card-hd { padding: 10px 14px; background: var(--chrome); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .q-card-bd { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .q-opt { display: flex; align-items: flex-start; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; transition: all .12s; text-align: left; }
+  .q-opt:hover { border-color: #a1a1aa; background: var(--chrome); }
+  .q-opt.selected { border-color: var(--primary); background: var(--chrome); box-shadow: 0 0 0 1px var(--primary) inset; }
+  .q-radio { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid #a1a1aa; margin-top: 2px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+  .q-opt.selected .q-radio { border-color: var(--primary); background: var(--primary); }
+  .q-opt.selected .q-radio::after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #fff; }
+  .q-card-ft { padding: 9px 14px; border-top: 1px solid var(--border); background: var(--chrome); display: flex; align-items: center; justify-content: space-between; }
+
+  .perm-card { border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: var(--radius-lg); padding: 12px 14px; background: var(--background); display: flex; flex-direction: column; gap: 9px; box-shadow: var(--shadow-sm); }
+  .perm-cmd { font-family: var(--font-mono); font-size: 12px; padding: 8px 10px; border-radius: var(--radius-md); background: var(--chrome); border: 1px solid var(--border); color: var(--foreground); }
+
+  .ai-err-card { border: 1px solid #fecdd3; background: var(--rose-soft); border-radius: var(--radius-lg); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .ai-answer { border-left: 2px solid var(--primary); padding-left: 14px; font-size: 13px; line-height: 1.7; color: var(--foreground); }
+  .ai-code-card { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; margin-top: 8px; }
+  .ai-code-hd { background: var(--chrome); border-bottom: 1px solid var(--border); padding: 5px 10px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted-foreground); font-family: var(--font-mono); }
+  .ai-code-card pre { padding: 10px 12px; background: #fafafa; font-family: var(--font-mono); font-size: 12px; overflow-x: auto; line-height: 1.55; }
+  .ai-snap { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--chrome); font-size: 12px; color: var(--muted-foreground); }
+
+  /* Two-Column Cascader Popover */
+  .cascader-pop { position: absolute; bottom: calc(100% + 8px); left: 0; display: none; background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); z-index: 150; overflow: hidden; animation: popIn .12s ease-out; }
+  .cascader-pop.open { display: flex; }
+  .cascader-col { width: 210px; padding: 4px; max-height: 240px; overflow-y: auto; }
+  .cascader-col + .cascader-col { width: 150px; border-left: 1px solid var(--border); background: var(--chrome); }
+
+  .ai-composer-wrap { flex: none; padding: 12px 24px 16px; border-top: 1px solid var(--border); background: var(--background); }
+  .ai-composer { border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--background); box-shadow: var(--shadow-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; transition: border-color .15s, box-shadow .15s; }
+  .ai-composer:focus-within { border-color: var(--ring); box-shadow: 0 0 0 2px rgba(24,24,27,0.06); }
+  .ai-composer textarea { width: 100%; border: none; outline: none; resize: none; font-size: 13px; line-height: 1.55; min-height: 36px; max-height: 110px; background: transparent; }
+  .ai-composer-ft { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+
+  .trace-console { flex: 1; overflow-y: auto; padding: 14px 20px; background: #09090b; color: #e4e4e7; font-family: var(--font-mono); font-size: 12px; line-height: 1.65; }
+
+  /* ── Settings Dialog ── */
+  .settings-dialog { max-width: 780px; height: 580px; }
+  .settings-layout { flex: 1; min-height: 0; display: flex; }
+  .settings-nav { width: 184px; flex: none; background: var(--chrome); border-right: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 2px; }
+  .settings-nav-btn { height: 32px; padding: 0 10px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 500; color: var(--muted-foreground); text-align: left; }
+  .settings-nav-btn:hover { background: var(--accent); color: var(--foreground); }
+  .settings-nav-btn.active { background: var(--background); color: var(--foreground); font-weight: 600; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+  .settings-content { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px; }
+  .agent-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .agent-card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px; background: var(--card); display: flex; flex-direction: column; gap: 6px; cursor: pointer; transition: border-color .12s; }
+  .agent-card:hover { border-color: #a1a1aa; }
+  .agent-card.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+  .field-row { display: flex; align-items: center; gap: 8px; }
+  .field-row .input, .field-row .btn, .field-row .input-search-wrap { height: 32px; }
+  .input-search-wrap { position: relative; flex: 1; display: flex; align-items: center; }
+  .input-search-wrap .ico { position: absolute; left: 10px; color: var(--muted-foreground); pointer-events: none; }
+  .input-search-wrap .input { width: 100%; padding-left: 30px; height: 32px; }
+  .model-list-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); overflow: hidden; box-shadow: var(--shadow-sm); }
+  .model-list-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--chrome); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); }
+  .model-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; cursor: pointer; transition: background .1s; user-select: none; }
+  .model-row:last-child { border-bottom: none; }
+  .model-row:hover { background: #fafafa; }
+  .model-row.checked { background: #fafafa; }
+  .model-chk, .shadcn-chk-inp { position: absolute; opacity: 0; width: 0; height: 0; }
+  .shadcn-chk { width: 16px; height: 16px; border-radius: 4px; border: 1px solid #d4d4d8; background: #fff; display: inline-flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-sm); transition: all .12s; position: relative; }
+  .model-chk:checked + .shadcn-chk, .shadcn-chk-inp:checked + .shadcn-chk { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .model-chk:checked + .shadcn-chk::after, .shadcn-chk-inp:checked + .shadcn-chk::after { content: ""; width: 8px; height: 5px; border-left: 1.75px solid #fff; border-bottom: 1.75px solid #fff; transform: rotate(-45deg) translate(0.5px, -0.5px); }
+  .shadcn-chk-inp:indeterminate + .shadcn-chk { background: var(--primary); border-color: var(--primary); }
+  .shadcn-chk-inp:indeterminate + .shadcn-chk::after { content: ""; width: 8px; height: 1.75px; background: #fff; border-radius: 1px; }
+  .model-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .model-id-row { display: flex; align-items: center; gap: 6px; }
+  .model-id { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--foreground); }
+  .model-desc { font-size: 11.5px; color: var(--muted-foreground); }
+  .model-tags { display: flex; align-items: center; gap: 5px; flex: none; }
+
+  /* ── Git Dialog ── */
+  .git-dialog { max-width: 660px; }
+  .git-tree { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--chrome); max-height: 290px; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .git-proj-box { background: var(--background); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-sm); }
+  .git-proj-hd { padding: 9px 12px; background: var(--chrome); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12.5px; cursor: pointer; user-select: none; }
+  .git-proj-hd:hover { background: var(--accent); }
+  .git-proj-toggle { width: 20px; height: 20px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); flex: none; }
+  .git-proj-toggle:hover { background: var(--border); color: var(--foreground); }
+  .git-file-row { padding: 8px 12px 8px 20px; display: flex; align-items: center; gap: 10px; font-size: 12px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s; user-select: none; }
+  .git-file-row:last-child { border-bottom: none; }
+  .git-file-row:hover { background: #fafafa; }
+  .git-file-row.checked { background: #fafafa; }
+  .git-file-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .git-file-path { display: flex; align-items: center; font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .git-file-dir { color: var(--muted-foreground); }
+  .git-file-name { color: var(--foreground); font-weight: 600; }
+  .git-diff-stat { font-family: var(--font-mono); font-size: 11px; display: inline-flex; gap: 4px; flex: none; }
+  .git-diff-add { color: var(--emerald); }
+  .git-diff-del { color: var(--rose); }
+
+  /* ── AlertDialog ── */
+  .alert-dialog { max-width: 440px; padding: 20px; gap: 14px; }
+  .alert-box { padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid #fecdd3; background: var(--rose-soft); color: #9f1239; font-size: 12px; line-height: 1.6; display: flex; gap: 8px; }
+
+  /* ── Sonner Toast & Tour Pill ── */
+  .toast-stack { position: fixed; right: 16px; bottom: 16px; z-index: 200; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  .sonner-toast { pointer-events: auto; min-width: 260px; max-width: 360px; background: var(--background); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 10px 14px; display: flex; align-items: center; gap: 10px; font-size: 12.5px; animation: toastIn .18s ease-out; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  .tour-pill { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 60; background: rgba(24, 24, 27, 0.92); color: #fafafa; backdrop-filter: blur(8px); padding: 5px 6px 5px 12px; border-radius: 99px; box-shadow: var(--shadow-lg); display: flex; align-items: center; gap: 4px; font-size: 12px; }
+  .tour-pill button { height: 24px; padding: 0 9px; border-radius: 99px; font-size: 12px; color: #d4d4d8; transition: all .12s; white-space: nowrap; }
+  .tour-pill button:hover { background: rgba(255,255,255,0.14); color: #fff; }
+  .tour-pill button.hl { background: var(--cobalt); color: #fff; font-weight: 500; }
+</style>
+</head>
+<body class="shadcn-app">
+<div class="app">
+
+  <!-- ══════════════ 1. 顶部全局命令栏 (44px) ══════════════ -->
+  <header class="topbar">
+    <button class="btn btn-outline btn-sm" id="btnToggleSb" title="展开/收起原型列表">
+      <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+
+    <div class="pop-wrap">
+      <button class="btn btn-outline btn-sm proj-trigger" id="btnProjPop">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+        <span id="curProjLabel">投融资录入工作流</span>
+        <svg class="ico ico-sm" style="opacity:.5" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+      </button>
+      <div class="menu-pop left" id="projPop">
+        <div class="cmd-search">
+          <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" placeholder="搜索项目..." id="projSearchInput" oninput="filterProjList(this.value)" />
+        </div>
+        <div class="menu-label">本地沙箱项目</div>
+        <button class="menu-item proj-opt" data-proj="投融资录入工作流"><span>投融资录入工作流</span><span class="mi-check">✓</span></button>
+        <button class="menu-item proj-opt" data-proj="企业风控驾驶舱"><span>企业风控驾驶舱</span></button>
+        <button class="menu-item proj-opt" data-proj="供应链金融移动端"><span>供应链金融移动端</span></button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" onclick="toast('已新建并切换到空白项目「新项目」','ok');closeAllPops()">
+          <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          <span>新建项目</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="loc-pill" title="当前预览页面路径">
+      <span id="curProtoLabel">项目录入与首页</span>
+      <span style="opacity:.4">/</span>
+      <b id="curSubLabel">index.html</b>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- 移动 / PC 切换（切换时自动切换文档面板为 挤压式 vs 右侧悬浮弹窗） -->
+    <div class="seg" role="group" aria-label="预览端别">
+      <button class="seg-btn active" id="btnKindMobile" onclick="setDeviceKind('mobile')">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+        移动
+      </button>
+      <button class="seg-btn" id="btnKindPc" onclick="setDeviceKind('pc')">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        PC
+      </button>
+    </div>
+
+    <div class="zoom-combo" id="zoomCombo" title="移动端固定 375×780 视窗，支持跟随窗口自适应缩放">
+      <button class="zoom-fit-btn active" id="btnZoomFit" onclick="setZoomMode('fit')" title="跟随浏览器窗口自适应完整展示">自适应</button>
+      <input id="zoomInput" value="84" aria-label="缩放百分比" />
+      <span class="zoom-pct">%</span>
+      <select id="zoomSelect" aria-label="缩放预设">
+        <option value="fit" selected>自适应</option>
+        <option value="75">75%</option>
+        <option value="85">85%</option>
+        <option value="95">95%</option>
+        <option value="100">100%</option>
+        <option value="115">115%</option>
+      </select>
+    </div>
+
+    <div class="topbar-right">
+      <button class="btn btn-outline btn-sm" id="btnOpenLinks">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        交互 <span class="badge badge-neutral">2</span>
+      </button>
+      <button class="btn btn-outline btn-sm" id="btnOpenAnnos">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+        标注 <span class="badge badge-cobalt" id="topAnnoCount">3</span>
+      </button>
+      <button class="btn btn-primary btn-sm" id="btnOpenQueue">
+        待提交 <span class="badge" style="background:rgba(255,255,255,0.2);color:#fff" id="topQueueCount">2</span>
+      </button>
+
+      <div class="topbar-sep"></div>
+
+      <button class="btn btn-ghost btn-sm btn-icon" title="刷新本地沙箱" onclick="toast('已从本地沙箱重新加载最新原型与文档')">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+      </button>
+      <button class="btn btn-ghost btn-sm" title="在沙箱目录启动本地 CLI 终端" onclick="toast('已在沙箱目录启动本地 CLI 终端')">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        终端
+      </button>
+
+      <div class="pop-wrap">
+        <button class="btn btn-outline btn-sm" id="btnGitPop">
+          <svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          Git
+          <svg class="ico ico-sm" style="opacity:.5" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="menu-pop" id="gitPop">
+          <div class="menu-label">Git 协同同步</div>
+          <button class="menu-item" onclick="openGitDialog('push');closeAllPops()">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+            <div><span>上传发布</span><span class="mi-sub">选择变更目录或文件推送至远端</span></div>
+          </button>
+          <button class="menu-item" onclick="openGitDialog('pull');closeAllPops()">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+            <div><span>拉取同步</span><span class="mi-sub">从远程分支选择性拉取更新</span></div>
+          </button>
+          <button class="menu-item" onclick="openDialog('gitConfigDialog');closeAllPops()">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2"/></svg>
+            <div><span>仓库设置</span><span class="mi-sub">配置全局远程仓库 URL 与访问令牌</span></div>
+          </button>
+          <div class="menu-sep"></div>
+          <button class="menu-item" onclick="openDialog('alertDialogDemo');closeAllPops()">
+            <svg class="ico ico-sm" style="color:var(--rose)" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            <div><span style="color:var(--rose)">高危确认弹窗示例</span><span class="mi-sub">强覆盖 / 跨项目 AlertDialog</span></div>
+          </button>
+        </div>
+      </div>
+
+      <div class="pop-wrap">
+        <button class="btn btn-outline btn-sm" id="btnExportPop">
+          导出
+          <svg class="ico ico-sm" style="opacity:.5" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="menu-pop" id="exportPop">
+          <button class="menu-item" onclick="toast('已导出纯单文件 HTML 源码（供投喂开发 AI）','ok');closeAllPops()">
+            <div><span>导出原型源码</span><span class="mi-sub">纯 HTML，零平台脚本</span></div>
+          </button>
+          <button class="menu-item" onclick="toast('已导出离线可交互单文件 HTML（含文档与跳转）','ok');closeAllPops()">
+            <div><span>导出完整离线 HTML</span><span class="mi-sub">含交互、标注与功能说明</span></div>
+          </button>
+        </div>
+      </div>
+
+      <!-- 两个文档入口按钮：移动端展开/切换右侧挤压面板；PC 端打开独立右侧悬浮弹窗 -->
+      <button class="btn btn-secondary btn-sm" id="btnToggleDocs" onclick="toggleDocsPanel('desc')" title="功能说明（移动端并排挤压 / PC端右侧独立悬浮弹窗）">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        功能说明
+      </button>
+      <button class="btn btn-outline btn-sm" id="btnToggleReq" onclick="toggleDocsPanel('req')" title="最新需求（独立 md 文档）">
+        最新需求
+      </button>
+    </div>
+  </header>
+
+  <!-- ══════════════ 2. 主体工作区 ══════════════ -->
+  <div class="workspace">
+
+    <aside class="sidebar" id="sidebar">
+      <div class="sb-inner">
+        <div class="sb-head">
+          <span class="sb-head-title">原型列表</span>
+          <button class="btn btn-ghost btn-icon" title="新建虚拟文件夹" onclick="toast('已创建虚拟分组「待评审模块」')">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+          </button>
+        </div>
+        <div class="sb-tree" id="sbTree">
+          <div class="sb-folder" draggable="true" data-folder="核心投融资流程">
+            <button class="sb-grp-btn" onclick="toggleFolderGroup(this)">
+              <span class="sb-drag-grip" title="拖动调整文件夹顺序"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+              <svg class="ico ico-sm sb-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+              <span class="sb-item-name">核心投融资流程</span>
+            </button>
+            <div class="sb-grp-children">
+              <div class="sb-proto-node" draggable="true" data-proto="项目录入与首页">
+                <button class="sb-item active" oncontextmenu="openCtxMenu(event,this)" ondblclick="startInlineRename(this)" onclick="selectProto(this,'项目录入与首页','index.html')">
+                  <span class="sb-drag-grip" title="拖动调整原型顺序或移入其他分组"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+                  <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                  <span class="sb-item-name">项目录入与首页</span>
+                  <span class="sb-item-more" title="更多操作" onclick="openCtxMenu(event,this.parentElement)">⋯</span>
+                </button>
+                <div class="sb-subpages">
+                  <button class="sb-sub active" draggable="true" ondblclick="startInlineRename(this)" onclick="selectSub(this,'index.html')">
+                    <span class="sb-drag-grip" title="拖动调整子页面顺序"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+                    <span class="sb-sub-dot"></span>
+                    <span class="sb-item-name">index.html (主页面)</span>
+                  </button>
+                  <button class="sb-sub" draggable="true" ondblclick="startInlineRename(this)" onclick="selectSub(this,'detail.html')">
+                    <span class="sb-drag-grip" title="拖动调整子页面顺序"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+                    <span class="sb-sub-dot"></span>
+                    <span class="sb-item-name">detail.html (企业详情)</span>
+                  </button>
+                  <button class="sb-sub" draggable="true" ondblclick="startInlineRename(this)" onclick="selectSub(this,'audit.html')">
+                    <span class="sb-drag-grip" title="拖动调整子页面顺序"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+                    <span class="sb-sub-dot"></span>
+                    <span class="sb-item-name">audit.html (审批确认)</span>
+                  </button>
+                </div>
+              </div>
+              <div class="sb-proto-node" draggable="true" data-proto="尽调数据看板 (PC)">
+                <button class="sb-item" oncontextmenu="openCtxMenu(event,this)" ondblclick="startInlineRename(this)" onclick="selectProto(this,'尽调数据看板','dashboard.html');setDeviceKind('pc')">
+                  <span class="sb-drag-grip" title="拖动调整原型顺序或移入其他分组"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+                  <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
+                  <span class="sb-item-name">尽调数据看板 (PC)</span>
+                  <span class="sb-item-more" onclick="openCtxMenu(event,this.parentElement)">⋯</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="sb-folder" draggable="true" data-folder="交互实验草稿">
+            <button class="sb-grp-btn" onclick="toggleFolderGroup(this)">
+              <span class="sb-drag-grip" title="拖动调整文件夹顺序"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+              <svg class="ico ico-sm sb-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+              <span class="sb-item-name">交互实验草稿</span>
+            </button>
+            <div class="sb-grp-children">
+              <div class="sb-proto-node" draggable="true" data-proto="审批消息中心">
+                <button class="sb-item" oncontextmenu="openCtxMenu(event,this)" ondblclick="startInlineRename(this)" onclick="selectProto(this,'审批消息中心','notice.html');setDeviceKind('mobile')">
+                  <span class="sb-drag-grip" title="拖动调整原型顺序或移入其他分组"><svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+                  <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                  <span class="sb-item-name">审批消息中心</span>
+                  <span class="sb-item-more" onclick="openCtxMenu(event,this.parentElement)">⋯</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sb-dock">
+          <button class="btn btn-primary" style="width:100%" onclick="openDialog('aiDialog')">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+            AI 设计对话
+          </button>
+          <div class="sb-dock-row">
+            <button class="btn btn-outline btn-sm" onclick="toast('已打开本地 HTML 原型导入')">导入原型</button>
+            <button class="btn btn-outline btn-sm" onclick="openDialog('newProtoDialog')">新建设计</button>
+            <button class="btn btn-outline btn-sm btn-icon" style="width:100%" title="系统设置" onclick="openDialog('settingsDialog')">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ContextMenu 右键/更多操作菜单 -->
+    <div class="ctx-pop" id="sbCtxMenu">
+      <button class="menu-item" onclick="ctxRename()"><span>重命名</span><span class="kbd" style="margin-left:auto">双击</span></button>
+      <button class="menu-item" onclick="toast('已在该原型下新建子页面「sub-page.html」','ok');closeAllPops()"><span>新建子页面</span></button>
+      <button class="menu-item" onclick="toast('已移入分组「核心投融资流程」');closeAllPops()"><span>移动到分组</span></button>
+      <div class="menu-sep"></div>
+      <button class="menu-item" onclick="toast('已确认删除原型演示');closeAllPops()"><span style="color:var(--rose)">删除原型</span></button>
+    </div>
+
+    <div class="mini-dock" id="miniDock">
+      <button class="btn btn-ghost btn-sm" onclick="toggleSidebar()">菜单</button>
+      <button class="btn btn-primary btn-sm" onclick="openDialog('aiDialog')">AI 设计</button>
+      <button class="btn btn-ghost btn-sm btn-icon" title="系统设置" onclick="openDialog('settingsDialog')">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>
+      </button>
+    </div>
+
+    <!-- 舞台 + 文档容器（移动端并排挤压，PC端文档为独立右侧悬浮弹窗） -->
+    <div class="stage-area">
+      <main class="stage" id="stage">
+        <div class="pick-banner" id="pickBanner">
+          <span class="pick-dot"></span>
+          <span id="pickBannerText"><b>拾取模式</b> · 单击元素打开检查器，连续点选批量修改</span>
+          <span class="kbd">Esc</span>
+          <button class="btn btn-ghost btn-sm" style="height:20px;padding:0 6px" onclick="setPickMode(false);setInlineMode(false)">退出</button>
+        </div>
+
+        <div class="stage-scroll fit-active" id="stageScroll">
+          <div class="device-stage-box" id="deviceStageBox">
+            <div class="device-wrap" id="deviceWrap">
+            <div class="device-mobile" id="deviceFrame">
+              <div class="device-notch" id="mobileTopBar">
+                <span>9:41</span>
+                <span style="font-size:12px;color:#71717a">5G · 100%</span>
+              </div>
+              <div class="device-pc-bar" id="pcTopBar" style="display:none">
+                <div class="win-dots"><span></span><span></span><span></span></div>
+                <div class="pc-url">sandbox://投融资录入工作流/index.html</div>
+              </div>
+
+              <div class="proto-body" id="protoBody">
+                <div class="proto-el proto-hdr" data-sel="header.page-nav">
+                  <div>
+                    <div class="proto-editable" style="font-size:15px;font-weight:700;color:#0f172a">项目录入工作台</div>
+                    <div style="font-size:12px;color:#64748b">2026 Q4 重点跟进项目</div>
+                  </div>
+                  <button class="proto-el proto-editable" data-sel="button#btnNewDeal" style="height:28px;padding:0 10px;border-radius:6px;background:#2563eb;color:#fff;font-size:12px;font-weight:600;position:relative">
+                    + 新增录入
+                    <span class="anno-pin">1<span class="anno-popover"><b>标注 #1 · 新增入口</b><p style="margin-top:4px;color:var(--muted-foreground)">仅投资经理及以上角色可见，点击跳转至「企业基础信息录入表单」。</p></span></span>
+                  </button>
+                </div>
+
+                <div class="proto-kpi-grid">
+                  <div class="proto-el proto-kpi" data-sel="div.kpi-card:nth-child(1)">
+                    <div class="lbl">本月跟进项目</div>
+                    <div class="val">24</div>
+                  </div>
+                  <div class="proto-el proto-kpi" data-sel="div.kpi-card:nth-child(2)">
+                    <div class="lbl">待补充材料</div>
+                    <div class="val" style="color:#d97706">7</div>
+                  </div>
+                  <div class="proto-el proto-kpi" data-sel="div.kpi-card:nth-child(3)">
+                    <div class="lbl">本周立项通过</div>
+                    <div class="val" style="color:#059669">5</div>
+                  </div>
+                  <div class="proto-el proto-kpi" data-sel="div.kpi-card:nth-child(4)">
+                    <div class="lbl">拟投总额 (亿)</div>
+                    <div class="val">4.8</div>
+                  </div>
+                </div>
+
+                <div class="pc-cols">
+                  <div class="proto-el proto-card" data-sel="section.deal-card#d9">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                      <b class="proto-editable" style="font-size:13px;color:#0f172a">成都城市发展集团</b>
+                      <span style="font-size:12px;padding:2px 7px;border-radius:4px;background:#eff6ff;color:#1d4ed8;font-weight:600">政府诉求</span>
+                    </div>
+                    <div style="font-size:12px;color:#64748b;line-height:1.5">拟投金额：1.2 亿元 · 阶段：尽职调查</div>
+                    <div style="display:flex;gap:6px;margin-top:10px">
+                      <button class="proto-el proto-editable" data-sel="button.btn-detail" style="flex:1;height:28px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;font-weight:500">查看详情</button>
+                      <button class="proto-el proto-editable" data-sel="button.btn-submit-audit" style="flex:1;height:28px;background:#0f172a;color:#fff;border-radius:6px;font-size:12px;font-weight:500;position:relative">
+                        提交初审
+                        <span class="anno-pin">2<span class="anno-popover"><b>标注 #2 · 审批流转</b><p style="margin-top:4px;color:var(--muted-foreground)">提交前校验必填项「企业性质」与「融资轮次」，缺失时顶部 Toast 提示。</p></span></span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="proto-el proto-card" data-sel="section.deal-card#d8">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                      <b class="proto-editable" style="font-size:13px;color:#0f172a">武汉创新投资平台</b>
+                      <span style="font-size:12px;padding:2px 7px;border-radius:4px;background:#ecfdf5;color:#047857;font-weight:600">招商合作</span>
+                    </div>
+                    <div style="font-size:12px;color:#64748b;line-height:1.5">拟投金额：8,000 万元 · 阶段：立项通过</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+        </div>
+
+        <!-- Ctrl+Shift 就地微编辑浮层 -->
+        <div class="inline-edit-pop" id="inlineEditPop">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:12px;font-weight:600">就地微改</span>
+            <span class="mono" style="font-size:11px;color:var(--cobalt)" id="inlineSelLabel">button</span>
+          </div>
+          <input class="input" id="inlineEditInput" />
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;color:var(--muted-foreground)"><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span> 保存</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-outline btn-sm" onclick="closeInlinePop()">取消</button>
+              <button class="btn btn-primary btn-sm" onclick="applyInlineEdit()">写盘刷新</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pick-bar" id="pickBar">
+          <div class="pick-tags" id="pickTags"></div>
+          <div class="pick-row">
+            <textarea id="pickInput" rows="1" placeholder="描述针对选中元素的修改需求，加入待提交列表..."></textarea>
+            <button class="btn btn-outline btn-sm" id="btnMultiBatch" style="display:none" onclick="openMultiEditDrawer()">批量面板</button>
+            <button class="btn btn-outline btn-sm" id="btnPickAnno" onclick="openInspector('anno')">标注</button>
+            <button class="btn btn-outline btn-sm" id="btnPickJump" onclick="openInspector('jump')">交互</button>
+            <button class="btn btn-primary btn-sm" onclick="addPickToQueue()">加入待提交</button>
+          </div>
+        </div>
+
+        <div class="stage-hint">
+          <button class="btn btn-ghost btn-sm" style="height:20px;padding:0 6px;color:var(--cobalt);font-weight:600" onclick="togglePickMode()">
+            模拟 Ctrl 拾取
+          </button>
+          <span style="opacity:.3">|</span>
+          <button class="btn btn-ghost btn-sm" style="height:20px;padding:0 6px;color:var(--amber);font-weight:600" onclick="toggleInlineMode()">
+            模拟就地改
+          </button>
+          <span style="opacity:.3">|</span>
+          <span id="stageModeHint">移动态：右侧文档并排挤压</span>
+        </div>
+      </main>
+
+      <!-- PC 端文档独立右侧弹窗的半透明遮罩 -->
+      <div class="doc-overlay-mask" id="docOverlayMask" onclick="closePcDocs()"></div>
+
+      <!-- 文档面板：移动端为 flex 并排挤压，PC 端为固定右侧悬浮独立弹窗 -->
+      <aside class="docs-panel" id="docsPanel">
+        <div class="docs-head">
+          <button class="btn btn-outline btn-sm" id="btnToggleToc" onclick="toggleToc()">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            目录
+          </button>
+
+          <div class="seg" style="margin-left:2px" id="docModeTabsWrap">
+            <button class="seg-btn active" id="tabDocDesc" onclick="switchDocTab('desc')">功能说明</button>
+            <button class="seg-btn" id="tabDocReq" onclick="switchDocTab('req')">最新需求</button>
+          </div>
+
+          <div style="margin-left:auto;display:flex;align-items:center;gap:4px">
+            <button class="btn btn-ghost btn-icon" title="文档内检索 (Ctrl+F)" onclick="toggleDocSearch()">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
+            <button class="btn btn-ghost btn-icon" title="独立窗口打开" onclick="toast('已打开独立文档镜像窗口 (docwin)')">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </button>
+            <div class="pop-wrap">
+              <button class="btn btn-outline btn-sm" id="btnDocExportPop">导出 ▾</button>
+              <div class="menu-pop" id="docExportPop" style="min-width:160px">
+                <button class="menu-item" onclick="toast('正在生成 2x 高清长图 PNG','ok');closeAllPops()"><span>高清长图 PNG</span></button>
+                <button class="menu-item" onclick="toast('正在导出矢量 A4 PDF','ok');closeAllPops()"><span>A4 矢量 PDF</span></button>
+                <button class="menu-item" onclick="toast('已下载 Markdown 文档','ok');closeAllPops()"><span>MD 文档</span></button>
+              </div>
+            </div>
+            <button class="btn btn-outline btn-sm" id="btnEditDoc" onclick="toggleDocEdit(true)">编辑</button>
+            <button class="btn btn-outline btn-sm" id="btnCancelDoc" style="display:none" onclick="toggleDocEdit(false,true)">取消</button>
+            <button class="btn btn-primary btn-sm" id="btnSaveDoc" style="display:none" onclick="toggleDocEdit(false,false)">保存</button>
+            <button class="btn btn-ghost btn-icon" id="btnClosePcDocs" style="display:none" title="关闭弹窗 (Esc)" onclick="closePcDocs()">✕</button>
+          </div>
+        </div>
+
+        <div class="docs-body-wrap">
+          <div class="doc-toc" id="docToc">
+            <div style="font-size:12px;font-weight:600;color:var(--muted-foreground);padding:4px 8px">大纲导航</div>
+            <button class="toc-link active">1. 页面定位与目标</button>
+            <button class="toc-link">2. 核心交互规范</button>
+            <button class="toc-link h3">2.1 诉求标签规则</button>
+            <button class="toc-link h3">2.2 审批前置校验</button>
+            <button class="toc-link">3. 字段与校验规则</button>
+          </div>
+
+          <div class="doc-search" id="docSearch">
+            <input type="text" placeholder="查找文档..." id="docSearchInput" value="诉求" />
+            <span class="mono" style="font-size:12px;color:var(--muted-foreground);padding:0 4px">1/2</span>
+            <button class="btn btn-ghost btn-icon" style="width:22px;height:22px" onclick="toggleDocSearch()">✕</button>
+          </div>
+
+          <div class="doc-scroll" id="docReadView">
+            <div class="md" id="docMarkdown">
+              <h1>项目录入与首页 · 功能说明</h1>
+              <div class="md-block">
+                <p>本页面用于投资经理每日汇总跟进项目与发起初审。支持通过左侧 <code>index.html</code> 跳转至企业详情与审批确认子页。</p>
+                <button class="md-micro-trigger" onclick="openDocMicro(this)">✎ 微改</button>
+              </div>
+              <h2>2. 核心交互规范</h2>
+              <div class="md-block">
+                <ul>
+                  <li>点击右上角 <code>+ 新增录入</code> 按钮进入表单向导，仅对有录入权限的账号开放。</li>
+                  <li>混合<mark>诉求</mark>规则：当企业同时包含「政府+招商」时，列表中需隐藏冗余的「政府」角标。</li>
+                </ul>
+                <button class="md-micro-trigger" onclick="openDocMicro(this)">✎ 微改</button>
+              </div>
+              <h2>3. 字段与校验规则</h2>
+              <table>
+                <thead><tr><th>字段名</th><th>校验规则</th><th>触发提示</th></tr></thead>
+                <tbody>
+                  <tr><td>拟投金额</td><td>必填，正数（万元）</td><td>请输入有效金额</td></tr>
+                  <tr><td>企业性质</td><td><mark>诉求</mark>含政府时显示</td><td>请选择企业性质</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="doc-scroll" id="docEditView" style="display:none">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:12px;color:var(--muted-foreground)">
+              <span>支持 Markdown 语法</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button class="btn btn-ghost btn-sm" style="height:22px;color:var(--cobalt)" onclick="openDialog('docShortcutDialog')">快捷键一览</button>
+                <span><span class="kbd">Ctrl</span>+<span class="kbd">S</span></span>
+              </div>
+            </div>
+            <textarea class="textarea mono" style="width:100%;height:calc(100% - 36px)" id="docEditorArea"># 项目录入与首页 · 功能说明&#10;&#10;本页面用于投资经理每日汇总跟进项目与发起初审。&#10;&#10;## 2. 核心交互规范&#10;- 混合诉求规则：去掉多余政府标签</textarea>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<!-- 文档段落微编辑 Popover -->
+<div class="inline-edit-pop" id="docMicroPop" style="width:340px">
+  <div style="font-size:12px;font-weight:600">段落微编辑</div>
+  <textarea class="textarea" id="docMicroInput" rows="3"></textarea>
+  <div style="display:flex;justify-content:flex-end;gap:6px">
+    <button class="btn btn-outline btn-sm" onclick="document.getElementById('docMicroPop').classList.remove('open')">取消</button>
+    <button class="btn btn-primary btn-sm" onclick="saveDocMicro()">保存段落</button>
+  </div>
+</div>
+
+<!-- ══════════════ 3. 右侧滑出抽屉 ══════════════ -->
+<div class="sheet-backdrop" id="sheetBackdrop" onclick="closeSheet()"></div>
+<aside class="sheet" id="rightSheet">
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="sheetTitle">元素检查器</div>
+      <div class="sheet-sub" id="sheetSub">配置修改需求、页面跳转或需求标注</div>
+    </div>
+    <button class="btn btn-ghost btn-icon" onclick="closeSheet()">✕</button>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+  <div class="sheet-foot" id="sheetFoot"></div>
+</aside>
+
+<!-- ══════════════ 4. AI 对话工作台弹窗 ══════════════ -->
+<div class="dialog-backdrop" id="aiDialog">
+  <div class="dialog ai-dialog">
+    <div class="ai-head">
+      <button class="btn btn-ghost btn-icon" title="展开/收起会话列表" onclick="document.getElementById('aiSessSb').classList.toggle('collapsed')">
+        <svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+      </button>
+      <div class="seg">
+        <button class="seg-btn active" id="aiTabChat" onclick="switchAiTab('chat')">需求对话</button>
+        <button class="seg-btn" id="aiTabTrace" onclick="switchAiTab('trace')">执行日志 (Trace)</button>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <button class="btn btn-outline btn-sm" onclick="toast('已保存 3 份自动快照，可随时一键回滚')">历史快照 (3)</button>
+        <span class="badge badge-neutral mono">沙箱: 项目录入</span>
+        <span class="badge badge-emerald">● CLI 就绪</span>
+        <span class="badge badge-cobalt" id="aiCurAgentBadge">OpenCode</span>
+        <button class="btn btn-ghost btn-icon" onclick="closeDialog('aiDialog')">✕</button>
+      </div>
+    </div>
+
+    <div class="ai-body-wrap">
+      <div class="ai-sess-sb" id="aiSessSb">
+        <div style="padding:10px;border-bottom:1px solid var(--border)">
+          <button class="btn btn-primary btn-sm" style="width:100%" onclick="toast('已开启新对话会话')">+ 新会话</button>
+        </div>
+        <div class="ai-sess-list">
+          <div class="ai-sess-item active"><span>优化混合诉求与角标</span><span style="opacity:.4">✕</span></div>
+          <div class="ai-sess-item"><span>企业详情页表格重排</span><span style="opacity:.4">✕</span></div>
+          <div class="ai-sess-item"><span>初审提交校验弹窗</span><span style="opacity:.4">✕</span></div>
+        </div>
+      </div>
+
+      <div class="ai-main-col" id="aiChatPane">
+        <div class="ai-stream" id="aiStream">
+          <div class="ai-u-row">
+            <div class="ai-u-bubble">d9 成都城发这条按混合诉求规则处理，另外 d1、d8 的企业性质要不要同步隐藏？</div>
+          </div>
+
+          <div class="ai-think-row">
+            <svg class="ico ico-sm" style="margin-top:3px;color:var(--cobalt)" viewBox="0 0 24 24"><path d="M12 2a8 8 0 0 0-8 8c0 2.5 1.1 4.7 3 6.2V19a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2.8c1.9-1.5 3-3.7 3-6.2a8 8 0 0 0-8-8Z"/></svg>
+            <span>已检索 <code>index.html</code> 与 <code>detail.html</code>，发现两处规则分支需要你确认后再执行修改。</span>
+          </div>
+
+          <div class="ai-tool-list">
+            <div class="ai-tool-pill">
+              <svg class="ico ico-sm" style="color:var(--emerald)" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+              <span class="tool-cmd">read_file</span>
+              <span class="tool-arg">投融资录入工作流/项目录入与首页/index.html</span>
+              <span class="badge badge-emerald">完成</span>
+            </div>
+            <div class="ai-tool-pill">
+              <svg class="ico ico-sm" style="color:var(--cobalt)" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              <span class="tool-cmd">edit_file</span>
+              <span class="tool-arg">detail.html · 诉求标签过滤与样式对齐</span>
+              <span class="mono" style="font-size:12px;color:var(--emerald);font-weight:600">+18</span>
+              <span class="mono" style="font-size:12px;color:var(--rose);font-weight:600">-6</span>
+              <span class="badge badge-emerald">完成</span>
+            </div>
+          </div>
+
+          <div class="q-card">
+            <div class="q-card-hd">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-weight:600;font-size:12.5px">需要确认规则分叉</span>
+                <span class="badge badge-cobalt" id="qStateBadge">2 项待选</span>
+              </div>
+              <div class="seg">
+                <button class="seg-btn active" onclick="switchQTab(this,'qp1')">1. 成都城发诉求</button>
+                <button class="seg-btn" onclick="switchQTab(this,'qp2')">2. 企业性质联动</button>
+              </div>
+            </div>
+            <div class="q-card-bd" id="qp1">
+              <div style="font-size:12.5px;color:var(--foreground)">d9「成都城市发展集团」详情页为「政府+招商」，列表仅有「政府」。按混合诉求规则如何处理？</div>
+              <button class="q-opt selected" onclick="pickQOpt(this)">
+                <span class="q-radio"></span>
+                <div style="flex:1">
+                  <div style="font-weight:600;font-size:12.5px">保留纯政府</div>
+                  <div style="font-size:12px;color:var(--muted-foreground)">详情去掉多余「招商」标签，列表保持「政府」不变</div>
+                </div>
+                <span class="badge badge-cobalt">推荐</span>
+              </button>
+              <button class="q-opt" onclick="pickQOpt(this)">
+                <span class="q-radio"></span>
+                <div style="flex:1">
+                  <div style="font-weight:600;font-size:12.5px">严格去掉政府</div>
+                  <div style="font-size:12px;color:var(--muted-foreground)">详情仅保留「招商」，列表角标同步改为「招商」</div>
+                </div>
+              </button>
+            </div>
+            <div class="q-card-bd" id="qp2" style="display:none">
+              <div style="font-size:12.5px;color:var(--foreground)">d1、d8 去掉「政府」诉求后，「企业性质」字段是否同步隐藏？</div>
+              <button class="q-opt selected" onclick="pickQOpt(this)">
+                <span class="q-radio"></span>
+                <div style="flex:1">
+                  <div style="font-weight:600;font-size:12.5px">同步隐藏</div>
+                  <div style="font-size:12px;color:var(--muted-foreground)">与全局展示规则保持一致</div>
+                </div>
+                <span class="badge badge-cobalt">推荐</span>
+              </button>
+              <button class="q-opt" onclick="pickQOpt(this)">
+                <span class="q-radio"></span>
+                <div style="flex:1">
+                  <div style="font-weight:600;font-size:12.5px">保留不动</div>
+                  <div style="font-size:12px;color:var(--muted-foreground)">本轮仅调整诉求标签</div>
+                </div>
+              </button>
+            </div>
+            <div class="q-card-ft">
+              <span style="font-size:12px;color:var(--muted-foreground)">提交后将继续当前 Agent 执行流</span>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-outline btn-sm" onclick="document.getElementById('qStateBadge').textContent='已跳过';document.getElementById('qStateBadge').className='badge badge-neutral'">跳过</button>
+                <button class="btn btn-primary btn-sm" onclick="document.getElementById('qStateBadge').textContent='已提交';document.getElementById('qStateBadge').className='badge badge-emerald';toast('答案已回传 Agent 续跑','ok')">提交答案</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="perm-card" id="permCard">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-weight:600;font-size:12.5px">ACP 权限审批请求</span>
+              <span class="badge badge-amber">execute</span>
+              <span class="badge badge-rose">中风险</span>
+              <span class="badge badge-neutral" style="margin-left:auto" id="permStateBadge">待确认</span>
+            </div>
+            <div class="perm-cmd">node tests/verify-ui-specs.js --target "项目录入与首页"</div>
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+              <button class="btn btn-outline btn-sm" onclick="resolvePerm('已拒绝','badge-rose')">拒绝</button>
+              <button class="btn btn-outline btn-sm" onclick="resolvePerm('仅本次允许','badge-emerald')">仅本次允许</button>
+              <button class="btn btn-primary btn-sm" onclick="resolvePerm('已始终允许','badge-emerald')">始终允许</button>
+            </div>
+          </div>
+
+          <div class="ai-answer">
+            已完成规则校验并同步更新了 <code>index.html</code> 与功能说明文档，所有元素原有的 <code>data-pr-id</code> 与跳转绑定已完整保留。
+            <div class="ai-code-card">
+              <div class="ai-code-hd">
+                <span>detail.html</span>
+                <button class="btn btn-ghost btn-sm" style="height:20px;font-size:11px" onclick="toast('代码片段已复制')">复制</button>
+              </div>
+              <pre>&lt;span class="badge" data-pr-id="tag-demand"&gt;政府诉求&lt;/span&gt;</pre>
+            </div>
+          </div>
+
+          <div class="ai-err-card">
+            <div style="display:flex;align-items:center;gap:6px;font-weight:600;color:#9f1239;font-size:12.5px">
+              <span>!</span><span>异常卡示例：模型配额耗尽或请求受限 (429)</span>
+            </div>
+            <div style="font-size:12px;color:#881337">工作区完好无损。可一键切换备用模型或重新发起本轮对话。</div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-outline btn-sm" onclick="setModel('gemini-3.8-flash','Medium');toast('已切换备用模型','ok')">切换推荐模型</button>
+              <button class="btn btn-primary btn-sm" onclick="toast('已重新发起本轮任务')">重新发起</button>
+            </div>
+          </div>
+
+          <div class="ai-snap">
+            <span>已自动创建任务前安全快照 · <span class="mono">14:22:08</span></span>
+            <button class="btn btn-outline btn-sm" onclick="toast('已回滚至任务前快照 14:22:08','ok')">一键回滚</button>
+          </div>
+        </div>
+
+        <div class="ai-composer-wrap">
+          <div class="ai-composer">
+            <textarea id="aiComposerInput" rows="2" placeholder="输入问题体验流式回复演示（Enter 发送，Shift+Enter 换行）..."></textarea>
+            <div class="ai-composer-ft">
+              <div style="display:flex;align-items:center;gap:6px">
+                <select class="select" style="height:26px;font-size:12px">
+                  <option>作用页: index.html (主页面)</option>
+                  <option>作用页: detail.html (企业详情)</option>
+                </select>
+                <!-- 双列级联选择器（模型 + 思考强度） -->
+                <div class="pop-wrap">
+                  <button class="btn btn-outline btn-sm" id="btnModelCascader">
+                    <span id="curModelLabel">claude-sonnet-4</span>
+                    <span class="badge badge-cobalt" id="curEffortLabel">High</span>
+                    <svg class="ico ico-sm" style="opacity:.5" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <div class="cascader-pop" id="modelCascaderPop">
+                    <div class="cascader-col">
+                      <div class="menu-label">选择模型</div>
+                      <button class="menu-item" onmouseover="previewEfforts('claude-sonnet-4')" onclick="setModel('claude-sonnet-4','High')"><span>claude-sonnet-4</span><span class="badge badge-cobalt" style="margin-left:auto">ACP</span></button>
+                      <button class="menu-item" onmouseover="previewEfforts('gemini-3.8-flash')" onclick="setModel('gemini-3.8-flash','Medium')"><span>gemini-3.8-flash</span><span class="badge badge-cobalt" style="margin-left:auto">ACP</span></button>
+                      <button class="menu-item" onmouseover="previewEfforts('deepseek-reasoner')" onclick="setModel('deepseek-reasoner','Deep')"><span>deepseek-reasoner</span></button>
+                    </div>
+                    <div class="cascader-col" id="effortCol">
+                      <div class="menu-label" id="effortColTitle">思考强度</div>
+                      <button class="menu-item" onclick="setModel(hoverModel,'Low')"><span>Low · 极速</span></button>
+                      <button class="menu-item" onclick="setModel(hoverModel,'Medium')"><span>Medium · 均衡</span></button>
+                      <button class="menu-item" onclick="setModel(hoverModel,'High')"><span>High · 深度</span></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <button class="btn btn-ghost btn-sm" onclick="document.getElementById('aiComposerInput').value=''">清空</button>
+                <button class="btn btn-primary btn-sm" id="btnAiSend" onclick="sendMockChat()">发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ai-main-col" id="aiTracePane" style="display:none">
+        <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:var(--chrome)">
+          <button class="btn btn-outline btn-sm" onclick="toast('已复制全部 Trace 日志')">复制全部日志</button>
+          <button class="btn btn-outline btn-sm">清空</button>
+          <span class="mono" style="margin-left:auto;font-size:12px;color:var(--muted-foreground)">ACP Stream · 4 events</span>
+        </div>
+        <div class="trace-console">
+          <div>[14:22:08.104] [ACP] session/start cwd=".../sandbox/投融资录入工作流/项目录入与首页"</div>
+          <div>[14:22:08.412] [TOOL] read_file target="index.html" (248 lines)</div>
+          <div>[14:22:09.890] [QUESTION] pending 2 items -> waiting user decision</div>
+          <div>[14:22:11.005] [PERM] awaiting approval: execute tests/verify-ui-specs.js</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 5. 系统设置中心弹窗（全 6 Tab 实体化） ══════════════ -->
+<div class="dialog-backdrop" id="settingsDialog">
+  <div class="dialog settings-dialog">
+    <div class="sheet-head" style="padding:12px 16px">
+      <div class="sheet-title">系统设置</div>
+      <button class="btn btn-ghost btn-icon" onclick="closeDialog('settingsDialog')">✕</button>
+    </div>
+    <div class="settings-layout">
+      <nav class="settings-nav">
+        <button class="settings-nav-btn active" onclick="switchSetTab(this,'setAgent')">Agent 设置</button>
+        <button class="settings-nav-btn" onclick="switchSetTab(this,'setModels')">模型管理</button>
+        <button class="settings-nav-btn" onclick="switchSetTab(this,'setSpec')">设计规范</button>
+        <button class="settings-nav-btn" onclick="switchSetTab(this,'setSandbox')">沙箱存储</button>
+        <button class="settings-nav-btn" onclick="switchSetTab(this,'setKbd')">快捷键</button>
+        <button class="settings-nav-btn" onclick="switchSetTab(this,'setAbout')">关于软件</button>
+      </nav>
+      <div class="settings-content">
+        <div id="setAgent">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:4px">AI 调用引擎</h3>
+          <p style="font-size:12px;color:var(--muted-foreground);margin-bottom:12px">切换本地 Agent CLI 或多配置 API 直连协议。</p>
+          <div class="seg" style="margin-bottom:14px">
+            <button class="seg-btn active" id="engCliBtn" onclick="switchEngine('cli')">本地 CLI</button>
+            <button class="seg-btn" id="engApiBtn" onclick="switchEngine('api')">API 直连</button>
+          </div>
+
+          <div id="cliMatrixPane">
+            <div style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--chrome);display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div>
+                <div style="font-weight:600;font-size:12.5px">启用 ACP 标准运行时（实验）</div>
+                <div style="font-size:12px;color:var(--muted-foreground)">支持细粒度文件/命令权限审批与结构化工具流</div>
+              </div>
+              <div class="switch on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="agent-grid">
+              <div class="agent-card active" onclick="pickPrimaryAgent(this,'OpenCode')"><div style="display:flex;justify-content:space-between"><b>OpenCode</b><span class="badge badge-emerald">当前主力</span></div><span style="font-size:12px;color:var(--muted-foreground)">ACP · v0.15.2 已就绪</span></div>
+              <div class="agent-card" onclick="pickPrimaryAgent(this,'Claude Code')"><div style="display:flex;justify-content:space-between"><b>Claude Code</b><span class="badge badge-neutral">已探测</span></div><span style="font-size:12px;color:var(--muted-foreground)">ACP · 点击切换主力</span></div>
+              <div class="agent-card" onclick="pickPrimaryAgent(this,'Codex CLI')"><div style="display:flex;justify-content:space-between"><b>Codex CLI</b><span class="badge badge-neutral">已探测</span></div><span style="font-size:12px;color:var(--muted-foreground)">兼容模式</span></div>
+              <div class="agent-card" onclick="pickPrimaryAgent(this,'Gemini CLI')"><div style="display:flex;justify-content:space-between"><b>Gemini CLI</b><span class="badge badge-amber">需登录</span></div><span style="font-size:12px;color:var(--muted-foreground)">点击在终端认证</span></div>
+            </div>
+          </div>
+
+          <div id="apiMatrixPane" style="display:none">
+            <div class="agent-grid">
+              <div class="agent-card active">
+                <div style="display:flex;justify-content:space-between"><b>DeepSeek 官方</b><span class="badge badge-emerald">使用中</span></div>
+                <span class="mono" style="font-size:11.5px;color:var(--muted-foreground)">OpenAI · deepseek-chat</span>
+                <div style="display:flex;justify-content:flex-end;margin-top:4px"><button class="btn btn-outline btn-sm" onclick="openDialog('apiProfileDialog')">编辑配置</button></div>
+              </div>
+              <div class="agent-card">
+                <div style="display:flex;justify-content:space-between"><b>Google Gemini</b><span class="badge badge-neutral">备用</span></div>
+                <span class="mono" style="font-size:11.5px;color:var(--muted-foreground)">Gemini · gemini-3.8-flash</span>
+                <div style="display:flex;justify-content:flex-end;margin-top:4px"><button class="btn btn-outline btn-sm" onclick="openDialog('apiProfileDialog')">编辑配置</button></div>
+              </div>
+            </div>
+            <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="openDialog('apiProfileDialog')">+ 新增 API 配置</button>
+          </div>
+        </div>
+
+        <div id="setModels" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div>
+              <h3 style="font-size:14px;font-weight:600">模型管理</h3>
+              <p style="font-size:12px;color:var(--muted-foreground);margin-top:2px">勾选需要暴露给 AI 对话框下拉菜单的模型</p>
+            </div>
+            <span class="badge badge-neutral mono" id="modelSelectedBadge">已启用 3 / 4</span>
+          </div>
+          <div class="field-row" style="margin-bottom:12px">
+            <div class="input-search-wrap">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input class="input" placeholder="按模型 ID 或能力描述过滤..." oninput="filterModels(this.value)" />
+            </div>
+            <button class="btn btn-outline" onclick="toast('已从当前引擎拉取最新模型列表','ok')">获取模型</button>
+            <button class="btn btn-outline" onclick="clearAllModels()">清空</button>
+          </div>
+          <div class="model-list-card" style="margin-bottom:12px">
+            <div class="model-list-head">
+              <span>可用模型清单</span>
+              <button class="btn btn-ghost btn-sm" style="height:22px;padding:0 6px" onclick="toggleSelectAllModels()">全选 / 反选</button>
+            </div>
+            <div id="modelListBox">
+              <label class="model-row checked">
+                <input type="checkbox" class="model-chk" checked onchange="syncModelCount(this)" />
+                <span class="shadcn-chk"></span>
+                <div class="model-info">
+                  <div class="model-id-row"><span class="model-id">claude-sonnet-4</span><span class="badge badge-emerald">主力推荐</span></div>
+                  <div class="model-desc">Anthropic · 复杂组件排版与多文件重构</div>
+                </div>
+                <div class="model-tags"><span class="badge badge-neutral mono">200K</span><span class="badge badge-neutral">ACP</span></div>
+              </label>
+              <label class="model-row checked">
+                <input type="checkbox" class="model-chk" checked onchange="syncModelCount(this)" />
+                <span class="shadcn-chk"></span>
+                <div class="model-info">
+                  <div class="model-id-row"><span class="model-id">gemini-3.8-flash</span></div>
+                  <div class="model-desc">Google · 高速流式生成与实时预览微调</div>
+                </div>
+                <div class="model-tags"><span class="badge badge-neutral mono">1M</span><span class="badge badge-neutral">ACP</span></div>
+              </label>
+              <label class="model-row checked">
+                <input type="checkbox" class="model-chk" checked onchange="syncModelCount(this)" />
+                <span class="shadcn-chk"></span>
+                <div class="model-info">
+                  <div class="model-id-row"><span class="model-id">deepseek-reasoner</span></div>
+                  <div class="model-desc">DeepSeek · 深度逻辑推演与表单校验推导</div>
+                </div>
+                <div class="model-tags"><span class="badge badge-neutral mono">128K</span><span class="badge badge-amber">推理</span></div>
+              </label>
+              <label class="model-row">
+                <input type="checkbox" class="model-chk" onchange="syncModelCount(this)" />
+                <span class="shadcn-chk"></span>
+                <div class="model-info">
+                  <div class="model-id-row"><span class="model-id">gpt-5-codex</span></div>
+                  <div class="model-desc">OpenAI · 交互脚本与状态机编写</div>
+                </div>
+                <div class="model-tags"><span class="badge badge-neutral mono">256K</span><span class="badge badge-neutral">API</span></div>
+              </label>
+            </div>
+          </div>
+          <div class="field-row">
+            <input class="input mono" id="customModelInp" style="flex:1" placeholder="输入自定义模型 ID（例如：qwen-coder-plus）..." />
+            <button class="btn btn-primary" onclick="addCustomModel()">+ 添加模型</button>
+          </div>
+        </div>
+
+        <div id="setSpec" style="display:none">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:8px">设计规范（AI 生成原型时遵循）</h3>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="seg">
+              <button class="seg-btn active">移动端规范</button>
+              <button class="seg-btn">PC 端规范</button>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="toast('支持导入本地 .md 规范文件')">+ 新增规范</button>
+          </div>
+          <div class="agent-grid">
+            <div class="agent-card active"><b>Ant Design Mobile · B2B</b><span style="font-size:12px;color:var(--muted-foreground)">默认移动端浅色精简规范</span></div>
+            <div class="agent-card"><b>shadcn/ui · New York</b><span style="font-size:12px;color:var(--muted-foreground)">高对比度中性极简工作台规范</span></div>
+          </div>
+        </div>
+
+        <div id="setSandbox" style="display:none">
+          <h3 style="font-size:14px;font-weight:600">沙箱与存储目录</h3>
+          <p class="mono" style="font-size:12px;margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--chrome)">%APPDATA%/原型工具/sandbox/</p>
+          <p style="font-size:12px;color:var(--muted-foreground);margin-top:8px">项目制隔离：一个项目一个沙箱文件夹，原型互相独立，每轮 AI 修改自动保存最多 10 份快照。</p>
+        </div>
+
+        <div id="setKbd" style="display:none">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:10px">快捷键一览</h3>
+          <div class="md">
+            <table>
+              <thead><tr><th>快捷键</th><th>作用范围与说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="kbd">Ctrl</span> + 单击</td><td>拾取或反选画布元素（单选进检查器，多选进批改）</td></tr>
+                <tr><td><span class="kbd">Ctrl</span> + <span class="kbd">Shift</span> + 单击</td><td>就地微编辑浮层</td></tr>
+                <tr><td><span class="kbd">Ctrl</span> + <span class="kbd">F</span></td><td>文档面板内唤起高亮搜索条</td></tr>
+                <tr><td><span class="kbd">Esc</span></td><td>退出拾取态或关闭栈顶弹窗</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="setAbout" style="display:none">
+          <h3 style="font-size:14px;font-weight:600">关于 PlanD 原型工具</h3>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center"><span class="badge badge-neutral mono">v1.2.0</span><span class="badge badge-cobalt">shadcn/ui Redesign</span></div>
+          <p style="font-size:12.5px;color:var(--muted-foreground);margin-top:10px;line-height:1.7">专注于极速交互、高保真原型与需求文档协同设计的本地优先 AI Agent 工作台，支持单文件离线分发与多协议大模型直连。</p>
+        </div>
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn btn-outline btn-sm" onclick="closeDialog('settingsDialog')">关闭</button>
+      <button class="btn btn-primary btn-sm" onclick="closeDialog('settingsDialog');toast('设置已保存并生效','ok')">保存并应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- API 配置弹窗 -->
+<div class="dialog-backdrop" id="apiProfileDialog">
+  <div class="dialog" style="max-width:480px">
+    <div class="sheet-head" style="padding:12px 16px"><div class="sheet-title">API 配置</div><button class="btn btn-ghost btn-icon" onclick="closeDialog('apiProfileDialog')">✕</button></div>
+    <div class="sheet-body">
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:4px">通信协议</div><select class="select" style="width:100%"><option>OpenAI 协议（兼容 DeepSeek / 百炼 / 中转）</option><option>Google Gemini 官方协议</option><option>Anthropic Claude 官方协议</option></select></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:4px">API Base URL</div><input class="input mono" style="width:100%" value="https://api.deepseek.com/v1" /></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:4px">API Key</div><div style="display:flex;gap:6px"><input class="input mono" type="password" id="apiKeyInp" style="flex:1" value="sk-demo-masked-key" /><button class="btn btn-outline btn-sm" onclick="const i=document.getElementById('apiKeyInp');i.type=i.type==='password'?'text':'password'">显示</button></div></div>
+      <div style="display:flex;align-items:center;gap:8px"><button class="btn btn-outline btn-sm" onclick="toast('连通性测试成功 (142ms)','ok')">测试连通性</button><span style="font-size:12px;color:var(--emerald)">● 200 OK</span></div>
+    </div>
+    <div class="sheet-foot"><button class="btn btn-outline btn-sm" onclick="closeDialog('apiProfileDialog')">取消</button><button class="btn btn-primary btn-sm" onclick="closeDialog('apiProfileDialog');toast('API 配置已保存','ok')">保存</button></div>
+  </div>
+</div>
+
+<!-- ══════════════ 6. Git 推送 / 拉取 & 仓库设置弹窗 ══════════════ -->
+<div class="dialog-backdrop" id="gitPushDialog">
+  <div class="dialog git-dialog">
+    <div class="sheet-head" style="padding:12px 16px">
+      <div>
+        <div class="sheet-title" id="gitDlgTitle">Git 上传发布</div>
+        <div style="font-size:12px;color:var(--muted-foreground);margin-top:2px">按项目与文件粒度勾选要同步的沙箱变更</div>
+      </div>
+      <button class="btn btn-ghost btn-icon" onclick="closeDialog('gitPushDialog')">✕</button>
+    </div>
+    <div class="sheet-body" style="gap:12px">
+      <div class="field-row">
+        <span style="font-size:12px;font-weight:600;white-space:nowrap" id="gitBranchLabel">目标分支</span>
+        <select class="select mono" style="width:148px"><option>main</option><option>feat/pland-v2</option></select>
+        <div class="input-search-wrap">
+          <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input class="input" placeholder="过滤变更文件名..." oninput="filterGitFiles(this.value)" />
+        </div>
+        <button class="btn btn-outline" onclick="selectGitScope('current')">仅选当前</button>
+        <button class="btn btn-outline" onclick="selectGitScope('all')">全选</button>
+        <button class="btn btn-ghost" onclick="selectGitScope('none')">清空</button>
+      </div>
+
+      <div class="git-tree" id="gitTree">
+        <div class="git-proj-box" data-current="1">
+          <div class="git-proj-hd" onclick="if(!event.target.closest('label'))toggleGitProjBox(this)">
+            <button type="button" class="git-proj-toggle" title="折叠/展开">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <label style="display:inline-flex;align-items:center;cursor:pointer" onclick="event.stopPropagation()">
+              <input type="checkbox" class="shadcn-chk-inp git-proj-chk" checked onchange="onGitProjCheck(this)" />
+              <span class="shadcn-chk"></span>
+            </label>
+            <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+            <span>投融资录入工作流</span>
+            <span class="badge badge-neutral">当前项目</span>
+            <span class="mono git-proj-stat" style="margin-left:auto;font-size:11.5px;color:var(--muted-foreground)">3 / 3</span>
+          </div>
+          <div class="git-proj-files">
+            <label class="git-file-row checked">
+              <input type="checkbox" class="shadcn-chk-inp git-file-chk" checked onchange="syncGitTreeState()" />
+              <span class="shadcn-chk"></span>
+              <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div class="git-file-meta">
+                <div class="git-file-path"><span class="git-file-dir">项目录入与首页/</span><span class="git-file-name">index.html</span></div>
+              </div>
+              <span class="git-diff-stat"><span class="git-diff-add">+42</span><span class="git-diff-del">-11</span></span>
+              <span class="badge badge-amber">修改</span>
+            </label>
+            <label class="git-file-row checked">
+              <input type="checkbox" class="shadcn-chk-inp git-file-chk" checked onchange="syncGitTreeState()" />
+              <span class="shadcn-chk"></span>
+              <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div class="git-file-meta">
+                <div class="git-file-path"><span class="git-file-dir">项目录入与首页/</span><span class="git-file-name">功能说明.md</span></div>
+              </div>
+              <span class="git-diff-stat"><span class="git-diff-add">+18</span><span class="git-diff-del">-4</span></span>
+              <span class="badge badge-amber">修改</span>
+            </label>
+            <label class="git-file-row checked">
+              <input type="checkbox" class="shadcn-chk-inp git-file-chk" checked onchange="syncGitTreeState()" />
+              <span class="shadcn-chk"></span>
+              <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div class="git-file-meta">
+                <div class="git-file-path"><span class="git-file-dir">项目录入与首页/</span><span class="git-file-name">audit.html</span></div>
+              </div>
+              <span class="git-diff-stat"><span class="git-diff-add">+164</span></span>
+              <span class="badge badge-emerald">新增</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="git-proj-box" data-current="0">
+          <div class="git-proj-hd" onclick="if(!event.target.closest('label'))toggleGitProjBox(this)">
+            <button type="button" class="git-proj-toggle" title="折叠/展开">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <label style="display:inline-flex;align-items:center;cursor:pointer" onclick="event.stopPropagation()">
+              <input type="checkbox" class="shadcn-chk-inp git-proj-chk" onchange="onGitProjCheck(this)" />
+              <span class="shadcn-chk"></span>
+            </label>
+            <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+            <span>企业尽调后台 v2</span>
+            <span class="mono git-proj-stat" style="margin-left:auto;font-size:11.5px;color:var(--muted-foreground)">0 / 2</span>
+          </div>
+          <div class="git-proj-files">
+            <label class="git-file-row">
+              <input type="checkbox" class="shadcn-chk-inp git-file-chk" onchange="syncGitTreeState()" />
+              <span class="shadcn-chk"></span>
+              <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div class="git-file-meta">
+                <div class="git-file-path"><span class="git-file-dir">尽调数据看板/</span><span class="git-file-name">dashboard.html</span></div>
+              </div>
+              <span class="git-diff-stat"><span class="git-diff-add">+27</span><span class="git-diff-del">-9</span></span>
+              <span class="badge badge-amber">修改</span>
+            </label>
+            <label class="git-file-row">
+              <input type="checkbox" class="shadcn-chk-inp git-file-chk" onchange="syncGitTreeState()" />
+              <span class="shadcn-chk"></span>
+              <svg class="ico ico-sm" style="color:var(--muted-foreground)" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div class="git-file-meta">
+                <div class="git-file-path"><span class="git-file-dir">尽调数据看板/</span><span class="git-file-name">legacy-chart.html</span></div>
+              </div>
+              <span class="git-diff-stat"><span class="git-diff-del">-86</span></span>
+              <span class="badge badge-rose">删除</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div id="gitMsgBox">
+        <div style="font-size:12px;font-weight:600;margin-bottom:5px">更新说明（Commit Message）</div>
+        <input class="input" style="width:100%" value="feat: 优化项目录入混合诉求规则与初审页面" />
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <span id="gitSelectedSummary" class="mono" style="margin-right:auto;font-size:12px;color:var(--muted-foreground)">已选 3 / 5 项变更</span>
+      <button class="btn btn-outline btn-sm" onclick="closeDialog('gitPushDialog')">取消</button>
+      <button class="btn btn-primary btn-sm" id="gitSubmitBtn" onclick="closeDialog('gitPushDialog');toast('已成功同步至远端 origin/main','ok')">确认上传</button>
+    </div>
+  </div>
+</div>
+
+<div class="dialog-backdrop" id="gitConfigDialog">
+  <div class="dialog" style="max-width:480px">
+    <div class="sheet-head" style="padding:12px 16px"><div class="sheet-title">Git 仓库设置</div><button class="btn btn-ghost btn-icon" onclick="closeDialog('gitConfigDialog')">✕</button></div>
+    <div class="sheet-body">
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:4px">远程仓库地址 (HTTPS)</div><input class="input mono" style="width:100%" value="https://codeup.aliyun.com/org/proto-sandbox.git" /></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><div style="font-size:12px;font-weight:600;margin-bottom:4px">默认分支</div><input class="input mono" style="width:100%" value="main" /></div>
+        <div><div style="font-size:12px;font-weight:600;margin-bottom:4px">用户名</div><input class="input" style="width:100%" value="product-team" /></div>
+      </div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:4px">访问令牌 (PAT)</div><input class="input mono" type="password" style="width:100%" placeholder="留空表示不更新已保存凭据" /></div>
+    </div>
+    <div class="sheet-foot"><button class="btn btn-outline btn-sm" onclick="toast('Git 远端连通正常','ok')">测试连通性</button><button class="btn btn-primary btn-sm" onclick="closeDialog('gitConfigDialog');toast('Git 仓库配置已保存','ok')">保存配置</button></div>
+  </div>
+</div>
+
+<!-- ══════════════ 7. 新建设计 / 文档快捷键 / 高危 AlertDialog ══════════════ -->
+<div class="dialog-backdrop" id="newProtoDialog">
+  <div class="dialog" style="max-width:400px">
+    <div class="sheet-head" style="padding:12px 16px"><div class="sheet-title">新建设计</div><button class="btn btn-ghost btn-icon" onclick="closeDialog('newProtoDialog')">✕</button></div>
+    <div class="sheet-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="agent-card" onclick="this.classList.add('active');this.nextElementSibling.classList.remove('active')"><b>PC 端</b><span style="font-size:12px;color:var(--muted-foreground)">大屏幕桌面布局</span></div>
+        <div class="agent-card active" onclick="this.classList.add('active');this.previousElementSibling.classList.remove('active')"><b>移动端</b><span style="font-size:12px;color:var(--muted-foreground)">手机竖屏布局</span></div>
+      </div>
+      <input class="input" placeholder="输入原型名称（≤60字）" style="width:100%" />
+    </div>
+    <div class="sheet-foot"><button class="btn btn-outline btn-sm" onclick="closeDialog('newProtoDialog')">取消</button><button class="btn btn-primary btn-sm" onclick="closeDialog('newProtoDialog');toast('已创建独立原型沙箱','ok')">创建并进入 AI 设计</button></div>
+  </div>
+</div>
+
+<div class="dialog-backdrop" id="docShortcutDialog">
+  <div class="dialog" style="max-width:480px">
+    <div class="sheet-head" style="padding:12px 16px"><div class="sheet-title">文档编辑快捷键</div><button class="btn btn-ghost btn-icon" onclick="closeDialog('docShortcutDialog')">✕</button></div>
+    <div class="sheet-body">
+      <div class="md">
+        <table>
+          <thead><tr><th>快捷键</th><th>功能</th></tr></thead>
+          <tbody>
+            <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">S</span></td><td>原地保存（不退出编辑）</td></tr>
+            <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">B</span> / <span class="kbd">I</span></td><td>粗体 / 斜体</td></tr>
+            <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1~3</span></td><td>一级至三级标题</td></tr>
+            <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">T</span></td><td>任务列表</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sheet-foot"><button class="btn btn-primary btn-sm" onclick="closeDialog('docShortcutDialog')">关闭</button></div>
+  </div>
+</div>
+
+<div class="dialog-backdrop" id="alertDialogDemo">
+  <div class="dialog alert-dialog">
+    <div>
+      <div style="font-size:15px;font-weight:600">确认强制覆盖远端分支？</div>
+      <p style="font-size:12.5px;color:var(--muted-foreground);margin-top:4px">此操作将改写远程仓库提交历史且不可恢复，请谨慎确认。</p>
+    </div>
+    <div class="alert-box">
+      <svg class="ico ico-sm" style="flex:none;margin-top:2px" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <span>影响分支：<b class="mono">origin/main</b>（将覆盖远端落后提交）</span>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:500;margin-bottom:4px">键入分支名 <span class="mono">main</span> 以确认</div>
+      <input class="input mono" style="width:100%" placeholder="main" />
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px">
+      <button class="btn btn-outline btn-sm" onclick="closeDialog('alertDialogDemo')">取消</button>
+      <button class="btn btn-destructive btn-sm" onclick="closeDialog('alertDialogDemo');toast('已执行强制覆盖演示')">确认强制覆盖</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<div class="tour-pill">
+  <span style="opacity:.75;margin-right:4px">速览:</span>
+  <button class="hl" onclick="setDeviceKind(curKind==='mobile'?'pc':'mobile')">切换移动/PC看文档抽屉差异</button>
+  <button onclick="togglePickMode(true)">Ctrl 拾取</button>
+  <button onclick="openInspector('req')">检查器</button>
+  <button onclick="openDialog('aiDialog')">AI 工作台</button>
+  <button onclick="openDialog('settingsDialog')">设置</button>
+  <button onclick="this.parentElement.style.display='none'" title="隐藏">✕</button>
+</div>
+
+<script>
+  /* ── Popover / ContextMenu ── */
+  function closeAllPops() {
+    document.querySelectorAll('.menu-pop, .ctx-pop').forEach(p => p.classList.remove('open'));
+    const cp = document.getElementById('modelCascaderPop');
+    if (cp) cp.classList.remove('open');
+  }
+  function bindPop(btnId, popId) {
+    const btn = document.getElementById(btnId), pop = document.getElementById(popId);
+    if (!btn || !pop) return;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const was = pop.classList.contains('open');
+      closeAllPops();
+      if (!was) pop.classList.add('open');
+    };
+  }
+  bindPop('btnProjPop', 'projPop');
+  bindPop('btnGitPop', 'gitPop');
+  bindPop('btnExportPop', 'exportPop');
+  bindPop('btnDocExportPop', 'docExportPop');
+  bindPop('btnModelCascader', 'modelCascaderPop');
+  document.addEventListener('click', closeAllPops);
+
+  function filterProjList(q) {
+    const kw = (q || '').trim().toLowerCase();
+    document.querySelectorAll('.proj-opt').forEach(el => {
+      el.style.display = !kw || el.dataset.proj.toLowerCase().includes(kw) ? 'flex' : 'none';
+    });
+  }
+  document.querySelectorAll('.proj-opt').forEach(el => {
+    el.onclick = () => {
+      document.getElementById('curProjLabel').textContent = el.dataset.proj;
+      document.querySelectorAll('.proj-opt .mi-check').forEach(c => c.remove());
+      const ck = document.createElement('span'); ck.className = 'mi-check'; ck.textContent = '✓';
+      el.appendChild(ck);
+      closeAllPops();
+      toast('已切换项目：' + el.dataset.proj, 'ok');
+    };
+  });
+
+  /* Context Menu & Inline Rename */
+  let ctxTargetEl = null;
+  function openCtxMenu(e, itemEl) {
+    e.preventDefault(); e.stopPropagation();
+    closeAllPops();
+    ctxTargetEl = itemEl;
+    const m = document.getElementById('sbCtxMenu');
+    m.style.left = Math.min(e.clientX, window.innerWidth - 190) + 'px';
+    m.style.top = Math.min(e.clientY, window.innerHeight - 160) + 'px';
+    m.classList.add('open');
+  }
+  function ctxRename() {
+    closeAllPops();
+    if (ctxTargetEl) startInlineRename(ctxTargetEl);
+  }
+  function toggleFolderGroup(btn) {
+    const ch = btn.nextElementSibling;
+    const chev = btn.querySelector('.sb-chevron');
+    const hide = ch.style.display !== 'none';
+    ch.style.display = hide ? 'none' : 'flex';
+    if (chev) chev.style.transform = hide ? 'rotate(-90deg)' : '';
+  }
+
+  function startInlineRename(el) {
+    const span = el.querySelector('.sb-item-name');
+    if (!span || el.querySelector('.sb-rename-inp')) return;
+    const dragHost = el.closest('[draggable="true"]');
+    if (dragHost) dragHost.setAttribute('draggable', 'false');
+    const oldVal = span.textContent;
+    const inp = document.createElement('input');
+    inp.className = 'sb-rename-inp'; inp.value = oldVal;
+    span.style.display = 'none';
+    span.parentElement.insertBefore(inp, span.nextSibling);
+    inp.focus(); inp.select();
+    const finish = (save) => {
+      const nv = inp.value.trim();
+      if (save && nv && nv !== oldVal) { span.textContent = nv; toast('已重命名为「' + nv + '」', 'ok'); }
+      inp.remove(); span.style.display = '';
+      if (dragHost) dragHost.setAttribute('draggable', 'true');
+    };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); };
+    inp.onblur = () => finish(true);
+  }
+
+  /* ── Sidebar & Mobile-Squeeze vs PC-Overlay Docs Panel ── */
+  let curKind = 'mobile';
+  let mobileDocsOpen = true;
+  let pcDocsOpen = false;
+  let activeDocTab = 'desc';
+
+  function toggleSidebar() {
+    const sb = document.getElementById('sidebar');
+    sb.classList.toggle('collapsed');
+    document.getElementById('miniDock').classList.toggle('show', sb.classList.contains('collapsed'));
+    setTimeout(updateViewportScale, 210);
+  }
+  document.getElementById('btnToggleSb').onclick = toggleSidebar;
+
+  function syncDocsPresentation() {
+    const panel = document.getElementById('docsPanel');
+    const closeBtn = document.getElementById('btnClosePcDocs');
+    const hint = document.getElementById('stageModeHint');
+    if (curKind === 'pc') {
+      document.body.classList.add('kind-pc');
+      panel.classList.remove('mobile-hidden');
+      document.body.classList.toggle('docs-open', pcDocsOpen);
+      closeBtn.style.display = 'inline-flex';
+      hint.textContent = 'PC态：文档为右侧独立悬浮弹窗（不挤压原型）';
+    } else {
+      document.body.classList.remove('kind-pc', 'docs-open');
+      panel.classList.toggle('mobile-hidden', !mobileDocsOpen);
+      closeBtn.style.display = 'none';
+      hint.textContent = '移动态 · 375×780 视窗自适应（无需滚轮查看上下）';
+    }
+    document.getElementById('btnToggleDocs').className = ((curKind === 'mobile' && mobileDocsOpen && activeDocTab === 'desc') || (curKind === 'pc' && pcDocsOpen && activeDocTab === 'desc')) ? 'btn btn-secondary btn-sm' : 'btn btn-outline btn-sm';
+    document.getElementById('btnToggleReq').className = ((curKind === 'mobile' && mobileDocsOpen && activeDocTab === 'req') || (curKind === 'pc' && pcDocsOpen && activeDocTab === 'req')) ? 'btn btn-secondary btn-sm' : 'btn btn-outline btn-sm';
+    requestAnimationFrame(updateViewportScale);
+  }
+
+  function toggleDocsPanel(tab) {
+    if (curKind === 'pc') {
+      if (pcDocsOpen && activeDocTab === tab) pcDocsOpen = false;
+      else { pcDocsOpen = true; switchDocTab(tab); }
+    } else {
+      if (mobileDocsOpen && activeDocTab === tab) mobileDocsOpen = false;
+      else { mobileDocsOpen = true; switchDocTab(tab); }
+    }
+    syncDocsPresentation();
+  }
+  function closePcDocs() { pcDocsOpen = false; syncDocsPresentation(); }
+
+  function setDeviceKind(kind) {
+    curKind = kind;
+    document.getElementById('btnKindMobile').classList.toggle('active', kind === 'mobile');
+    document.getElementById('btnKindPc').classList.toggle('active', kind === 'pc');
+    const frame = document.getElementById('deviceFrame');
+    frame.className = kind === 'pc' ? 'device-pc' : 'device-mobile';
+    document.getElementById('mobileTopBar').style.display = kind === 'pc' ? 'none' : 'flex';
+    document.getElementById('pcTopBar').style.display = kind === 'pc' ? 'flex' : 'none';
+    if (kind === 'pc') { pcDocsOpen = false; }
+    else { mobileZoomMode = 'fit'; }
+    syncDocsPresentation();
+  }
+
+  function toggleToc() {
+    const toc = document.getElementById('docToc'), panel = document.getElementById('docsPanel');
+    const show = !toc.classList.contains('show');
+    toc.classList.toggle('show', show);
+    panel.classList.toggle('with-toc', show);
+  }
+  function toggleDocSearch() { document.getElementById('docSearch').classList.toggle('show'); }
+  function switchDocTab(mode) {
+    activeDocTab = mode;
+    document.getElementById('tabDocDesc').classList.toggle('active', mode === 'desc');
+    document.getElementById('tabDocReq').classList.toggle('active', mode === 'req');
+    document.querySelector('#docMarkdown h1').textContent = mode === 'desc' ? '项目录入与首页 · 功能说明' : '最新需求 · 当前迭代';
+    syncDocsPresentation();
+  }
+  function toggleDocEdit(editing, cancelled) {
+    document.getElementById('docReadView').style.display = editing ? 'none' : 'block';
+    document.getElementById('docEditView').style.display = editing ? 'block' : 'none';
+    document.getElementById('btnEditDoc').style.display = editing ? 'none' : 'inline-flex';
+    document.getElementById('btnCancelDoc').style.display = editing ? 'inline-flex' : 'none';
+    document.getElementById('btnSaveDoc').style.display = editing ? 'inline-flex' : 'none';
+    if (!editing && !cancelled) toast('文档已保存到本地沙箱', 'ok');
+  }
+
+  let activeMicroBlock = null;
+  function openDocMicro(btn) {
+    activeMicroBlock = btn.parentElement;
+    const p = activeMicroBlock.querySelector('p, ul');
+    const pop = document.getElementById('docMicroPop');
+    document.getElementById('docMicroInput').value = p ? p.innerText.trim() : '';
+    const r = btn.getBoundingClientRect();
+    pop.style.left = Math.max(16, r.left - 240) + 'px';
+    pop.style.top = (r.bottom + 6) + 'px';
+    pop.classList.add('open');
+  }
+  function saveDocMicro() {
+    if (activeMicroBlock) {
+      const p = activeMicroBlock.querySelector('p');
+      if (p) p.textContent = document.getElementById('docMicroInput').value;
+    }
+    document.getElementById('docMicroPop').classList.remove('open');
+    toast('已就地更新该段落并写盘', 'ok');
+  }
+
+  /* ── Fixed Mobile Viewport (375×780) + Browser Auto-Fit Scaling ── */
+  const MOBILE_VP_W = 375, MOBILE_VP_H = 780;
+  let mobileZoomMode = 'fit';
+  let manualZoomPct = 95;
+
+  function computeMobileFitScale() {
+    const sc = document.getElementById('stageScroll');
+    if (!sc) return 0.9;
+    const availW = Math.max(200, sc.clientWidth - 40);
+    const availH = Math.max(260, sc.clientHeight - 66);
+    const raw = Math.min(availW / MOBILE_VP_W, availH / MOBILE_VP_H);
+    return Math.max(0.45, Math.min(1.1, raw));
+  }
+
+  function updateViewportScale() {
+    const stageScroll = document.getElementById('stageScroll');
+    const stageBox = document.getElementById('deviceStageBox');
+    const wrap = document.getElementById('deviceWrap');
+    const fitBtn = document.getElementById('btnZoomFit');
+    const zoomInp = document.getElementById('zoomInput');
+    const zoomSel = document.getElementById('zoomSelect');
+    if (!stageScroll || !stageBox || !wrap) return;
+
+    if (curKind === 'pc') {
+      stageScroll.classList.remove('fit-active');
+      stageBox.style.width = '';
+      stageBox.style.height = '';
+      wrap.style.transform = 'none';
+      fitBtn.classList.remove('active');
+      zoomInp.value = '100';
+      return;
+    }
+
+    const scale = mobileZoomMode === 'fit' ? computeMobileFitScale() : (manualZoomPct / 100);
+    const pct = Math.round(scale * 100);
+    stageBox.style.width = Math.round(MOBILE_VP_W * scale) + 'px';
+    stageBox.style.height = Math.round(MOBILE_VP_H * scale) + 'px';
+    wrap.style.transform = `scale(${scale.toFixed(4)})`;
+    stageScroll.classList.toggle('fit-active', mobileZoomMode === 'fit');
+    fitBtn.classList.toggle('active', mobileZoomMode === 'fit');
+    zoomInp.value = String(pct);
+    zoomSel.value = mobileZoomMode === 'fit' ? 'fit' : ([75,85,95,100,115].includes(manualZoomPct) ? String(manualZoomPct) : 'fit');
+  }
+
+  function setZoomMode(modeOrPct) {
+    if (modeOrPct === 'fit') {
+      mobileZoomMode = 'fit';
+    } else {
+      mobileZoomMode = 'manual';
+      manualZoomPct = Math.max(45, Math.min(150, parseInt(modeOrPct, 10) || 95));
+    }
+    updateViewportScale();
+  }
+
+  document.getElementById('zoomSelect').onchange = e => setZoomMode(e.target.value);
+  document.getElementById('zoomInput').onchange = e => setZoomMode(e.target.value);
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => updateViewportScale()).observe(document.getElementById('stageScroll'));
+  }
+  window.addEventListener('resize', updateViewportScale);
+
+  /* ── Sidebar Tree Selection & 3-Level Drag-and-Drop Reorder ── */
+  function selectProto(btn, name, sub) {
+    document.querySelectorAll('.sb-item').forEach(x => x.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('curProtoLabel').textContent = name;
+    document.getElementById('curSubLabel').textContent = sub;
+  }
+  function selectSub(btn, sub) {
+    document.querySelectorAll('.sb-sub').forEach(x => x.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('curSubLabel').textContent = sub;
+  }
+
+  (function initSidebarDnD() {
+    const tree = document.getElementById('sbTree');
+    let dragEl = null, dragType = '';
+
+    function clearMarkers() {
+      tree.querySelectorAll('.drop-before,.drop-after,.drop-into').forEach(el => {
+        el.classList.remove('drop-before', 'drop-after', 'drop-into');
+      });
+    }
+
+    tree.addEventListener('dragstart', (e) => {
+      const target = e.target.closest('.sb-sub, .sb-proto-node, .sb-folder');
+      if (!target) return;
+      e.stopPropagation();
+      dragEl = target;
+      dragType = target.classList.contains('sb-sub') ? 'sub' : target.classList.contains('sb-proto-node') ? 'proto' : 'folder';
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragType);
+      requestAnimationFrame(() => dragEl && dragEl.classList.add('is-dragging'));
+    });
+
+    tree.addEventListener('dragend', () => {
+      if (dragEl) dragEl.classList.remove('is-dragging');
+      dragEl = null; dragType = '';
+      clearMarkers();
+    });
+
+    tree.addEventListener('dragover', (e) => {
+      if (!dragEl) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearMarkers();
+
+      if (dragType === 'folder') {
+        const targetFolder = e.target.closest('.sb-folder');
+        if (!targetFolder || targetFolder === dragEl) return;
+        const r = targetFolder.getBoundingClientRect();
+        targetFolder.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+      } else if (dragType === 'proto') {
+        const targetProto = e.target.closest('.sb-proto-node');
+        if (targetProto && targetProto !== dragEl) {
+          const r = targetProto.getBoundingClientRect();
+          targetProto.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+          return;
+        }
+        const targetFolder = e.target.closest('.sb-folder');
+        if (targetFolder) {
+          const btn = targetFolder.querySelector('.sb-grp-btn');
+          if (btn) btn.classList.add('drop-into');
+        }
+      } else if (dragType === 'sub') {
+        const targetSub = e.target.closest('.sb-sub');
+        if (!targetSub || targetSub === dragEl || targetSub.parentElement !== dragEl.parentElement) return;
+        const r = targetSub.getBoundingClientRect();
+        targetSub.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+      }
+    });
+
+    tree.addEventListener('drop', (e) => {
+      if (!dragEl) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (dragType === 'folder') {
+        const targetFolder = e.target.closest('.sb-folder');
+        if (targetFolder && targetFolder !== dragEl) {
+          const r = targetFolder.getBoundingClientRect();
+          const before = e.clientY < r.top + r.height / 2;
+          tree.insertBefore(dragEl, before ? targetFolder : targetFolder.nextSibling);
+          toast('已调整文件夹顺序', 'ok');
+        }
+      } else if (dragType === 'proto') {
+        const targetProto = e.target.closest('.sb-proto-node');
+        if (targetProto && targetProto !== dragEl) {
+          const r = targetProto.getBoundingClientRect();
+          const before = e.clientY < r.top + r.height / 2;
+          targetProto.parentElement.insertBefore(dragEl, before ? targetProto : targetProto.nextSibling);
+          toast('已调整一级原型顺序', 'ok');
+        } else {
+          const targetFolder = e.target.closest('.sb-folder');
+          const box = targetFolder && targetFolder.querySelector('.sb-grp-children');
+          if (box && dragEl.parentElement !== box) {
+            box.style.display = 'flex';
+            box.appendChild(dragEl);
+            toast('已移动原型至目标文件夹', 'ok');
+          }
+        }
+      } else if (dragType === 'sub') {
+        const targetSub = e.target.closest('.sb-sub');
+        if (targetSub && targetSub !== dragEl && targetSub.parentElement === dragEl.parentElement) {
+          const r = targetSub.getBoundingClientRect();
+          const before = e.clientY < r.top + r.height / 2;
+          targetSub.parentElement.insertBefore(dragEl, before ? targetSub : targetSub.nextSibling);
+          toast('已调整二级页面顺序', 'ok');
+        }
+      }
+      clearMarkers();
+    });
+  })();
+
+  /* ── Ctrl Pick Mode & Inline Edit Mode ── */
+  let pickActive = false, inlineActive = false, inlineTargetEl = null;
+  const pickedList = [];
+
+  function setPickMode(on) {
+    pickActive = on;
+    if (on) setInlineMode(false);
+    document.getElementById('stage').classList.toggle('pick-active', on);
+    document.getElementById('pickBanner').classList.toggle('show', on || inlineActive);
+    document.getElementById('pickBannerText').innerHTML = '<b>拾取模式</b> · 单击元素打开检查器，连续点选批量修改';
+    if (!on) {
+      document.querySelectorAll('.proto-el.picked').forEach(e => e.classList.remove('picked'));
+      pickedList.length = 0;
+      renderPickBar();
+    }
+  }
+  function setInlineMode(on) {
+    inlineActive = on;
+    if (on) setPickMode(false);
+    document.getElementById('stage').classList.toggle('inline-active', on);
+    document.getElementById('pickBanner').classList.toggle('show', on || pickActive);
+    if (on) document.getElementById('pickBannerText').innerHTML = '<b>就地改模式</b> · 点击画布文本/按钮直接修改并写盘';
+    if (!on) closeInlinePop();
+  }
+  function togglePickMode(forceOn) { setPickMode(forceOn === true ? true : !pickActive); }
+  function toggleInlineMode() { setInlineMode(!inlineActive); }
+
+  function renderPickBar() {
+    const bar = document.getElementById('pickBar'), tags = document.getElementById('pickTags');
+    tags.innerHTML = '';
+    pickedList.forEach((sel, idx) => {
+      const sp = document.createElement('span');
+      sp.className = 'pick-tag';
+      sp.innerHTML = `${sel} <button onclick="removePicked(${idx})">✕</button>`;
+      tags.appendChild(sp);
+    });
+    const multi = pickedList.length >= 2;
+    document.getElementById('btnMultiBatch').style.display = multi ? 'inline-flex' : 'none';
+    document.getElementById('btnPickAnno').style.display = multi ? 'none' : 'inline-flex';
+    document.getElementById('btnPickJump').style.display = multi ? 'none' : 'inline-flex';
+    bar.classList.toggle('show', pickedList.length > 0);
+  }
+  function removePicked(idx) {
+    const sel = pickedList[idx];
+    pickedList.splice(idx, 1);
+    document.querySelectorAll('.proto-el').forEach(e => { if (e.dataset.sel === sel) e.classList.remove('picked'); });
+    renderPickBar();
+  }
+  document.querySelectorAll('.proto-el').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (inlineActive || (e.ctrlKey && e.shiftKey)) {
+        e.stopPropagation();
+        openInlinePop(el, e);
+        return;
+      }
+      if (!pickActive && !e.ctrlKey && !e.metaKey) return;
+      e.stopPropagation();
+      const sel = el.dataset.sel;
+      const i = pickedList.indexOf(sel);
+      if (i >= 0) { pickedList.splice(i, 1); el.classList.remove('picked'); }
+      else { pickedList.push(sel); el.classList.add('picked'); }
+      if (!pickActive) setPickMode(true);
+      renderPickBar();
+    });
+  });
+
+  function openInlinePop(el, ev) {
+    inlineTargetEl = el;
+    const pop = document.getElementById('inlineEditPop');
+    document.getElementById('inlineSelLabel').textContent = el.dataset.sel;
+    const txNode = el.classList.contains('proto-editable') ? el : (el.querySelector('.proto-editable') || el);
+    document.getElementById('inlineEditInput').value = txNode.childNodes[0] ? txNode.childNodes[0].textContent.trim() : txNode.textContent.trim();
+    pop.style.left = Math.min(ev.clientX, window.innerWidth - 310) + 'px';
+    pop.style.top = Math.min(ev.clientY + 12, window.innerHeight - 140) + 'px';
+    pop.classList.add('open');
+    document.getElementById('inlineEditInput').focus();
+  }
+  function closeInlinePop() { document.getElementById('inlineEditPop').classList.remove('open'); }
+  function applyInlineEdit() {
+    if (inlineTargetEl) {
+      const val = document.getElementById('inlineEditInput').value;
+      const txNode = inlineTargetEl.classList.contains('proto-editable') ? inlineTargetEl : (inlineTargetEl.querySelector('.proto-editable') || inlineTargetEl);
+      if (txNode.childNodes[0] && txNode.childNodes[0].nodeType === 3) txNode.childNodes[0].textContent = val + ' ';
+      else txNode.textContent = val;
+      toast('已就地修改并静默写盘', 'ok');
+    }
+    closeInlinePop();
+  }
+  document.getElementById('inlineEditInput').onkeydown = (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) applyInlineEdit();
+    else if (e.key === 'Escape') closeInlinePop();
+  };
+
+  function addPickToQueue() {
+    const c = document.getElementById('topQueueCount');
+    c.textContent = parseInt(c.textContent, 10) + 1;
+    toast(`已将 ${pickedList.length} 个元素需求加入待提交列表`, 'ok');
+    setPickMode(false);
+  }
+
+  /* ── Right Sheets (Inspector / MultiEdit / Queue / Anno / Links) ── */
+  function openSheet(title, sub, bodyHtml, footHtml) {
+    document.getElementById('sheetTitle').textContent = title;
+    document.getElementById('sheetSub').textContent = sub;
+    document.getElementById('sheetBody').innerHTML = bodyHtml;
+    document.getElementById('sheetFoot').innerHTML = footHtml || '';
+    document.getElementById('sheetFoot').style.display = footHtml ? 'flex' : 'none';
+    document.getElementById('sheetBackdrop').classList.add('open');
+    document.getElementById('rightSheet').classList.add('open');
+  }
+  function closeSheet() {
+    document.getElementById('sheetBackdrop').classList.remove('open');
+    document.getElementById('rightSheet').classList.remove('open');
+  }
+  function openInspector(defaultSec) {
+    const sel = pickedList[0] || 'button.btn-submit-audit';
+    openSheet('元素检查器', '单选配置修改需求、跳转交互或需求标注', `
+      <div class="insp-sel-bar"><span>${sel}</span><button class="btn btn-ghost btn-sm" style="height:22px" onclick="toast('已复制选择器')">复制</button></div>
+      <div class="acc-card amber ${defaultSec==='req'?'open':''}">
+        <button class="acc-hd" onclick="this.parentElement.classList.toggle('open')">
+          <span>修改需求</span><span class="badge badge-amber" style="margin-left:auto">草稿 · 待提交</span>
+        </button>
+        <div class="acc-bd">
+          <textarea class="textarea" style="width:100%;min-height:76px" placeholder="描述要把该元素改成什么...">将按钮圆角改为 8px，增加提交前二次校验状态提示。</textarea>
+          <button class="btn btn-primary btn-sm" style="width:100%;margin-top:8px" onclick="toast('已加入待提交列表','ok');closeSheet()">加入待提交列表</button>
+        </div>
+      </div>
+      <div class="acc-or">或者</div>
+      <div class="acc-card emerald ${defaultSec==='jump'?'open':''}">
+        <button class="acc-hd" onclick="this.parentElement.classList.toggle('open')">
+          <span>跳转交互</span><span class="badge badge-emerald" style="margin-left:auto">已绑定 · audit.html</span>
+        </button>
+        <div class="acc-bd">
+          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">点击该元素时跳转到：</div>
+          <select class="select" style="width:100%"><option>audit.html (审批确认)</option><option>detail.html (企业详情)</option></select>
+        </div>
+      </div>
+      <div class="acc-or">或者</div>
+      <div class="acc-card sky ${defaultSec==='anno'?'open':''}">
+        <button class="acc-hd" onclick="this.parentElement.classList.toggle('open')">
+          <span>需求标注</span><span class="badge badge-cobalt" style="margin-left:auto">标注 #2</span>
+        </button>
+        <div class="acc-bd">
+          <textarea class="textarea" style="width:100%;min-height:72px">提交前校验必填项「企业性质」与「融资轮次」，缺失时顶部 Toast 提示。</textarea>
+          <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:8px">
+            <button class="btn btn-primary btn-sm" onclick="toast('标注已保存','ok')">保存标注</button>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+  function openMultiEditDrawer() {
+    const chips = pickedList.map(s => `<span class="pick-tag">${s}</span>`).join('');
+    const rows = pickedList.map(s => `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--chrome)"><div class="mono" style="font-size:11.5px;color:var(--cobalt);margin-bottom:6px">${s}</div><textarea class="textarea" style="width:100%;min-height:50px" placeholder="针对该元素的独立修改要求..."></textarea></div>`).join('');
+    openSheet(`多元素批量修改（已选 ${pickedList.length} 个）`, '支持统一修改或逐个分别指定要求', `
+      <div class="seg" style="align-self:flex-start">
+        <button class="seg-btn active" onclick="this.classList.add('active');this.nextElementSibling.classList.remove('active');document.getElementById('meBatch').style.display='flex';document.getElementById('meIndiv').style.display='none'">批量统一修改</button>
+        <button class="seg-btn" onclick="this.classList.add('active');this.previousElementSibling.classList.remove('active');document.getElementById('meBatch').style.display='none';document.getElementById('meIndiv').style.display='flex'">分别独立修改</button>
+      </div>
+      <div id="meBatch" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;flex-wrap:wrap;gap:5px">${chips}</div>
+        <textarea class="textarea" style="width:100%;min-height:110px" placeholder="输入针对以上元素的统一修改诉求（例如：统一字体调大至 15px，圆角 8px）..."></textarea>
+      </div>
+      <div id="meIndiv" style="display:none;flex-direction:column;gap:8px">${rows}</div>
+    `, `<button class="btn btn-outline btn-sm" onclick="closeSheet()">取消</button><button class="btn btn-primary btn-sm" onclick="closeSheet();openDialog('aiDialog');toast('已提交批量需求给 AI','ok')">提交给 AI 修改</button>`);
+  }
+  document.getElementById('btnOpenQueue').onclick = () => {
+    openSheet('待提交修改列表', '勾选后统一发送给大模型批量精准修改', `
+      <div class="acc-card" style="padding:10px 12px;border-left-width:1px"><div style="display:flex;justify-content:space-between"><span class="mono" style="font-size:12px;color:var(--cobalt)">button#btnNewDeal</span><span class="badge badge-neutral">index.html</span></div><div style="font-size:12.5px;margin-top:4px">按钮文案改为「新增项目」，图标换成加号。</div></div>
+      <div class="acc-card" style="padding:10px 12px;border-left-width:1px"><div style="display:flex;justify-content:space-between"><span class="mono" style="font-size:12px;color:var(--cobalt)">section.deal-card#d9</span><span class="badge badge-neutral">index.html</span></div><div style="font-size:12.5px;margin-top:4px">隐藏「政府」混合标签，仅保留主诉求。</div></div>
+    `, `<button class="btn btn-outline btn-sm" onclick="closeSheet()">清空</button><button class="btn btn-primary btn-sm" onclick="closeSheet();openDialog('aiDialog');toast('已带入 AI 对话框准备执行','ok')">提交给 AI 修改</button>`);
+  };
+  document.getElementById('btnOpenAnnos').onclick = () => {
+    openSheet('需求标注总览', '管理本原型画布上的全部需求注释角标', `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--chrome)">
+        <span style="font-weight:600;font-size:12.5px">画布显示标注角标</span>
+        <div class="switch on" onclick="this.classList.toggle('on');document.getElementById('protoBody').classList.toggle('anno-hidden',!this.classList.contains('on'))"></div>
+      </div>
+      <div class="acc-card sky open"><div class="acc-hd"><span>#1 · 新增入口权限</span><span class="badge badge-cobalt" style="margin-left:auto">button#btnNewDeal</span></div><div class="acc-bd" style="font-size:12px;color:var(--muted-foreground)">仅投资经理及以上角色可见，点击跳转表单页。</div></div>
+      <div class="acc-card sky open"><div class="acc-hd"><span>#2 · 审批流转校验</span><span class="badge badge-cobalt" style="margin-left:auto">button.btn-submit-audit</span></div><div class="acc-bd" style="font-size:12px;color:var(--muted-foreground)">提交前校验必填项，缺失时 Toast 提示。</div></div>
+    `);
+  };
+  document.getElementById('btnOpenLinks').onclick = () => {
+    openSheet('跳转交互管理', '已绑定的原型页面点击跳转关系', `
+      <div class="acc-card emerald open"><div class="acc-hd"><span>button.btn-detail → detail.html</span></div><div class="acc-bd" style="font-size:12px;color:var(--muted-foreground)">点击「查看详情」卡片按钮时自动切换子页面。</div></div>
+      <div class="acc-card emerald open"><div class="acc-hd"><span>button.btn-submit-audit → audit.html</span></div><div class="acc-bd" style="font-size:12px;color:var(--muted-foreground)">点击「提交初审」跳转确认页。</div></div>
+    `);
+  };
+
+  /* ── Dialogs, Cascader, Streaming Chat, Settings, Git ── */
+  function openDialog(id) { document.getElementById(id).classList.add('open'); }
+  function closeDialog(id) { document.getElementById(id).classList.remove('open'); }
+  function switchAiTab(tab) {
+    document.getElementById('aiTabChat').classList.toggle('active', tab === 'chat');
+    document.getElementById('aiTabTrace').classList.toggle('active', tab === 'trace');
+    document.getElementById('aiChatPane').style.display = tab === 'chat' ? 'flex' : 'none';
+    document.getElementById('aiTracePane').style.display = tab === 'trace' ? 'flex' : 'none';
+  }
+  function switchQTab(btn, paneId) {
+    btn.parentElement.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('qp1').style.display = paneId === 'qp1' ? 'flex' : 'none';
+    document.getElementById('qp2').style.display = paneId === 'qp2' ? 'flex' : 'none';
+  }
+  function pickQOpt(opt) {
+    opt.parentElement.querySelectorAll('.q-opt').forEach(o => o.classList.remove('selected'));
+    opt.classList.add('selected');
+  }
+  function resolvePerm(txt, cls) {
+    const b = document.getElementById('permStateBadge');
+    b.textContent = txt; b.className = 'badge ' + cls;
+    toast('ACP 权限反馈已回执：' + txt, 'ok');
+  }
+  let hoverModel = 'claude-sonnet-4';
+  function previewEfforts(m) {
+    hoverModel = m;
+    document.getElementById('effortColTitle').textContent = m.split('-')[0] + ' 强度';
+  }
+  function setModel(m, e) {
+    document.getElementById('curModelLabel').textContent = m;
+    document.getElementById('curEffortLabel').textContent = e;
+    closeAllPops();
+  }
+  function sendMockChat() {
+    const inp = document.getElementById('aiComposerInput'), stream = document.getElementById('aiStream');
+    const txt = inp.value.trim() || '帮我把顶部「新增录入」按钮改成深墨黑风格';
+    inp.value = '';
+    const u = document.createElement('div'); u.className = 'ai-u-row';
+    u.innerHTML = `<div class="ai-u-bubble"></div>`; u.firstChild.textContent = txt;
+    stream.appendChild(u);
+    const ans = document.createElement('div'); ans.className = 'ai-answer';
+    ans.textContent = '收到！已定位到目标元素并完成 shadcn 风格适配，画布已自动热刷新。';
+    setTimeout(() => { stream.appendChild(ans); stream.scrollTop = stream.scrollHeight; }, 260);
+    stream.scrollTop = stream.scrollHeight;
+  }
+  document.getElementById('aiComposerInput').onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMockChat(); }
+  };
+
+  function switchSetTab(btn, paneId) {
+    document.querySelectorAll('.settings-nav-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    ['setAgent','setModels','setSpec','setSandbox','setKbd','setAbout'].forEach(id => {
+      document.getElementById(id).style.display = id === paneId ? 'block' : 'none';
+    });
+  }
+  function switchEngine(eng) {
+    document.getElementById('engCliBtn').classList.toggle('active', eng === 'cli');
+    document.getElementById('engApiBtn').classList.toggle('active', eng === 'api');
+    document.getElementById('cliMatrixPane').style.display = eng === 'cli' ? 'block' : 'none';
+    document.getElementById('apiMatrixPane').style.display = eng === 'api' ? 'block' : 'none';
+  }
+  function pickPrimaryAgent(card, name) {
+    document.querySelectorAll('#cliMatrixPane .agent-card').forEach(c => c.classList.remove('active'));
+    card.classList.add('active');
+    document.getElementById('aiCurAgentBadge').textContent = name;
+    toast('已切换主力 Agent：' + name, 'ok');
+  }
+  function filterModels(q) {
+    const kw = (q || '').trim().toLowerCase();
+    document.querySelectorAll('#modelListBox .model-row').forEach(r => {
+      r.style.display = !kw || r.innerText.toLowerCase().includes(kw) ? 'flex' : 'none';
+    });
+  }
+  function syncModelCount(chk) {
+    if (chk) chk.closest('.model-row').classList.toggle('checked', chk.checked);
+    const all = document.querySelectorAll('#modelListBox .model-chk');
+    const checked = [...all].filter(c => c.checked).length;
+    const badge = document.getElementById('modelSelectedBadge');
+    if (badge) badge.textContent = `已启用 ${checked} / ${all.length}`;
+  }
+  function clearAllModels() {
+    document.querySelectorAll('#modelListBox .model-chk').forEach(c => {
+      c.checked = false;
+      c.closest('.model-row').classList.remove('checked');
+    });
+    syncModelCount();
+  }
+  function toggleSelectAllModels() {
+    const all = [...document.querySelectorAll('#modelListBox .model-chk')];
+    const target = !all.every(c => c.checked);
+    all.forEach(c => {
+      c.checked = target;
+      c.closest('.model-row').classList.toggle('checked', target);
+    });
+    syncModelCount();
+  }
+  function addCustomModel() {
+    const inp = document.getElementById('customModelInp');
+    const id = (inp.value || '').trim();
+    if (!id) { toast('请输入模型 ID'); inp.focus(); return; }
+    const box = document.getElementById('modelListBox');
+    const lbl = document.createElement('label');
+    lbl.className = 'model-row checked';
+    lbl.innerHTML = `<input type="checkbox" class="model-chk" checked onchange="syncModelCount(this)" /><span class="shadcn-chk"></span><div class="model-info"><div class="model-id-row"><span class="model-id"></span><span class="badge badge-neutral">自定义</span></div><div class="model-desc">用户手动添加的模型配置</div></div><div class="model-tags"><span class="badge badge-neutral">Custom</span></div>`;
+    lbl.querySelector('.model-id').textContent = id;
+    box.appendChild(lbl);
+    inp.value = '';
+    syncModelCount();
+    toast('已添加模型「' + id + '」', 'ok');
+  }
+  function openGitDialog(mode) {
+    document.getElementById('gitDlgTitle').textContent = mode === 'pull' ? 'Git 拉取同步' : 'Git 上传发布';
+    document.getElementById('gitBranchLabel').textContent = mode === 'pull' ? '来源分支' : '目标分支';
+    document.getElementById('gitMsgBox').style.display = mode === 'pull' ? 'none' : 'block';
+    document.getElementById('gitSubmitBtn').textContent = mode === 'pull' ? '确认拉取' : '确认上传';
+    syncGitTreeState();
+    openDialog('gitPushDialog');
+  }
+  function toggleGitProjBox(hd) {
+    const filesBox = hd.nextElementSibling;
+    const chev = hd.querySelector('.git-proj-toggle svg');
+    const hide = filesBox.style.display !== 'none';
+    filesBox.style.display = hide ? 'none' : 'block';
+    if (chev) chev.style.transform = hide ? 'rotate(-90deg)' : '';
+  }
+  function onGitProjCheck(projChk) {
+    const box = projChk.closest('.git-proj-box');
+    box.querySelectorAll('.git-file-chk').forEach(c => { c.checked = projChk.checked; });
+    syncGitTreeState();
+  }
+  function selectGitScope(scope) {
+    document.querySelectorAll('#gitTree .git-proj-box').forEach(box => {
+      const check = scope === 'all' || (scope === 'current' && box.dataset.current === '1');
+      box.querySelectorAll('.git-file-chk').forEach(c => { c.checked = check; });
+    });
+    syncGitTreeState();
+  }
+  function filterGitFiles(q) {
+    const kw = (q || '').trim().toLowerCase();
+    document.querySelectorAll('#gitTree .git-file-row').forEach(r => {
+      r.style.display = !kw || r.innerText.toLowerCase().includes(kw) ? 'flex' : 'none';
+    });
+  }
+  function syncGitTreeState() {
+    let totalAll = 0, checkedAll = 0;
+    document.querySelectorAll('#gitTree .git-proj-box').forEach(box => {
+      const files = [...box.querySelectorAll('.git-file-chk')];
+      const checkedCount = files.filter(c => {
+        c.closest('.git-file-row').classList.toggle('checked', c.checked);
+        return c.checked;
+      }).length;
+      totalAll += files.length;
+      checkedAll += checkedCount;
+      const projChk = box.querySelector('.git-proj-chk');
+      if (projChk) {
+        projChk.checked = checkedCount === files.length && files.length > 0;
+        projChk.indeterminate = checkedCount > 0 && checkedCount < files.length;
+      }
+      const stat = box.querySelector('.git-proj-stat');
+      if (stat) stat.textContent = `${checkedCount} / ${files.length}`;
+    });
+    const sum = document.getElementById('gitSelectedSummary');
+    if (sum) sum.textContent = `已选 ${checkedAll} / ${totalAll} 项变更`;
+  }
+
+  /* ── Esc 栈关闭（PC 端文档弹窗响应 Esc，移动端文档不响应 Esc） ── */
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (pickActive || inlineActive) { setPickMode(false); setInlineMode(false); return; }
+      const openDlgs = [...document.querySelectorAll('.dialog-backdrop.open')];
+      if (openDlgs.length) { openDlgs[openDlgs.length - 1].classList.remove('open'); return; }
+      if (document.getElementById('rightSheet').classList.contains('open')) { closeSheet(); return; }
+      if (curKind === 'pc' && pcDocsOpen) { closePcDocs(); return; }
+      closeAllPops();
+    }
+  });
+
+  function toast(msg, kind) {
+    const stack = document.getElementById('toastStack');
+    const el = document.createElement('div');
+    el.className = 'sonner-toast';
+    const dot = kind === 'ok' ? '<span style="color:var(--emerald);font-weight:700">✓</span>' : '<span style="color:var(--cobalt);font-weight:700">●</span>';
+    el.innerHTML = `${dot}<span>${msg}</span>`;
+    stack.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .2s'; setTimeout(() => el.remove(), 200); }, 2400);
+  }
+
+  syncDocsPresentation();
+  updateViewportScale();
+  syncModelCount();
+</script>
+</body>
+</html>

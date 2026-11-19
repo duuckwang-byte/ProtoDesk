@@ -224,9 +224,9 @@ try { svc.resetScopeConfirmForTest(); } catch (e) {}
   assert.ok(paeSrc.includes('完成·'), '完成须翻牌+耗时');
   assert.ok(paeSrc.includes('i5ThinkIdleText'), '思考占位须接计时器文案');
   assert.ok(paeSrc.includes('i5EnsureThinkIdle'), 'aiThinkTick 须确保占位行');
-  // 74 冻结 intact（与 lint-guard 同口径复算）
+  // 70 冻结 intact（与 lint-guard 同口径复算）
   const contract = require(path.join(rootDir, 'main', 'ipc-contract.js'));
-  assert.strictEqual(contract.IPC_CHANNELS.length, 74, 'contract 须 74（含 ai:open-terminal）');
+  assert.strictEqual(contract.IPC_CHANNELS.length, 70, 'contract 须 70（含 ai:open-terminal）');
   const got = new Set();
   for (const cf of fs.readdirSync(path.join(rootDir, 'main', 'controllers'))) {
     if (!cf.endsWith('.js')) continue;
@@ -235,9 +235,9 @@ try { svc.resetScopeConfirmForTest(); } catch (e) {}
     const re = /handle\('([^']+)'/g;
     while ((m = re.exec(src))) got.add(m[1]);
   }
-  assert.strictEqual(got.size, 74, 'controllers handle 须 74，实际' + got.size);
+  assert.strictEqual(got.size, 70, 'controllers handle 须 70，实际' + got.size);
   assert.ok(contract.diffChannels(Array.from(got)).ok, '冻结一致性');
-  console.log('[PASS] 确认/IPC/渲染接线（74 冻结 intact）');
+  console.log('[PASS] 确认/IPC/渲染接线（70 冻结 intact）');
 })();
 
 // ---- 9. 超时与回复（行为，短超时不卡死） ----

@@ -338,6 +338,26 @@
        <label class="set-radio" role="tab" aria-selected="false"><input type="radio" name="aiEngine" value="api" id="engApi"> API</label>
       </div>
 
+      <!-- ACP 运行时（Phase 1）：仅保存配置，不在此处启动 ACP 会话 -->
+      <div class="set-box acp-cfg-box" id="boxAcpCfg">
+       <div class="set-field">
+        <label>ACP 运行时（实验）</label>
+        <label class="acp-cfg-toggle" for="chkAcpEnabled">
+         <input type="checkbox" id="chkAcpEnabled">
+         <span>启用 ACP（开启后支持 ACP 的 Agent 走标准协议，失败可关闭回退兼容模式）</span>
+        </label>
+        <div class="acp-cfg-row">
+         <label for="selAcpPermissionMode">默认权限</label>
+         <select class="set-select acp-cfg-select" id="selAcpPermissionMode">
+          <option value="approve-reads">按需审批（推荐）</option>
+          <option value="approve-all">自动放行</option>
+          <option value="deny-all">只读</option>
+         </select>
+        </div>
+        <div class="set-tip">需要 Electron 37+；首次使用某个 Agent 可能需要在终端完成登录。</div>
+       </div>
+      </div>
+
      <!-- CLI 配置区（Iteration5：多 Agent CLI 矩阵卡片流，JS 动态渲染 4 卡片） -->
      <div class="set-box" id="boxCliCfg">
        <div class="set-field">
@@ -942,7 +962,6 @@
    <button class="ai-tab-btn active" id="tabChatBtn"><i data-ic="message-square"></i> 需求对话</button>
    <button class="ai-tab-btn" id="tabLogsBtn"><i data-ic="file-text"></i> 执行日志 (Trace)<span class="log-err-dot" id="logErrDot" style="display:none">!</span></button>
    </div>
-   <button class="docs-btn" id="btnAiWinToggle" title="在独立窗口中打开AI对话">独立窗口</button>
    <span class="ai-hist" id="aiHistBtn" title="历史版本：每次 AI 任务前自动保存，可一键恢复">历史</span>
    <span class="ai-cli ok" id="aiSbx" title="当前沙箱（模型工作目录）">沙箱：—</span>
   <span class="ai-cli warn" id="aiCli">检测中…</span>

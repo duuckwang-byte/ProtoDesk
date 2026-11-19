@@ -23,13 +23,21 @@
         if (inTable) { html += '</tbody></table>'; inTable = false; }
       }
       function inline(s) {
+        /* 行内代码先占位：内部不再参与 Markdown 解析，也不把字面 <br> 当换行。 */
+        var tokens = [];
+        s = String(s == null ? '' : s).replace(/`([^`]+)`/g, function (_m, code) {
+          var token = '\uE000' + tokens.length + '\uE001';
+          tokens.push('<code>' + esc(code) + '</code>');
+          return token;
+        });
         s = esc(s);
-        s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+        /* PRD 表格/段落常用字面 <br> 表示单元格内换行；只放行换行标签，其余 HTML 保持转义。 */
+        s = s.replace(/&lt;br\s*\/?&gt;/gi, '<br />');
         s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
         s = s.replace(/(^|\W)\*([^*\n]+)\*/g, '$1<em>$2</em>');
         s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
         s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-        return s;
+        return s.replace(/\uE000(\d+)\uE001/g, function (_full, ix) { return tokens[Number(ix)] || ''; });
       }
       for (var i = 0; i < lines.length; i++) {
         var ln = lines[i];
@@ -89,6 +97,37 @@
     return '';
   }
 
+  /* 节点可见性：inline display:none / hidden / 计算样式 display:none|visibility:hidden 均视为不可见 */
+  function isShown(el) {
+    try {
+      if (!el) return false;
+      if (el.hidden) return false;
+      if (el.style && String(el.style.display || '').toLowerCase() === 'none') return false;
+      if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+        var cs = window.getComputedStyle(el);
+        if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return false;
+      }
+    } catch (e) {}
+    return true;
+  }
+
+  /* 文档区目标：按 id 顺序取第一个可见节点；全不可见时取第一个存在的节点并解除自身 display:none，
+   * 保证右侧文档区不空白。新版导出=可见 #docContent；旧版导出=隐藏 #docContent + 可见 #exportLiteDoc。 */
+  function pickDocEl(ids) {
+    var first = null;
+    for (var i = 0; i < ids.length; i++) {
+      var el = null;
+      try { el = document.getElementById(ids[i]); } catch (e) {}
+      if (!el) continue;
+      if (!first) first = el;
+      if (isShown(el)) return el;
+    }
+    if (first) {
+      try { if (first.style && first.style.display === 'none') first.style.display = ''; } catch (e2) {}
+    }
+    return first;
+  }
+
   function boot() {
     try {
       if (typeof window === 'undefined' || window.__EXPORT_BOOT__ !== true) return { skipped: true };
@@ -97,8 +136,8 @@
       var reqMap = getReqMap();
       var listEl = document.getElementById('exportLiteList') || document.getElementById('sbList');
       var frame = document.getElementById('frame');
-      var docEl = document.getElementById('docContent') || document.getElementById('exportLiteDoc');
-      var titleEl = document.getElementById('docTitle') || document.getElementById('exportLiteTitle');
+      var docEl = pickDocEl(['docContent', 'exportLiteDoc']);
+      var titleEl = pickDocEl(['exportLiteTitle', 'docTitle']);
       function show(src) {
         try {
           var proto = (src && src.content) || '';

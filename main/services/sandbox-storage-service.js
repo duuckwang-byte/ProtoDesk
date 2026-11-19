@@ -96,7 +96,7 @@ function migrateLegacySandbox() {
       detail: '旧位置：' + legacy + '\n新位置：' + paths.SANDBOX_ROOT + '\n迁移后旧 sandbox 目录可手动删除。'
     });
     if (r === 1) { try { fs.writeFileSync(skipFlag, '1'); } catch (e) {} libStatusSafe('已跳过旧沙箱数据迁移（不再提示）'); return; }
-    fs.cpSync(legacy, paths.SANDBOX_ROOT, { recursive: true });
+    copyDirRecursive(legacy, paths.SANDBOX_ROOT);
     dialog.showMessageBoxSync({
       type: 'info', buttons: ['知道了'],
       title: '迁移完成',
@@ -586,6 +586,104 @@ function fmtTs(d) {
   const p = shared.pad2;
   return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
 }
+/* Windows 长路径：Node 多数 API 会自动处理，但快照路径（用户数据目录+中文项目/原型名）可能超过 260；
+   显式扩展前缀可绕开 Win32 MAX_PATH 限制。仅对绝对路径且长度接近上限时生效。 */
+function winFsPath(p) {
+  const s = String(p == null ? '' : p);
+  if (process.platform !== 'win32' || !s || s.startsWith('\\\\?\\')) return s;
+  if (s.length < 240) return s;
+  if (s.startsWith('\\\\')) return '\\\\?\\UNC\\' + s.slice(2);
+  if (/^[A-Za-z]:[\\/]/.test(s)) return '\\\\?\\' + path.normalize(s);
+  return s;
+}
+const FS_ERROR_TEXT = {
+  EPERM: '系统拒绝访问（可能被安全软件拦截或文件被占用）',
+  EACCES: '没有访问权限',
+  EBUSY: '文件正被其他程序占用',
+  ENOENT: '文件或目录不存在',
+  ENOSPC: '磁盘空间不足',
+  EXDEV: '跨磁盘移动失败',
+};
+/* 把系统错误码翻成可读中文，避免 Windows 英文/乱码错误文本直接进 toast */
+function fsErrorText(e) {
+  const code = String((e && e.code) || '');
+  const hint = FS_ERROR_TEXT[code];
+  if (hint) return hint + '（' + code + '）';
+  return String((e && e.message) || e || '未知错误');
+}
+function removeQuiet(p) {
+  try { if (p && fs.existsSync(winFsPath(p))) fs.rmSync(winFsPath(p), { recursive: true, force: true }); } catch (e) {}
+}
+function uniqueChildPath(parent, base) {
+  let p = path.join(parent, base);
+  let i = 1;
+  while (fs.existsSync(winFsPath(p))) { p = path.join(parent, base + '-' + i); i++; }
+  return p;
+}
+/* 单文件复制：EPERM/EBUSY 多为杀软/索引器瞬时占用，短重试即可通过；仍失败则抛原错误 */
+function copyFileRetry(from, to) {
+  let last = null;
+  for (let i = 0; i < 3; i++) {
+    try { fs.copyFileSync(winFsPath(from), winFsPath(to)); return; } catch (e) {
+      last = e;
+      const code = String((e && e.code) || '');
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw e;
+      if (i < 2) { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60); } catch (e2) {} }
+    }
+  }
+  throw last;
+}
+function copySymlinkEntry(from, to) {
+  let target = '';
+  try { target = fs.readlinkSync(winFsPath(from)); } catch (e) { target = ''; }
+  if (target) { try { fs.symlinkSync(target, winFsPath(to)); return; } catch (e) {} }
+  /* 无权限建链接时跟随目标复制内容，避免快照漏文件 */
+  const st = fs.statSync(winFsPath(from));
+  if (st.isDirectory()) {
+    fs.mkdirSync(winFsPath(to), { recursive: true });
+    copyDirEntries(from, to);
+  } else {
+    copyFileRetry(from, to);
+  }
+}
+function copyDirEntries(srcDir, dstDir) {
+  const entries = fs.readdirSync(winFsPath(srcDir), { withFileTypes: true });
+  for (const ent of entries) {
+    const from = path.join(srcDir, ent.name);
+    const to = path.join(dstDir, ent.name);
+    if (ent.isDirectory()) {
+      fs.mkdirSync(winFsPath(to), { recursive: true });
+      copyDirEntries(from, to);
+    } else if (ent.isFile()) {
+      copyFileRetry(from, to);
+    } else if (ent.isSymbolicLink()) {
+      copySymlinkEntry(from, to);
+    } else {
+      throw new Error('不支持的快照文件类型：' + from);
+    }
+  }
+}
+/**
+ * Windows/Node22 兼容的递归目录复制（readdir + mkdir + copyFile）。
+ * 背景：Electron 37 内置 Node 22.21.1 的 fs.cpSync 在中文路径下复制目录会返回 EPERM，
+ * 系统 Node 24 正常；快照/恢复统一走本实现，不再直接依赖 cpSync。
+ * @param {string} src 源目录（绝对路径）
+ * @param {string} dst 目标目录（不存在则创建；已存在则按文件覆盖合并）
+ * @returns {string} 目标目录
+ */
+function copyDirRecursive(src, dst) {
+  const s = path.normalize(String(src || ''));
+  const d = path.normalize(String(dst || ''));
+  if (!s || !d) throw new Error('复制目录参数为空');
+  if (s === d) throw new Error('源目录与目标目录相同');
+  if (d.startsWith(s + path.sep)) throw new Error('目标目录不能位于源目录内');
+  let st = null;
+  try { st = fs.statSync(winFsPath(s)); } catch (e) { throw new Error('源目录不存在：' + s); }
+  if (!st.isDirectory()) throw new Error('源路径不是目录：' + s);
+  fs.mkdirSync(winFsPath(d), { recursive: true });
+  copyDirEntries(s, d);
+  return d;
+}
 /* 目录必须是沙箱内的真实原型目录（非沙箱根本身），否则返回 null */
 function validProtoDir(dir) {
   try {
@@ -630,11 +728,16 @@ function takeSnapshot(dir) {
     if (!root) return null;
     if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
     const dst = path.join(root, fmtTs(new Date()));
-    fs.cpSync(dn, dst, { recursive: true });
+    try {
+      copyDirRecursive(dn, dst);
+    } catch (e) {
+      removeQuiet(dst); /* 复制失败不留半份快照，避免列表里出现损坏版本 */
+      throw e;
+    }
     pruneSnapshots(root);
     return dst;
   } catch (e) {
-    libStatusSafe('AI 任务前快照失败：' + (e && e.message || e));
+    libStatusSafe('AI 任务前快照失败：' + fsErrorText(e));
     return null;
   }
 }
@@ -1502,19 +1605,61 @@ function ensurePrIdInjected(html) {
       return id;
     };
     const parts = s.split(/(<!--[\s\S]*?-->|<script[\s>][\s\S]*?<\/script\s*>|<style[\s>][\s\S]*?<\/style\s*>)/gi);
+    /* 引号感知标签结尾：从'<'逐字符走，遇单/双引号跳到配对闭引号，首个引号外'>'为结尾（含'>'的:class/@click/v-if不再切错） */
+    const findTagEnd = (str, from) => {
+      let j = from + 1;
+      while (j < str.length) {
+        const c = str[j];
+        if (c === '"' || c === "'") {
+          const q = c; j++;
+          while (j < str.length && str[j] !== q) j++;
+          if (j >= str.length) return -1;
+          j++;
+        } else if (c === '>') return j;
+        else j++;
+      }
+      return -1;
+    };
+    const replaceTags = (chunk, cb) => {
+      let out = '', pos = 0;
+      while (pos < chunk.length) {
+        const lt = chunk.indexOf('<', pos);
+        if (lt < 0) { out += chunk.slice(pos); break; }
+        out += chunk.slice(pos, lt);
+        const end = findTagEnd(chunk, lt);
+        if (end < 0) { out += chunk[lt]; pos = lt + 1; continue; }
+        const full = chunk.slice(lt, end + 1);
+        let rep = null;
+        try { rep = cb(full); } catch (e) { rep = null; }
+        out += (typeof rep === 'string' ? rep : full);
+        pos = end + 1;
+      }
+      return out;
+    };
     for (let i = 0; i < parts.length; i += 2) {
       let chunk = parts[i];
-      chunk = chunk.replace(/<(button|a|input|select|textarea|option|label)([^>]*?)>/gi, (m0, tag, attrs) => {
+      chunk = replaceTags(chunk, (m0) => {
+        const mm = /^<(button|a|input|select|textarea|option|label)([\s\S]*)>$/i.exec(m0);
+        if (!mm) return m0;
+        const tag = mm[1], attrs = mm[2];
         if (/data-pr-id\s*=/.test(attrs) || /data-testid\s*=/.test(attrs)) return m0;
         return '<' + tag + attrs + ' data-pr-id="' + nid(tag) + '">';
       });
-      chunk = chunk.replace(/<([a-z][a-z0-9]*)([^>]*\bclass\s*=\s*["'][^"']*["'][^>]*?)>/gi, (m0, tag, attrs) => {
+      chunk = replaceTags(chunk, (m0) => {
+        const mm = /^<([a-z][a-z0-9]*)([\s\S]*)>$/i.exec(m0);
+        if (!mm) return m0;
+        const tag = mm[1], attrs = mm[2];
+        if (!/\bclass\s*=\s*(?:"[^"]*"|'[^']*')/.test(attrs)) return m0;
         const tl = String(tag).toLowerCase();
         if (/^(html|head|body|script|style|link|meta|title|base|template)$/.test(tl)) return m0;
         if (/data-pr-id\s*=/.test(attrs) || /data-testid\s*=/.test(attrs)) return m0;
         return '<' + tag + attrs + ' data-pr-id="' + nid(tag) + '">';
       });
-      chunk = chunk.replace(/<([a-z][a-z0-9]*)([^>]*\b(?:data-page|onclick)\s*=[^>]*?)>/gi, (m0, tag, attrs) => {
+      chunk = replaceTags(chunk, (m0) => {
+        const mm = /^<([a-z][a-z0-9]*)([\s\S]*)>$/i.exec(m0);
+        if (!mm) return m0;
+        const tag = mm[1], attrs = mm[2];
+        if (!/\b(?:data-page|onclick)\s*=/.test(attrs)) return m0;
         if (/data-pr-id\s*=/.test(attrs)) return m0;
         return '<' + tag + attrs + ' data-pr-id="' + nid(tag) + '">';
       });
@@ -2308,18 +2453,59 @@ function snapshotRestoreImpl(ev, o) {
   const root = snapRootFor(dn);
   if (!root) return { ok: false, error: '目录不在沙箱范围内' };
   const src = path.join(root, ts);
-  if (!fs.existsSync(src)) return { ok: false, error: '快照不存在' };
+  if (!fs.existsSync(winFsPath(src))) return { ok: false, error: '快照不存在' };
+  /* 恢复分四步：备份当前状态 → 快照复制到同级暂存 → 目录交换 → 清理旧副本。
+     任一步失败都中止并保留当前原型；最后一步失败自动回滚，原快照始终只读。 */
+  const now = new Date();
+  const parent = path.dirname(dn);
+  const staging = uniqueChildPath(parent, '.restore-staging-' + fmtTs(now) + '-' + process.pid);
+  const oldDir = uniqueChildPath(parent, '.restore-old-' + fmtTs(now) + '-' + process.pid);
+  let movedOld = false;
   try {
-    /* 恢复前把当前状态备份为 undo- 快照（防误恢复丢失），随后整体替换 */
-    if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
-    const undoDst = path.join(root, 'undo-' + fmtTs(new Date()));
-    fs.cpSync(dn, undoDst, { recursive: true });
-    fs.rmSync(dn, { recursive: true, force: true });
-    fs.cpSync(src, dn, { recursive: true });
+    if (!fs.existsSync(winFsPath(root))) fs.mkdirSync(winFsPath(root), { recursive: true });
+    const undoDst = uniqueChildPath(root, 'undo-' + fmtTs(now));
+    /* 1) 恢复前备份：失败必须明确中止，当前原型一个字节都不动 */
+    try {
+      copyDirRecursive(dn, undoDst);
+    } catch (e) {
+      removeQuiet(undoDst);
+      return { ok: false, error: '恢复前备份失败，已中止（当前文件未改动）：' + fsErrorText(e) };
+    }
+    /* 2) 快照复制到暂存目录：失败只清理暂存，不触碰当前原型 */
+    try {
+      copyDirRecursive(src, staging);
+    } catch (e) {
+      removeQuiet(staging);
+      return { ok: false, error: '读取快照失败，已中止（当前文件未改动）：' + fsErrorText(e) };
+    }
+    /* 3) 同级目录交换（不跨盘）：先移走当前原型，再移入暂存副本 */
+    const mv1 = fsRenameRetry(dn, oldDir, { rename: (a, b) => fs.renameSync(winFsPath(a), winFsPath(b)) });
+    if (!mv1.ok) {
+      removeQuiet(staging);
+      return { ok: false, error: '替换当前原型失败，已中止（当前文件未改动）：' + (mv1.error || '') };
+    }
+    movedOld = true;
+    const mv2 = fsRenameRetry(staging, dn, { rename: (a, b) => fs.renameSync(winFsPath(a), winFsPath(b)) });
+    if (!mv2.ok) {
+      const rb = fsRenameRetry(oldDir, dn, { rename: (a, b) => fs.renameSync(winFsPath(a), winFsPath(b)) });
+      if (rb.ok) {
+        movedOld = false;
+        removeQuiet(staging);
+        return { ok: false, error: '恢复失败，已回滚（当前文件未改动）：' + (mv2.error || '') };
+      }
+      return { ok: false, error: '恢复失败且自动回滚失败，原文件保留在：' + oldDir + '（' + (mv2.error || '') + '）' };
+    }
+    /* 4) 成功：删除旧副本，按既有保留策略清理正式快照 */
+    removeQuiet(oldDir);
     pruneSnapshots(root);
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: String(e && e.message || e) };
+    if (movedOld) {
+      const rb = fsRenameRetry(oldDir, dn, { rename: (a, b) => fs.renameSync(winFsPath(a), winFsPath(b)) });
+      if (rb.ok) movedOld = false;
+    }
+    removeQuiet(staging);
+    return { ok: false, error: '快照恢复失败：' + fsErrorText(e) };
   }
 
 }

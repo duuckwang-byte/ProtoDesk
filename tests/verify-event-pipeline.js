@@ -778,8 +778,6 @@ function testR19_InputAutosize() {
   assert.ok(/aiAutosizeInput\(\);?\s*\}catch/.test(pae) || /try\{\s*aiAutosizeInput\(\)/.test(pae), '须在多处调用自适应');
   assert.ok(/addEventListener\('input'/.test(pae) && /aiAutosizeInput/.test(pae), '输入事件须触发自适应');
   assert.ok(/scrollHeight/.test(pae), '自适应须按scrollHeight定高');
-  const docs = fs.readFileSync(path.join(rootDir, 'js', 'core-docs.js'), 'utf8');
-  assert.ok(/aiAutosizeInput/.test(docs), '草稿恢复须同步高度');
 }
 
 // ========== 运行20: 后台任务重开恢复（流式气泡挂回） ==========

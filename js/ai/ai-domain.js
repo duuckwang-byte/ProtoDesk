@@ -112,14 +112,6 @@ var AiDomain = (function () {
   }
 
   function requestAiClose(reason) {
-    var guarded = false;
-    try {
-      if (typeof window !== 'undefined' && window.__aiWinCloseGuard) {
-        try { if (typeof isAiWinMode === 'function' && isAiWinMode()) guarded = true; } catch (e) {}
-        try { if (window.isAiWinMode && window.isAiWinMode()) guarded = true; } catch (e2) {}
-      }
-    } catch (e3) {}
-    if (guarded) return { closed: false, reason: 'aiwin-guarded' };
     try { emit('ai:request-close', { reason: reason || 'user' }); } catch (e) {}
     try { if (window.MaskStack) window.MaskStack.pop('aiMask'); } catch (e2) {}
     try { var m = (typeof aiMaskEl !== 'undefined') ? aiMaskEl : ((typeof document !== 'undefined') ? document.getElementById('aiMask') : null); if (m) m.style.display = 'none'; } catch (e3) {}

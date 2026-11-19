@@ -57,7 +57,7 @@ const css = fs.readFileSync(path.join(rootDir, 'app.css'), 'utf8');
   const eeSrc = fs.readFileSync(path.join(rootDir, 'js', 'edit-entry.js'), 'utf8');
   assert.ok(/function editQueueDropSubmitted\(\)/.test(eeSrc), '缺 editQueueDropSubmitted');
   const calls = eeSrc.match(/editQueueDropSubmitted\(\)/g) || [];
-  assert.ok(calls.length >= 3, '两条提交路径均须调用移除（定义+2处调用），实际' + calls.length);
+  assert.ok(calls.length >= 2, '提交路径须调用移除（定义+1处调用），实际' + calls.length);
   console.log('[PASS] 提交即移除');
 })();
 

@@ -8,6 +8,7 @@
  */
 const path = require('path');
 const fs = require('fs');
+const gitAuth = require('./auth');
 
 let _overridePaths = null;
 /** 纯内存凭据（safeStorage 不可用时的会话持有 + 有可用时的写前合并缓存） */
@@ -197,10 +198,14 @@ function getProjectGitCredentialsSync(projectName) {
   return { username: String(c.username || ''), token: String(c.token || '') };
 }
 
-/** 保存非敏感配置（自动剥离 token/username/password） */
+/** 保存非敏感配置（自动剥离 token/username/password；remoteUrl 落盘前再过一次白名单，防绕过入口直写） */
 function saveProjectGitConfig(projectName, partialConfig) {
   return Promise.resolve().then(() => {
     const safe = toSafePersistedShape(partialConfig || {});
+    // 防绕过：任何调用方直写 config-store 也不能持久化被 URL 白名单拒绝的地址（含打包态 file://）
+    if (safe.remoteUrl != null && String(safe.remoteUrl).trim() !== '') {
+      gitAuth.assertAllowedRemoteUrl(String(safe.remoteUrl));
+    }
     const all = loadGitConfigRaw();
     all.defaultConfig = Object.assign({}, all.defaultConfig || {}, safe);
     if (projectName) {

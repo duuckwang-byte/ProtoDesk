@@ -1,4 +1,7 @@
 // Wave-E 加固版静态验证：对照 tests/ 用例断言逐项检查改后代码仍满足（环境无法跑 GUI 回归时的替代佐证）
+// Phase 0 方案A E 部分：旧断言全部原样保留并限定作用域为 legacy 文件
+//   （原型+文档.html、app.css、js/*）；src/renderer/** 永不参与旧断言；
+//   新增 LEGACY_SCOPE 打印行；Wave-E 契约门保持 error 不动。
 // 相对上一版改进（审计报告第四章第1节 static-verify 脆弱 → 消除误报，只做加法，原有门禁全部保留）：
 //   I1 stripJs/stripCss/stripHtmlComment: 残留类门禁（theme/gradient/shortcut/ghost）先剥离注释再扫，
 //      注释里提及“已移除 theme/渐变/快捷键”不再误报；真实代码残留仍能命中（注释外全文保留）。
@@ -6,11 +9,20 @@
 //   I3 emoji 白名单擴充：保留“彩色 emoji 清零”红线，仅放行单色 UI 排版符（✔✓★☆○●◆◇■□▲△▶▷◁→←↑↓↔··…—– + 原有 ✕✎▾«＋▸）。
 //   I4 覆盖 Wave-C/F/G 新模块：emoji/ghost 同步扫描 js/store.js·event-bus.js·sandbox-agent.js·utils.js·main.js（ESM），
 //      经典 9 文件断言一行未动。
-//   I5 新增 Wave-E 契约门（E-前缀）：eslint.config.js / .prettierrc.json / JSDoc(@param/@returns/@typedef) / 72通道冻结。
+//   I5 新增 Wave-E 契约门（E-前缀）：eslint.config.js / .prettierrc.json / JSDoc(@param/@returns/@typedef) / 70通道冻结。
 //      任一缺失即 STATIC_FAIL，但全部为“存在性”检查，不改业务逻辑。
 const fs = require('fs');
 const path = require('path');
 const fails = [];
+
+// Phase 0 方案A LEGACY 作用域声明（只做加法，旧断言一行未动）：
+// 旧颜色/40px 顶栏/旧 DOM ID 等全部旧断言仅针对 legacy 文件（原型+文档.html/app.css/js/*），
+// src/renderer/** 永不参与旧断言，避免 React 建好后误报.
+const REACT_ENTRY = path.join(__dirname, '..', 'src', 'renderer', 'index.html');
+const HAS_REACT = fs.existsSync(REACT_ENTRY);
+console.log('LEGACY_SCOPE: ' + (HAS_REACT
+  ? 'dual(renderer+legacy)，旧断言仅限 legacy 文件，不扫 src/renderer'
+  : 'legacy-only，旧断言覆盖 原型+文档.html/app.css/js/*'));
 
 const html = fs.readFileSync(path.join(__dirname, '..', '原型+文档.html'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '..', 'app.css'), 'utf8');
@@ -172,8 +184,22 @@ for (const id of ['modelFetchMask', 'modelFetchModal', 'modelFetchList', 'fetchS
 if (/id="btnSelectAllModels"/.test(html) || /btnSelectAllModels/.test(js['project-ai-export'])) fails.push('modelfetch: 旧全选按钮未彻底移除');
 if (!/function batchFetchCheck\(want\)/.test(js['project-ai-export'])) fails.push('modelfetch: 批量勾选 batchFetchCheck 缺失');
 if (!/batchFetchCheck\(true\)/.test(js['project-ai-export']) || !/batchFetchCheck\(false\)/.test(js['project-ai-export'])) fails.push('modelfetch: 全选/取消全选未接 batchFetchCheck');
-// ── 下拉：在用模型被移除后不再显示，自动落首个 ──
-if (!/被移出配置/.test(js['project-ai-export']) || !/aiStoreModel\(cur\)/.test(js['project-ai-export'])) fails.push('modeldropdown: 移除回落逻辑缺失');
+// ── 下拉：在用模型被移出配置后不再豁免，自动落 r.default/首个可见项并持久化 ──
+{
+  const msrc = js['project-ai-export'] || '';
+  // 1) 归属判定：当前值必须存在于本轮 allIds（可见集合）中，否则视为失效
+  const foundByAllIds = /var\s+found\s*=\s*!!cur\s*&&\s*allIds\.indexOf\(cur\)\s*>=\s*0/.test(msrc);
+  // 2) 失效回落：!found 且仍有可选模型时进入回落分支
+  const fallbackGuard = /if\s*\(\s*!found\s*&&\s*allIds\.length\s*\)\s*\{/.test(msrc);
+  // 3) 优先后端 r.default，且必须命中 allIds；否则落首个可见项 allIds[0]（绝不写死旧模型）
+  const preferDefault = /var\s+defId\s*=\s*cleanId\(\s*r\s*&&\s*r\.default\s*\|\|\s*''\s*\)/.test(msrc);
+  const defaultOrFirst = /cur\s*=\s*\(\s*defId\s*&&\s*allIds\.indexOf\(\s*defId\s*\)\s*>=\s*0\s*\)\s*\?\s*defId\s*:\s*allIds\[\s*0\s*\]/.test(msrc);
+  // 4) 回落结果写回持久化：aiStoreModel(cur) 必须位于回落分支内
+  const fallbackIdx = msrc.search(/if\s*\(\s*!found\s*&&\s*allIds\.length\s*\)\s*\{/);
+  const fallbackSeg = fallbackIdx >= 0 ? msrc.slice(fallbackIdx, fallbackIdx + 700) : '';
+  const storeFallback = /aiStoreModel\(\s*cur\s*\)/.test(fallbackSeg);
+  if (!(foundByAllIds && fallbackGuard && preferDefault && defaultOrFirst && storeFallback)) fails.push('modeldropdown: 移除回落逻辑缺失');
+}
 if (!/function openModelFetch/.test(js['project-ai-export']) || !/function closeModelFetch/.test(js['project-ai-export'])) fails.push('modelfetch: 获取弹窗 open/close 缺失');
 if (!/function setVisibleModels/.test(js['project-ai-export']) || !/model-del/.test(js['project-ai-export'])) fails.push('modelfetch: 可见集合/删除按钮逻辑缺失');
 if (!/scrollbar-gutter:\s*stable/.test(css)) fails.push('settings: 防挤压 scrollbar-gutter 缺失');
@@ -215,11 +241,11 @@ if (!/\.sb-head,\.sb-list,\.sb-foot\{width:220px/.test(css)) fails.push('sb: 侧
     try { src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'); } catch (e) { src = ''; }
     if (!/@typedef/.test(src)) fails.push('E-jsdoc: 缺 @typedef ' + rel);
   }
-  // E3: 74 通道冻结（controllers handle 去重 74 且与 contract 一致，含 ai:open-terminal）
+  // E3: 70 通道冻结（controllers handle 去重 70 且与 contract 一致，含 ai:open-terminal）
   try {
     const contract = require(path.join(__dirname, '..', 'main', 'ipc-contract.js'));
     const want = (contract && contract.IPC_CHANNELS) || [];
-    if (!Array.isArray(want) || want.length !== 74) fails.push('E-ipc: contract 非 74（实际 ' + (want && want.length) + '）');
+    if (!Array.isArray(want) || want.length !== 70) fails.push('E-ipc: contract 非 70（实际 ' + (want && want.length) + '）');
     else {
       const got = new Set();
       const cdir = path.join(__dirname, '..', 'main', 'controllers');
@@ -230,7 +256,7 @@ if (!/\.sb-head,\.sb-list,\.sb-foot\{width:220px/.test(css)) fails.push('sb: 侧
         const re = /handle\('([^']+)'/g;
         while ((m = re.exec(src))) got.add(m[1]);
       }
-      if (got.size !== 74) fails.push('E-ipc: controllers 非 74（实际 ' + got.size + '）');
+      if (got.size !== 70) fails.push('E-ipc: controllers 非 70（实际 ' + got.size + '）');
       else {
         const diff = contract.diffChannels(Array.from(got));
         if (!diff.ok) fails.push('E-ipc: 冻结不一致 缺失:' + diff.missing.join(',') + ' 多余:' + diff.extra.join(','));

@@ -4,6 +4,14 @@
  * 职责：URL 白名单 + extraHeader 凭据注入 + 脱敏 + 错误映射
  * 约束：绝不拼 Token URL；默认仅 https 放行；不引入 npm 依赖；纯 Node 可单测
  */
+const fs = require('fs');
+const path = require('path');
+const { fileURLToPath } = require('url');
+
+/** 本地 bare 夹具开关：仅未打包开发态且值为 '1' 时生效（生产边界见 docs/git-local-fixture.md） */
+const LOCAL_FIXTURE_ENV = 'PLAND_GIT_ALLOW_LOCAL';
+/** 测试注入的打包态；生产路径始终读 electron.app.isPackaged */
+let _packagedOverrideForTest = null;
 
 function blockedError(reason) {
   const e = new Error('不支持的仓库地址协议：' + reason);
@@ -12,10 +20,126 @@ function blockedError(reason) {
 }
 
 /**
+ * 是否打包态。无法确认运行态时按打包态处理（fail-closed）。
+ * @returns {boolean}
+ */
+function isPackagedApp() {
+  if (typeof _packagedOverrideForTest === 'boolean') return _packagedOverrideForTest;
+  try {
+    const el = require('electron');
+    const app = el && (el.app || (el.default && el.default.app));
+    if (app && typeof app.isPackaged === 'boolean') return app.isPackaged;
+  } catch (e) {}
+  return true;
+}
+
+/**
+ * file:/// 本地夹具是否放行：必须同时满足 !isPackaged 且 PLAND_GIT_ALLOW_LOCAL=1。
+ * @returns {boolean}
+ */
+function isLocalFixtureAllowed() {
+  try {
+    if (String(process.env[LOCAL_FIXTURE_ENV] || '').trim() !== '1') return false;
+  } catch (e) {
+    return false;
+  }
+  return !isPackagedApp();
+}
+
+/**
+ * 解析 git config，仅在 [core] 段内读取 bare=true。
+ * 避免任意段落的 bare=true 被误判为 bare 仓库。
+ * @param {string} cfgText
+ * @returns {boolean}
+ */
+function hasCoreBareTrue(cfgText) {
+  let section = '';
+  const lines = String(cfgText || '').split(/\r?\n/);
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t || t.startsWith('#') || t.startsWith(';')) continue;
+    const sec = t.match(/^\[([^\]]+)\]/);
+    if (sec) {
+      section = sec[1].trim().toLowerCase();
+      continue;
+    }
+    if (section !== 'core') continue;
+    const kv = t.match(/^bare\s*=\s*(.*)$/i);
+    if (kv) return /^true$/i.test(kv[1].trim());
+  }
+  return false;
+}
+
+/**
+ * 结构校验：须为目录且形如 bare git 仓库（HEAD + objects + refs + [core] bare=true）。
+ * 目的：把 file:/// 收紧到本地 bare 夹具，而非任意本地路径（含工作区 .git）。
+ * @param {string} absPath 本地绝对路径
+ * @returns {boolean}
+ */
+function looksLikeBareRepoDir(absPath) {
+  try {
+    const st = fs.statSync(absPath);
+    if (!st || !st.isDirectory()) return false;
+    if (!fs.existsSync(path.join(absPath, 'HEAD'))) return false;
+    if (!fs.existsSync(path.join(absPath, 'objects'))) return false;
+    if (!fs.existsSync(path.join(absPath, 'refs'))) return false;
+    return hasCoreBareTrue(fs.readFileSync(path.join(absPath, 'config'), 'utf8'));
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 校验开发态本地 bare 夹具 URL：仅 file:/// 绝对路径，拒绝主机名/UNC/查询串/..。
+ * @param {string} raw 已确认以 file:/// 开头的原始 URL
+ * @returns {true}
+ */
+function assertAllowedLocalFixtureUrl(raw) {
+  if (!/^file:\/\/\//i.test(raw)) throw blockedError('file:// 仅支持 file:/// 绝对路径（不支持主机名/UNC）');
+  if (/\\/.test(raw)) throw blockedError('file:// 路径不得含反斜杠');
+  let u = null;
+  try {
+    u = new URL(raw);
+  } catch (e) {
+    throw blockedError('不是合法 URL');
+  }
+  if (u.protocol.toLowerCase() !== 'file:') throw blockedError('仅支持 file:/// 协议');
+  if (u.host) throw blockedError('file:// 不支持主机名或共享路径');
+  if (u.username || u.password) throw blockedError('地址中不得携带用户名/口令');
+  if (u.search || u.hash) throw blockedError('file:// 地址不得携带查询参数或片段');
+  if (!u.pathname || u.pathname === '/') throw blockedError('file:// 地址缺少仓库路径');
+  // file:////server/share 解析后 pathname 以 // 开头，按 UNC 拒绝
+  if (u.pathname.slice(1).startsWith('/')) throw blockedError('file:// 不支持 UNC/双斜杠路径');
+  // URL 解析会归一化点段，故先按原始段拦截 .. / .（含 %2e 编码）
+  const rawSegs = raw.split('/').slice(3);
+  for (const seg of rawSegs) {
+    let ds = seg;
+    try { ds = decodeURIComponent(seg); } catch (e) { throw blockedError('file:// 路径编码非法'); }
+    if (ds === '..' || ds === '.') throw blockedError('file:// 路径不得含 .. 或 . 段');
+    if (ds.indexOf('/') >= 0) throw blockedError('file:// 路径不得含编码斜杠');
+    if (/[\u0000-\u001f\u007f]/.test(ds)) throw blockedError('file:// 路径含控制字符');
+    if (ds.indexOf('\\') >= 0) throw blockedError('file:// 路径含非法字符');
+  }
+  if (raw.length > 500) throw blockedError('地址长度超限（≤500）');
+  if (process.platform === 'win32' && !/^\/[A-Za-z]:\//.test(u.pathname)) {
+    throw blockedError('Windows 下 file:/// 须为盘符绝对路径（如 file:///C:/repo.git）');
+  }
+  let abs = '';
+  try {
+    abs = fileURLToPath(raw);
+  } catch (e) {
+    throw blockedError('file:// 路径无法解析为本地绝对路径');
+  }
+  if (!path.isAbsolute(abs)) throw blockedError('file:// 路径须为绝对路径');
+  if (!looksLikeBareRepoDir(abs)) throw blockedError('file:// 路径不是可用的本地 bare 仓库（须含 HEAD/objects/refs 且 core.bare=true）');
+  return true;
+}
+
+/**
  * 校验远端 URL 合法性，不合法抛 {code:'GIT_URL_BLOCKED'}。
- * 拒绝：ext:: / fd:: / file:// / -e / --upload-pack / --receive-pack / --exec /
+ * 拒绝：ext:: / fd:: / -e / --upload-pack / --receive-pack / --exec /
  * 换行 / 以 - 开头 / 含空格 / 非 https / 含用户信息(@) / shell 元字符。
- * 默认仅 https 放行。
+ * file:// 默认拒绝；仅未打包开发态且 PLAND_GIT_ALLOW_LOCAL=1 时放行本地 bare 仓库 file:/// 绝对路径。
  * @param {string} remoteUrl
  */
 function assertAllowedRemoteUrl(remoteUrl) {
@@ -25,16 +149,22 @@ function assertAllowedRemoteUrl(remoteUrl) {
   if (/^-/.test(raw)) throw blockedError('仓库地址不能以 - 开头');
   if (/^ext::/i.test(raw)) throw blockedError('不支持 ext:: 协议（存在命令执行风险）');
   if (/^fd::/i.test(raw)) throw blockedError('不支持 fd:: 协议');
-  if (/^file:\/\//i.test(raw)) throw blockedError('默认不支持 file:// 本地路径');
   if (/--upload-pack/i.test(raw)) throw blockedError('仓库地址含非法参数 --upload-pack');
   if (/--receive-pack/i.test(raw)) throw blockedError('仓库地址含非法参数 --receive-pack');
   if (/(^|\s)-e(\s|$|=)/.test(raw)) throw blockedError('仓库地址含非法参数 -e');
   if (/--exec($|=|\s)/i.test(raw)) throw blockedError('仓库地址含非法参数 --exec');
   if (/`/.test(raw)) throw blockedError('仓库地址含非法字符 `');
   if (/\$\(/.test(raw)) throw blockedError('仓库地址含非法字符 $(');
+  if (/\s/.test(raw)) throw blockedError('仓库地址不得含空格');
+  // file:// 例外：仅开发态 + PLAND_GIT_ALLOW_LOCAL=1，且必须是本地 bare 仓库目录；其余一律拒绝
+  if (/^file:\/\//i.test(raw)) {
+    if (!isLocalFixtureAllowed()) {
+      throw blockedError('默认不支持 file:// 本地路径（仅未打包开发态且 PLAND_GIT_ALLOW_LOCAL=1 时允许本地 bare 夹具）');
+    }
+    return assertAllowedLocalFixtureUrl(raw);
+  }
   // 默认仅 https 放行
   if (!/^https:\/\//i.test(raw)) throw blockedError('默认仅支持 https:// 仓库地址');
-  if (/\s/.test(raw)) throw blockedError('仓库地址不得含空格');
   let u = null;
   try {
     u = new URL(raw);
@@ -189,10 +319,20 @@ function isValidBranchRef(b) {
   return /^[a-zA-Z0-9._\/-]+$/.test(String(b || '')) && String(b || '').length <= 60 && !String(b || '').includes('..');
 }
 
+/**
+ * 仅测试使用：注入打包态，模拟 Electron app.isPackaged。
+ * 传 null 恢复为真实探测（纯 Node 下按打包态 fail-closed）。
+ * @param {boolean|null} v
+ */
+function _setPackagedForTest(v) {
+  _packagedOverrideForTest = (typeof v === 'boolean') ? v : null;
+}
+
 module.exports = {
   assertAllowedRemoteUrl,
   buildGitAuthEnv,
   redactSecrets,
   sanitizeGitError,
-  isValidBranchRef
+  isValidBranchRef,
+  _setPackagedForTest
 };
