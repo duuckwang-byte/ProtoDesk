@@ -6,7 +6,6 @@
  */
 
 import { invokeProtoMethod } from "@/lib/ipc";
-import { LINK_INSP_FOLD, readJson, writeJson } from "@/lib/storage-keys";
 import {
   buildAnnoRectsMessage,
   buildNavJumpMessage,
@@ -215,42 +214,6 @@ export interface LinksLoadResult {
   ok: boolean;
   links: LinkItem[];
   error?: string;
-}
-
-/* ═══════════ 检查器折叠态（storage-keys 常量只读消费） ═══════════ */
-
-/** 检查器三板块折叠态（true=展开；缺省按 Inspector 默认值）。 */
-export interface LinkFoldState {
-  jump?: boolean;
-  req?: boolean;
-  anno?: boolean;
-}
-
-/**
- * 读检查器折叠态（键 `linkInspFold_v1`，与旧 link-bind.js restoreFoldState 同构）。
- * @returns 折叠态；无数据/坏数据回 null（交给 Inspector 默认值）
- */
-export function readLinkFold(): LinkFoldState | null {
-  const raw = readJson(LINK_INSP_FOLD, null);
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const o = raw as Record<string, unknown>;
-  const out: LinkFoldState = {};
-  for (const key of ["jump", "req", "anno"] as const) {
-    if (typeof o[key] === "boolean") out[key] = o[key] as boolean;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-/**
- * 写检查器折叠态（与原键同构 JSON `{jump,req,anno}`；未变更的键不写，读取侧走默认值）。
- * @param state 折叠态
- */
-export function writeLinkFold(state: LinkFoldState): void {
-  const out: LinkFoldState = {};
-  for (const key of ["jump", "req", "anno"] as const) {
-    if (typeof state[key] === "boolean") out[key] = state[key] as boolean;
-  }
-  writeJson(LINK_INSP_FOLD, out);
 }
 
 /* ═══════════ 链接帧桥（只消费 W3-02 已有协议：STAMP_SET / NAV_JUMP / ANNO_RECTS） ═══════════ */

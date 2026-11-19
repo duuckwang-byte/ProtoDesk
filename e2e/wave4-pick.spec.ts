@@ -7,8 +7,8 @@
  * 2. Ctrl+Shift 修改文字：松开后只出现一个 `pick-modify-dialog`；保存直接改写源 HTML（不入队），取消不写；
  * 3. 多选：Ctrl 按住连点 3 个元素，期间无弹窗；松开需求条 chips=3；
  *    统一需求提交为 1 条批量待提交（batchParts=3）；
- * 4. 检查器：修改需求 / 跳转交互 / 需求标注三板块可见；加需求入队、绑定跳转到「我的」写 links.json；
- * 5. 标注面板：seed 2 条 → 列表可定位（只高亮元素，不打开检查器）→ 面板内直编保存 → 删除经 Confirm，annotations.json 2→1；
+ * 4.（检查器步骤已随 W6 功能删除移除；标注/跳转/入队路径由需求条小面板与工具条 Sheet 覆盖。）
+ * 5. 标注面板：seed 2 条 → 列表可定位（只高亮元素）→ 面板内直编保存 → 删除经 Confirm，annotations.json 2→1；
  * 6. 待提交：只从工具栏「待提交」打开 Sheet；条目可直接编辑；移除 1 条 / 清空全部均经 Confirm，清空后 `edit_queue_v1` 持久化 `[]`。
  * 7. 需求草稿：继续 Ctrl 多选期间输入条不短暂消失、草稿与 chips 同时保留，松开后焦点回输入框；
  *    取消 / 提交 / 清空选择 / 切源后草稿清空。
@@ -136,7 +136,25 @@ async function pointOf(page: Page, selector: string, nth = 0): Promise<FramePoin
     }
   })
   const frameEl = page.getByTestId('preview-frame')
-  const frameBox = await frameEl.boundingBox()
+  // W6：进入移动端时文档面板带 200ms 展开动画，stage 布局在动画中变化；
+  // frameBox 在稳定前测量会产生几像素级的比例误差（hover 对齐断言漂移）。
+  // 连续两次读取一致才采信（最多约 2s），与渲染端点测量共用同一口径。
+  let frameBox = await frameEl.boundingBox()
+  for (let stableTry = 0; stableTry < 8; stableTry += 1) {
+    await page.waitForTimeout(250)
+    const next = await frameEl.boundingBox()
+    if (
+      frameBox &&
+      next &&
+      Math.abs(frameBox.x - next.x) < 0.5 &&
+      Math.abs(frameBox.y - next.y) < 0.5 &&
+      Math.abs(frameBox.width - next.width) < 0.5 &&
+      Math.abs(frameBox.height - next.height) < 0.5
+    ) {
+      break
+    }
+    frameBox = next
+  }
   const clientWidth = await frameEl.evaluate((el) => (el as HTMLIFrameElement).clientWidth)
   if (!frameBox || !clientWidth) throw new Error(`无法读取 preview-frame 几何信息（selector=${selector}）`)
   const scale = frameBox.width / clientWidth
@@ -352,6 +370,15 @@ test.describe('Wave4 A2 · Ctrl 拾取 / 就地编辑 / 多选', () => {
       await expect(page.getByTestId('stage-frame')).toHaveAttribute('data-kind', 'mobile', { timeout: 20_000 })
       await expect(page.getByTestId('stage-frame')).toHaveAttribute('data-fit', 'on', { timeout: 10_000 })
 
+      // W6 对齐：移动端默认 chrome 会自动打开文档面板；文档进入 Esc 统一栈后，
+      // 后续所有「一次 Esc 关浮层」断言都会被它先吃掉一次。步骤 0 统一关掉文档，
+      // 让本 spec 的 Esc 语义回到编写时的口径。
+      const docsPanel = page.getByTestId('docs-panel')
+      if (await docsPanel.isVisible().catch(() => false)) {
+        await page.keyboard.press('Escape')
+        await expect(docsPanel).toBeHidden({ timeout: 5_000 })
+      }
+
       // 数据基线：HTML hash + 标注/链接条数 + 队列空。
       const sandboxDir = path.join(ctx.dataDir, 'sandbox', PROJECT, PROTO)
       const htmlPath = path.join(sandboxDir, HTML_FILE)
@@ -540,50 +567,44 @@ test.describe('Wave4 A2 · Ctrl 拾取 / 就地编辑 / 多选', () => {
         })
       })
 
-      // ── 4. 检查器：三板块 + 需求入队 + 跳转绑定写盘 ────────────────────
+      // ── 4. 需求条：入队 + 「交互」面板绑定跳转写盘（W6：检查器已删除） ──
       step = 4
-      await test.step('4 检查器 三板块 / 需求 / 跳转', async () => {
+      await test.step('4 需求条 入队 / 交互面板绑定', async () => {
         // 选一个与修改文字/多选不同的元素，避免 enqueue 按 selector 合并。
-        await pickWithCtrl(page, '.section-title', { nth: 0 })
-        await expect(page.getByTestId('pick-composer')).toBeVisible({ timeout: 10_000 })
+        // expectHover=false：步骤 2 已把修改写回源 HTML（srcdoc 刷新后帧内状态有噪声），
+        // 悬停命中可能漂移；对齐断言已由步骤 1/3 严格覆盖，本步只验入队与绑定。
+        await pickWithCtrl(page, '.section-title', { nth: 0, expectHover: false })
+        const composer = page.getByTestId('pick-composer')
+        await expect(composer).toBeVisible({ timeout: 10_000 })
         await expect(page.getByTestId('overlays-selection-count')).toHaveText('1', { timeout: 5_000 })
-        const inspectorBtn = page.getByTestId('overlays-open-inspector')
-        await expect(inspectorBtn).toBeEnabled({ timeout: 5_000 })
-        await inspectorBtn.click()
-        const sheet = page.getByTestId('overlays-sheet-inspector')
-        await expect(sheet).toBeVisible({ timeout: 10_000 })
-        const inspector = page.getByTestId('inspector')
-        await expect(inspector).toBeVisible()
-        await expect
-          .poll(async () => (await inspector.locator('.break-all').first().innerText()).trim(), { timeout: 10_000 })
-          .toMatch(/(\[data-pr-id=|nth-of-type\(|#)/)
-        const jumpSelector = (await inspector.locator('.break-all').first().innerText()).trim()
-        log('step4-target', { jumpSelector })
-        for (const id of ['inspector-sec-req', 'inspector-sec-jump', 'inspector-sec-anno']) {
-          await expect(page.getByTestId(id)).toBeVisible()
-        }
+        const chip = composer.getByTestId('pick-composer-chip').first()
+        const jumpSelector = (await chip.getAttribute('data-selector')) || ''
+        expect(jumpSelector, 'chips 应带稳定 selector').toContain('data-pr-id')
 
-        // 修改需求：入队（与已有 selector 不重复 → +1）。
+        // 底部输入条提交需求 → 入队（+1）；提交后需求条收起。
         const reqText = 'W4-需求：统一增加页面留白'
         const queueBeforeReq = await readQueue(page)
-        await expect(page.getByTestId('inspector-req-input')).toBeVisible({ timeout: 5_000 })
-        await page.getByTestId('inspector-req-input').fill(reqText)
-        await page.getByTestId('inspector-req-add').click()
+        await page.getByTestId('pick-composer-input').fill(reqText)
+        await page.getByTestId('pick-composer-submit').click()
         await expect.poll(async () => (await readQueue(page)).length, { timeout: 10_000 }).toBe(queueBeforeReq.length + 1)
         const q4 = await readQueue(page)
         expect(q4.filter((q) => q.text === reqText), '需求应入待提交队列').toHaveLength(1)
+        await expect(page.getByTestId('pick-composer'), '提交后需求条应收起').toBeHidden({ timeout: 5_000 })
+        await expect(page.getByTestId('overlays-selection-count')).toHaveCount(0)
+        log('step4-req', { reqQueued: q4.length })
 
-        // 跳转交互：展开 → 选「我的」→ 保存。
-        await page.getByTestId('inspector-sec-jump').getByText('跳转交互', { exact: true }).click()
-        const targetPick = page.getByTestId('inspector-jump-target-pick')
-        await expect(targetPick).toBeVisible({ timeout: 5_000 })
-        const options = (await targetPick.locator('option').allTextContents()).map((s) => s.trim())
+        // 交互面板绑定跳转「我的」：重新拾取同一元素，写 links.json。
+        await pickWithCtrl(page, '.section-title', { nth: 0, expectHover: false })
+        await expect(page.getByTestId('pick-composer')).toBeVisible({ timeout: 10_000 })
+        await page.getByTestId('pick-composer-link').click()
+        const linkPanel = page.getByTestId('pick-composer-link-panel')
+        await expect(linkPanel).toBeVisible({ timeout: 5_000 })
+        const targetSel = page.getByTestId('pick-composer-link-target')
+        const options = (await targetSel.locator('option').allTextContents()).map((s) => s.trim())
         const target = options.find((o) => o.includes('我的'))
         expect(target, `目标原型下拉应包含「我的」，实际=${options.join('|')}`).toBeTruthy()
-        await targetPick.selectOption({ label: target })
-        await expect(page.getByTestId('inspector-jump-target')).toHaveValue(target!)
-        await page.getByTestId('inspector-jump-save').click()
-        await expect(page.getByTestId('inspector-jump-state')).toContainText('已绑定', { timeout: 10_000 })
+        await targetSel.selectOption({ label: target })
+        await page.getByTestId('pick-composer-link-save').click()
         await expect.poll(() => arrayCount(linksPath, 'links'), { timeout: 10_000 }).toBe(3)
         const linksAfter = JSON.parse(fs.readFileSync(linksPath, 'utf8')) as { links: Array<Record<string, unknown>> }
         const bound = linksAfter.links.find((l) => l.selector === jumpSelector)
@@ -592,23 +613,16 @@ test.describe('Wave4 A2 · Ctrl 拾取 / 就地编辑 / 多选', () => {
         // 主页（非子页）的 page 约定为空串，与 seed 既有 links.json 一致；htmlFile 三键之一必须非空。
         expect(typeof bound!.page, '绑定 page 字段应为字符串').toBe('string')
         expect(String(bound!.htmlFile || ''), '绑定 htmlFile 非空').toBe(HTML_FILE)
-
-        // 需求标注板块展开可见（本步只验可见性，不新增标注，保留 seed 2 条给步骤 5）。
-        await page.getByTestId('inspector-sec-anno').getByText('需求标注', { exact: true }).click()
-        await expect(page.getByTestId('inspector-anno-input')).toBeVisible({ timeout: 5_000 })
-        await expect(page.getByTestId('inspector-anno-state')).toContainText('未标注')
-        const shot = await ctx!.shot(4, 'inspector-jump')
+        // 保存绑定成功后需求条同样收起。
+        await expect(page.getByTestId('pick-composer')).toBeHidden({ timeout: 5_000 })
+        const shot = await ctx!.shot(4, 'composer-link-bind')
         log('step4', {
-          sections: 3,
+          sections: 'composer(submit+link)',
           reqQueued: q4.length,
           target,
           links: arrayCount(linksPath, 'links'),
           shots: [rel(shot)],
         })
-        await page.keyboard.press('Escape')
-        await expect(sheet).toBeHidden({ timeout: 10_000 })
-        await page.getByTestId('pick-composer-cancel').click()
-        await expect(page.getByTestId('pick-composer')).toBeHidden({ timeout: 5_000 })
         await expect(page.getByTestId('overlays-selection-count')).toHaveCount(0)
       })
 

@@ -6,7 +6,7 @@
  *
  * 真机步骤（手动，不自动执行）：
  * 1. 进入项目并选中原型，舞台右侧出现“预览浮层”工具条；
- * 2. Ctrl+点击元素 → 工具条计数 +1；手动打开检查器可保存需求/跳转；
+ * 2. Ctrl+点击元素 → 工具条计数 +1；需求条可提交需求/保存标注/绑定跳转；
  * 3. 标注面板可定位高亮/面板内直编/删除（Confirm）；角标显隐刷新后保持；
  * 4. 快照面板列出 ts，恢复前 Confirm；
  * 5. 多选/就地改提交后只入待提交 Sheet（工具栏入口）；条目可编辑，清空/移除均 Confirm；
@@ -33,23 +33,20 @@ const ANNO_STORE = 'src/renderer/features/annotations/AnnoStore.ts'
 const ANNO_PANEL = 'src/renderer/components/overlays/AnnoPanel.tsx'
 const SNAPSHOT_STORE = 'src/renderer/features/snapshot/SnapshotStore.ts'
 const SNAPSHOT_PANEL = 'src/renderer/components/overlays/SnapshotPanel.tsx'
-const INSPECTOR = 'src/renderer/components/overlays/Inspector.tsx'
 const MULTI_BAR = 'src/renderer/components/overlays/MultiEditBar.tsx'
 const LINK_BIND = 'src/renderer/features/links/LinkBind.ts'
 
 test.describe('浮层装配（PreviewOverlaysHost）', () => {
-  test('装配 PickOverlay + PickComposer + PickModifyDialog + Inspector + 待提交/标注/快照 Sheet（不渲染 MultiEditBar）', () => {
+  test('装配 PickOverlay + PickComposer + PickModifyDialog + 待提交/标注/快照 Sheet（不渲染 MultiEditBar/检查器）', () => {
     const src = read(HOST)
     expect(src).toContain("from './PickOverlay'")
     expect(src).toContain("from './PickComposer'")
     expect(src).toContain("from './PickModifyDialog'")
-    expect(src).toContain('components/overlays/Inspector')
     expect(src).toContain('components/overlays/AnnoPanel')
     expect(src).toContain('components/overlays/SnapshotPanel')
     expect(src).toContain('<PickOverlay')
     expect(src).toContain('<PickComposer')
     expect(src).toContain('<PickModifyDialog')
-    expect(src).toContain('<Inspector')
     expect(src).toContain('<AnnoPanel')
     expect(src).toContain('<SnapshotPanel')
     // 待提交只从工具栏入口打开 Sheet，底部不再挂 MultiEditBar。
@@ -57,6 +54,11 @@ test.describe('浮层装配（PreviewOverlaysHost）', () => {
     expect(src).toContain('data-testid="overlays-sheet-queue"')
     expect(src).not.toContain('<MultiEditBar')
     expect(src).not.toContain('data-testid="multi-edit-bar"')
+    // W6：检查器已删除，浮层不得再装配 Inspector。
+    expect(src).not.toContain('components/overlays/Inspector')
+    expect(src).not.toContain('<Inspector')
+    expect(src).not.toContain("sheet === 'inspector'")
+    expect(src).not.toContain('data-testid="overlays-open-inspector"')
   })
 
   test('遵循 Stage 契约：hover/selected/需求条/修改框/清理回调，不改 Stage', () => {
@@ -114,7 +116,7 @@ test.describe('浮层装配（PreviewOverlaysHost）', () => {
   })
 
   test('不改 main/preload：无 ipcRenderer、无新增通道名', () => {
-    const files = [HOST, INLINE, MULTI_SELECT, ANNO_STORE, ANNO_PANEL, SNAPSHOT_STORE, SNAPSHOT_PANEL, INSPECTOR, MULTI_BAR, LINK_BIND]
+    const files = [HOST, INLINE, MULTI_SELECT, ANNO_STORE, ANNO_PANEL, SNAPSHOT_STORE, SNAPSHOT_PANEL, MULTI_BAR, LINK_BIND]
     for (const f of files) {
       const src = read(f)
       expect(src, f).not.toContain('ipcRenderer')
@@ -128,7 +130,7 @@ test.describe('浮层装配（PreviewOverlaysHost）', () => {
   })
 
   test('禁止原生 alert/confirm/prompt（统一 Confirm 组件）', () => {
-    const files = [HOST, INLINE, MULTI_SELECT, ANNO_PANEL, SNAPSHOT_PANEL, INSPECTOR, MULTI_BAR]
+    const files = [HOST, INLINE, MULTI_SELECT, ANNO_PANEL, SNAPSHOT_PANEL, MULTI_BAR]
     for (const f of files) {
       const src = codeOnly(read(f))
       expect(src, f).not.toContain('window.confirm(')
@@ -207,11 +209,8 @@ test.describe('标注 / 链接 / 检查器', () => {
     expect(locateBlock).not.toContain("setSheet('inspector')")
   })
 
-  test('链接三键 + 折叠键 linkInspFold_v1 + 只消费既有帧桥协议', () => {
+  test('链接三键 + 只消费既有帧桥协议（W6：折叠键已随检查器删除）', () => {
     const store = read(LINK_BIND)
-    expect(store).toContain('LINK_INSP_FOLD')
-    expect(store).toContain('readLinkFold')
-    expect(store).toContain('writeLinkFold')
     expect(store).toContain('findLink(')
     expect(store).toContain('htmlFile')
     expect(store).toContain('buildStampMessage')
@@ -221,18 +220,17 @@ test.describe('标注 / 链接 / 检查器', () => {
     // 不新增协议名：不出现自定义 type 字符串
     expect(store).not.toMatch(/type:\s*['"](?:proto-anno|anno-|link-|STAMP_|NAV_)/)
     expect(store).not.toMatch(/type:\s*['"]?ANNO_RECTS_RESULT/)
+    // W6：检查器折叠键随功能删除，不得回流。
+    expect(store).not.toContain('LINK_INSP_FOLD')
+    expect(store).not.toContain('readLinkFold')
+    expect(store).not.toContain('writeLinkFold')
   })
 
-  test('检查器：三板块折叠持久化 + 目标下拉 + destructive Confirm', () => {
-    const src = read(INSPECTOR)
-    expect(src).toContain('onFoldChange')
-    expect(src).toContain('targetOptions')
-    expect(src).toContain('inspector-jump-target-pick')
-    expect(src).toContain('inspector-jump-page-pick')
-    expect(src).toContain('inspector-sec-req')
-    expect(src).toContain('inspector-sec-jump')
-    expect(src).toContain('inspector-sec-anno')
-    expect(src).toContain('<Confirm')
+  test('检查器已删除（W6）：组件文件移除，浮层无残留装配', () => {
+    expect(fs.existsSync(path.resolve(__dirname, '..', 'src', 'renderer', 'components', 'overlays', 'Inspector.tsx'))).toBe(false)
+    const host = codeOnly(read(HOST))
+    expect(host).not.toContain('Inspector')
+    expect(host).not.toContain("sheet === 'inspector'")
   })
 })
 

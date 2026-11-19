@@ -142,15 +142,15 @@ test.describe('git-export 静态契约（L 波 Git/导出）', () => {
     expect(menu).toContain('export-assets/');
   });
 
-  test('检查器三板块 + destructive 经确认 + 无原生弹窗', () => {
-    const src = readFile('src/renderer/components/overlays/Inspector.tsx');
-    expect(src).toContain('data-testid="inspector"');
-    expect(src).toContain('inspector-sec-req');
-    expect(src).toContain('inspector-sec-jump');
-    expect(src).toContain('inspector-sec-anno');
-    expect(src).toContain('Confirm');
-    expect(src).not.toMatch(/[^a-zA-Z]alert\(/);
-    expect(src).not.toMatch(/[^a-zA-Z]confirm\(/);
+  test('检查器已删除（W6）：浮层不再装配 Inspector，仍禁原生弹窗', () => {
+    const host = readFile('src/renderer/features/preview/PreviewOverlaysHost.tsx')
+    expect(host).not.toContain('components/overlays/Inspector')
+    expect(host).not.toContain("sheet === 'inspector'")
+    expect(host).not.toContain('overlays-open-inspector')
+    // 删除类操作仍统一走 Confirm。
+    expect(host).toContain('<Confirm')
+    expect(host).not.toMatch(/[^a-zA-Z]alert\(/)
+    expect(host).not.toMatch(/[^a-zA-Z]confirm\(/);
   });
 });
 

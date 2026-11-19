@@ -5,8 +5,11 @@
  * - 只在「松开 Ctrl/Cmd」后出现，点击元素期间绝不弹输入框；
  * - 上方 chips：编号 + 元素标签，可点 ✕ 删除，也可聚焦 chip 后按 Backspace/Delete 删除；
  * - 下方一个输入框 + 提交：多选共享一条统一需求，提交后由宿主按批量入待提交队列；
- * - 单元素时输入框旁额外露出「标注 / 交互」入口，点开是输入条上方的小面板，不打开 Inspector Sheet；
+ * - 单元素时输入框旁额外露出「标注 / 交互」入口，点开是输入条上方的小面板；
  * - 待提交改为只从工具栏入口打开，底部不再常驻待提交条，输入条位置固定 bottom:1rem；
+ * - 层级 z-50 且由宿主 portal 到 body（W6 修复）：此前渲染在预览浮层 z-30 容器内，
+ *   自身 z-40 被容器层叠上下文封顶，移动端默认打开的文档面板（z-40）会盖住输入条；
+ *   portal 后与 Dialog/Sheet 同级（同为 z-50、DOM 靠前），始终压过文档面板。
  * - Esc / 取消只结束本次拾取，stopPropagation 防止同时关闭 AI/文档/设置等其它弹层。
  * - 需求草稿受控：文本由宿主（PreviewOverlaysHost）提升保存，输入条因选择清空 /
  *   应用弹层短暂卸载后重新挂载仍保留已输入内容；本组件不再持有草稿副本。
@@ -16,7 +19,7 @@ import { Link2, MessageSquarePlus, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { PreviewPickedElement } from './PreviewFrame'
 
-/** 交互目标原型（与 Inspector 的目标下拉同口径）。 */
+/** 交互目标原型（与需求条「交互」面板的目标下拉同口径）。 */
 export interface PickTargetOption {
   name: string
   pages: Array<{ value: string; label: string }>
@@ -183,7 +186,7 @@ export function PickComposer(props: PickComposerProps): React.ReactElement | nul
       aria-label="拾取修改需求"
       onKeyDown={onRootKeyDown}
       style={{ bottom: '1rem' }}
-      className="pointer-events-auto fixed left-1/2 z-40 flex w-[min(760px,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2 rounded-xl border border-border bg-background p-3 shadow-xl"
+      className="pointer-events-auto fixed left-1/2 z-50 flex w-[min(760px,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2 rounded-xl border border-border bg-background p-3 shadow-xl"
     >
       {panel ? (
         <div

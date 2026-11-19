@@ -6,7 +6,8 @@
  *
  * 覆盖（父任务 6 步）：
  *   1. 打开文档面板：功能说明非空；表格/列表/代码块真实渲染，无原始 Markdown 文本。
- *   2. 左侧目录折叠/展开 + 标题跳转；移动端目录抽屉开合 + Tab 不被遮挡。
+ *   2. 左侧目录常驻（兄弟浮层，无收起按钮）+ 标题跳转；移动端目录抽屉开合 + Tab 不被遮挡。
+ *      （W6 对齐：目录改版为 docs-panel 之外的常驻浮层，原「折叠/展开」断言随设计移除。）
  *   3. Ctrl+F：搜索栏、命中计数、上一个/下一个、高亮、Esc 关闭；焦点在设置输入框时不抢占。
  *   4. 段落 ✎ 微改：正文变化 + 落盘；page.reload 后仍保留。
  *   5. 编辑态粘贴富文本：只保留 text/plain + 换行，无 span/style 残留。
@@ -265,26 +266,24 @@ test.describe('Wave4 A2 文档查看与交互', () => {
         }
       })
 
-      // ── 2. 目录折叠 / 跳转；移动端抽屉 ────────────────────────────────
-      await runStep(2, '目录折叠 / 跳转 / 移动端抽屉', async () => {
+      // ── 2. 目录常驻 / 跳转；移动端抽屉 ────────────────────────────────
+      await runStep(2, '目录常驻 / 跳转 / 移动端抽屉', async () => {
         const panel = docsPanel()
         const preview = docPreview()
-        await expect(panel.getByTestId('doc-toc-sidebar')).toBeVisible()
-        const tocItems = panel.getByTestId('doc-toc-item')
+        // W6 对齐：目录改版后是 docs-panel 的兄弟浮层（PC overlay 常驻，不再在面板内部）。
+        const tocSidebar = page.getByTestId('doc-toc-sidebar')
+        await expect(tocSidebar).toBeVisible()
+        await expect(panel.getByTestId('doc-toc-sidebar'), '目录不应再渲染在 docs-panel 内部').toHaveCount(0)
+        // 常驻设计：折叠/展开开关已随目录改版移除。
+        await expect(page.getByRole('button', { name: '收起目录' }), 'PC 目录常驻，不应有收起按钮').toHaveCount(0)
+        await expect(page.getByTestId('doc-toc-toggle')).toHaveCount(0)
+        const tocItems = tocSidebar.getByTestId('doc-toc-item')
         const tocCount = await tocItems.count()
         expect(tocCount, 'PC 目录条目数').toBeGreaterThanOrEqual(6)
-
-        // 折叠 → 竖排「目录」按钮 → 展开。
-        await panel.getByRole('button', { name: '收起目录' }).click()
-        await expect(panel.getByTestId('doc-toc-sidebar')).toHaveCount(0)
-        const rail = panel.getByTestId('doc-toc-toggle')
-        await expect(rail).toBeVisible()
-        await rail.click()
-        await expect(panel.getByTestId('doc-toc-sidebar')).toBeVisible()
-        const shotCollapse = await ctx.shot(2, 'toc-collapse-expand')
+        const shotCollapse = await ctx.shot(2, 'toc-resident')
 
         // 点击最后一条目录（夹具标题，位于文末），正文应滚动且标题进入视口。
-        const last = panel.getByTestId('doc-toc-item').last()
+        const last = tocItems.last()
         const lastText = (await last.innerText()).trim()
         const lastId = await last.getAttribute('data-toc-id')
         expect(lastId, '目录条目应有 data-toc-id').toBeTruthy()
@@ -320,7 +319,10 @@ test.describe('Wave4 A2 文档查看与交互', () => {
         await expect(page.getByTestId('stage-frame')).toHaveAttribute('data-kind', 'mobile', {
           timeout: 10_000,
         })
-        await topbar().getByRole('button', { name: '文档', exact: true }).click()
+        // W6 对齐：移动端默认 chrome 自动打开文档；仅在未打开时点「文档」，避免把已打开的文档点关。
+        if (!(await docsPanel().isVisible().catch(() => false))) {
+          await topbar().getByRole('button', { name: '文档', exact: true }).click()
+        }
         const mobilePanel = docsPanel()
         await expect(mobilePanel).toHaveAttribute('data-variant', 'inline', { timeout: 10_000 })
         await expect(mobilePanel.getByTestId('doc-toc-drawer')).toHaveCount(1)
@@ -370,7 +372,7 @@ test.describe('Wave4 A2 文档查看与交互', () => {
         await openDocsPc(page)
 
         return {
-          evidence: `PC 目录=${tocCount} 条；折叠/展开=OK；点击「${lastText}」scrollTop ${Math.round(before)}→${Math.round(after)}，标题入视口=${inView}；移动端 Tab 命中=${hit.owner}（docs-panel 内）；抽屉 data-open true→点击条目→false；抽屉未遮挡 Tab`,
+          evidence: `PC 目录=${tocCount} 条（兄弟浮层常驻，无收起按钮）；点击「${lastText}」scrollTop ${Math.round(before)}→${Math.round(after)}，标题入视口=${inView}；移动端 Tab 命中=${hit.owner}（docs-panel 内）；抽屉 data-open true→点击条目→false；抽屉未遮挡 Tab`,
           shots: [relShot(shotCollapse), relShot(shotJump), relShot(shotDrawer)],
         }
       })

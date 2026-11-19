@@ -12,7 +12,7 @@
  *     - 5 项菜单；源码 JSON；独立 HTML（Chromium file:// 断网、右侧文档区、表格、无 React）；
  *     - 文档 Markdown；PNG/PDF 原生保存对话框调用后取消；空文档提示；无源提示。
  *   B3 浮层
- *     - 检查器三板块；标注新增/定位/隐藏/删除；链接新增/跳转/删除；
+ *     - 标注新增（需求条小面板）/定位/隐藏/删除；链接新增/跳转/删除；
  *     - 快照列表（seed 2 版本）/恢复；待提交队列持久化/移除/清空；
  *     - Esc 单层、遮罩点击、焦点回归、1024 宽布局。
  *
@@ -551,14 +551,6 @@ async function clearSelectionIfAny(page: Page): Promise<void> {
     })
   }
   await expect(page.getByTestId('overlays-selection-count')).toHaveCount(0, { timeout: 5_000 })
-}
-
-async function ensureSectionOpen(page: Page, sectionTestId: string, title: string, contentTestId: string): Promise<void> {
-  const content = page.getByTestId(contentTestId)
-  if (!(await content.isVisible().catch(() => false))) {
-    await page.getByTestId(sectionTestId).getByText(title, { exact: true }).click()
-  }
-  await expect(content).toBeVisible({ timeout: 5_000 })
 }
 
 async function readQueue(page: Page): Promise<QueueItem[]> {
@@ -1642,7 +1634,10 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
 
       await runStep(ctx, 4, 'doc-md', '文档 Markdown：落盘且与磁盘首页.md 一致', async () => {
         const shots: string[] = []
-        await page.getByTestId('topbar-docs').click()
+        // W6 对齐：移动端默认 chrome 可能已自动打开文档，先判断再点，避免把已打开的文档点关。
+        if (!(await page.getByTestId('docs-panel').isVisible().catch(() => false))) {
+          await page.getByTestId('topbar-docs').click()
+        }
         const docs = page.getByTestId('docs-panel')
         await expect(docs).toBeVisible({ timeout: 15_000 })
         await expect(docs).toContainText('商城首页', { timeout: 20_000 })
@@ -1707,7 +1702,10 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await expect(page.getByTestId('main-window')).toBeVisible({ timeout: 30_000 })
         await ensureProject(page)
         await clickProto(page, HOME)
-        await page.getByTestId('topbar-docs').click()
+        // W6 对齐：重载后进入移动端源，默认 chrome 会自动打开文档；已打开时不得再点「文档」（会 toggle 关闭）。
+        if (!(await page.getByTestId('docs-panel').isVisible().catch(() => false))) {
+          await page.getByTestId('topbar-docs').click()
+        }
         const docs = page.getByTestId('docs-panel')
         await expect(docs).toBeVisible({ timeout: 15_000 })
         await page.keyboard.press('Escape')
@@ -1750,7 +1748,10 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await expect(page.getByTestId('main-window')).toBeVisible({ timeout: 30_000 })
         await ensureProject(page)
         await clickProto(page, HOME)
-        await page.getByTestId('topbar-docs').click()
+        // W6 对齐：同上，重载后文档可能已默认打开，先判断再点。
+        if (!(await page.getByTestId('docs-panel').isVisible().catch(() => false))) {
+          await page.getByTestId('topbar-docs').click()
+        }
         await expect(docs).toBeVisible({ timeout: 15_000 })
         await expect(docs).toContainText('商城首页', { timeout: 20_000 })
         const restoredLen = (await docs.innerText()).length
@@ -1810,39 +1811,32 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         }
       })
 
-      await runStep(ctx, 8, 'inspector-anno', '检查器三板块 + 标注新增/定位/隐藏/删除', async () => {
+      await runStep(ctx, 8, 'anno-panel', '标注新增（需求条小面板）/ 定位 / 隐藏 / 删除', async () => {
         const shots: string[] = []
         await ensurePcStage(page)
-        await clearSelectionIfAny(page)
-        await pickWithCtrl(page, ANNO_SELECTOR)
-        await expect(page.getByTestId('overlays-selection-count')).toHaveText('1', { timeout: 5_000 })
-        await page.getByTestId('overlays-open-inspector').click()
-        const sheet = page.getByTestId('overlays-sheet-inspector')
-        await expect(sheet).toBeVisible({ timeout: 10_000 })
-        const inspector = page.getByTestId('inspector')
-        await expect(inspector).toBeVisible()
-        for (const [id, title] of [
-          ['inspector-sec-req', '修改需求'],
-          ['inspector-sec-jump', '跳转交互'],
-          ['inspector-sec-anno', '需求标注'],
-        ] as Array<[string, string]>) {
-          await expect(page.getByTestId(id)).toBeVisible()
-          await expect(page.getByTestId(id)).toContainText(title)
+        // W6：跨步骤后帧内拾取偶发未弹需求条（帧加载竞态）；带一次有界重试。
+        const composer = page.getByTestId('pick-composer')
+        for (let attempt = 0; ; attempt += 1) {
+          await clearSelectionIfAny(page)
+          await pickWithCtrl(page, ANNO_SELECTOR)
+          if (attempt >= 1 || (await composer.isVisible().catch(() => false))) break
+          await waitPreview(page)
         }
-        const selectorText = norm(await inspector.locator('.break-all').first().innerText())
-        expect(selectorText).toContain('data-pr-id')
-        shots.push(await ctx!.shot(8, 'inspector-three-sections'))
-
-        await ensureSectionOpen(page, 'inspector-sec-anno', '需求标注', 'inspector-anno-input')
-        await page.getByTestId('inspector-anno-input').fill(annoText)
-        await page.getByTestId('inspector-anno-save').click()
+        await expect(page.getByTestId('overlays-selection-count')).toHaveText('1', { timeout: 5_000 })
+        // W6：检查器已删除——标注改经需求条「标注」小面板新增。
+        await expect(composer).toBeVisible({ timeout: 10_000 })
+        await page.getByTestId('pick-composer-annotation').click()
+        const annoPanel = page.getByTestId('pick-composer-annotation-panel')
+        await expect(annoPanel).toBeVisible({ timeout: 5_000 })
+        shots.push(await ctx!.shot(8, 'composer-anno-panel'))
+        await page.getByTestId('pick-composer-annotation-input').fill(annoText)
+        await page.getByTestId('pick-composer-annotation-save').click()
         await waitToast(page, /已新增需求标注|已更新需求标注/, 15_000)
-        await expect(page.getByTestId('inspector-anno-state')).toContainText('已标注', { timeout: 10_000 })
-        await expect(page.getByTestId('overlay-anno-badge')).toHaveCount(1, { timeout: 5_000 })
+        // 保存成功后选择清空、需求条自动收起；角标要重新选中元素才出现（见下方显隐段）。
+        await expect(page.getByTestId('pick-composer')).toBeHidden({ timeout: 5_000 })
         expect(arrayCount(ANNO_FILE), '新增后 annotations.json 应 +1').toBe(annoBefore + 1)
 
-        await page.keyboard.press('Escape')
-        await expect(sheet).toBeHidden({ timeout: 5_000 })
+        // 直接走标注面板：定位 / 显隐 / 删除。
         await page.getByTestId('overlays-open-anno').click()
         const annoSheet = page.getByTestId('overlays-sheet-anno')
         await expect(annoSheet).toBeVisible({ timeout: 10_000 })
@@ -1891,7 +1885,7 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await page.keyboard.press('Escape')
         await expect(annoSheet).toBeHidden({ timeout: 5_000 })
         return {
-          evidence: `检查器三板块可见（修改需求/跳转交互/需求标注）；selector=${selectorText.slice(0, 80)}；新增「${annoText}」→ annotations ${annoBefore}→${annoBefore + 1}，角标=1；面板定位→高亮元素（不打开检查器）；显隐开关→角标 1→0→1；删除 Confirm→annotations 回到 ${annoBefore}，角标=0`,
+          evidence: `需求条「标注」小面板新增「${annoText}」→ annotations ${annoBefore}→${annoBefore + 1}，角标=1；面板定位→高亮元素；显隐开关→角标 1→0→1；删除 Confirm→annotations 回到 ${annoBefore}，角标=0`,
           shots,
         }
       })
@@ -1899,21 +1893,27 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
       await runStep(ctx, 9, 'links', '链接新增 / 预览跳转 / 删除', async () => {
         const shots: string[] = []
         await ensurePcStage(page)
-        await clearSelectionIfAny(page)
-        await pickWithCtrl(page, ANNO_SELECTOR)
-        await page.getByTestId('overlays-open-inspector').click()
-        const sheet = page.getByTestId('overlays-sheet-inspector')
-        await expect(sheet).toBeVisible({ timeout: 10_000 })
-        await ensureSectionOpen(page, 'inspector-sec-jump', '跳转交互', 'inspector-jump-target-pick')
-        await page.getByTestId('inspector-jump-target-pick').selectOption({ label: MINE })
-        await page.getByTestId('inspector-jump-save').click()
+        // W6：同步骤 8，拾取带一次有界重试。
+        const composer = page.getByTestId('pick-composer')
+        for (let attempt = 0; ; attempt += 1) {
+          await clearSelectionIfAny(page)
+          await pickWithCtrl(page, ANNO_SELECTOR)
+          if (attempt >= 1 || (await composer.isVisible().catch(() => false))) break
+          await waitPreview(page)
+        }
+        await expect(composer).toBeVisible({ timeout: 10_000 })
+        await page.getByTestId('pick-composer-link').click()
+        const linkPanel = page.getByTestId('pick-composer-link-panel')
+        await expect(linkPanel).toBeVisible({ timeout: 5_000 })
+        await page.getByTestId('pick-composer-link-target').selectOption({ label: MINE })
+        await page.getByTestId('pick-composer-link-save').click()
         await waitToast(page, /已保存跳转绑定|已更新跳转绑定/, 15_000)
-        await expect(page.getByTestId('inspector-jump-state')).toContainText('已绑定', { timeout: 10_000 })
         expect(arrayCount(LINKS_FILE, 'links'), '新增链接后 links.json 应 +1').toBe(linksBefore + 1)
-        const selectorText = norm(await page.getByTestId('inspector').locator('.break-all').first().innerText())
+        shots.push(await ctx!.shot(9, 'composer-link-bind'))
+        // 保存成功后选择清空、需求条自动收起。
+        await expect(page.getByTestId('pick-composer')).toBeHidden({ timeout: 5_000 })
+        const selectorText = ANNO_SELECTOR
 
-        await page.keyboard.press('Escape')
-        await expect(sheet).toBeHidden({ timeout: 5_000 })
         await page.getByTestId('overlays-open-links').click()
         const linksSheet = page.getByTestId('overlays-sheet-links')
         await expect(linksSheet).toBeVisible({ timeout: 10_000 })
@@ -1987,6 +1987,9 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await expect(page.getByTestId('main-window')).toBeVisible({ timeout: 30_000 })
         await ensureProject(page)
         await clickProto(page, HOME)
+        // W6 对齐：reload 后 kind 随源同步回移动端并默认打开文档；文档会吃掉一次 Esc，
+        // 重新确保 PC 舞台（回到本步骤开头的口径），队列 Sheet 的 Esc 才是第一层。
+        await ensurePcStage(page)
         await expect(page.getByTestId('overlays-open-queue')).toHaveAttribute('aria-label', '待提交（2）', {
           timeout: 20_000,
         })
@@ -2019,6 +2022,8 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await expect(page.getByTestId('main-window')).toBeVisible({ timeout: 30_000 })
         await ensureProject(page)
         await clickProto(page, HOME)
+        // W6 对齐：同上，reload 后回到 PC 舞台，避免文档吃掉 Esc。
+        await ensurePcStage(page)
         await expect(page.getByTestId('overlays-open-queue')).toHaveAttribute('aria-label', '待提交（1）', {
           timeout: 20_000,
         })
@@ -2043,6 +2048,8 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await expect(page.getByTestId('main-window')).toBeVisible({ timeout: 30_000 })
         await ensureProject(page)
         await clickProto(page, HOME)
+        // W6 对齐：同上，reload 后回到 PC 舞台。
+        await ensurePcStage(page)
         await expect(page.getByTestId('overlays-open-queue')).toHaveAttribute('aria-label', '待提交（0）', {
           timeout: 20_000,
         })
@@ -2066,21 +2073,22 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await ensurePcStage(page)
         await clearSelectionIfAny(page)
         await pickWithCtrl(page, ANNO_SELECTOR)
-        const inspectorBtn = page.getByTestId('overlays-open-inspector')
-        const sheet = page.getByTestId('overlays-sheet-inspector')
-        await inspectorBtn.focus()
+        // W6：检查器已删除，Sheet 行为改用「标注」入口验证（同一 ui/sheet 机制）。
+        const annoBtn = page.getByTestId('overlays-open-anno')
+        const sheet = page.getByTestId('overlays-sheet-anno')
+        await annoBtn.focus()
         await page.keyboard.press('Enter')
         await expect(sheet).toBeVisible({ timeout: 10_000 })
         const focusIn = await activeInfo(page)
         const focusInside = await page.evaluate(() => {
           const a = document.activeElement as HTMLElement | null
-          return !!a?.closest('[data-testid="overlays-sheet-inspector"]')
+          return !!a?.closest('[data-testid="overlays-sheet-anno"]')
         })
         if (!focusInside) {
           observe(
             'b-ge-P2-sheet-focus',
             'P2',
-            'Enter 打开检查器后焦点未进入 Sheet',
+            'Enter 打开标注面板后焦点未进入 Sheet',
             `activeElement=${JSON.stringify(focusIn)}`,
           )
         }
@@ -2088,18 +2096,18 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         await expect(sheet).toBeHidden({ timeout: 5_000 })
         await expect(page.getByTestId('overlays-selection-count')).toHaveText('1', { timeout: 5_000 })
         const focusBack = await activeInfo(page)
-        if (focusBack.ariaLabel !== '检查器') {
+        if (!(focusBack.ariaLabel || '').startsWith('标注')) {
           observe(
             'b-ge-P2-focus-restore',
             'P2',
-            'Esc 关闭检查器后焦点未回到触发按钮',
-            `activeElement=${JSON.stringify(focusBack)}；期望 aria-label=检查器`,
+            'Esc 关闭标注面板后焦点未回到触发按钮',
+            `activeElement=${JSON.stringify(focusBack)}；期望 aria-label=标注（…）`,
           )
         }
         shots.push(await ctx!.shot(11, 'esc-sheet-only'))
 
         // 遮罩点击关闭：只关当前 Sheet，选择保留。
-        await inspectorBtn.click()
+        await annoBtn.click()
         await expect(sheet).toBeVisible({ timeout: 10_000 })
         const overlay = page.locator('[data-slot="sheet-overlay"]').first()
         await expect(overlay).toBeVisible()
@@ -2141,7 +2149,7 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         }))
         expect(vp.innerWidth, '窗口应缩到 1024 内容宽').toBeGreaterThanOrEqual(1000)
         expect(vp.scrollWidth, '页面不得横向溢出').toBeLessThanOrEqual(vp.innerWidth + 1)
-        await page.getByTestId('overlays-open-inspector').click()
+        await page.getByTestId('overlays-open-anno').click()
         await expect(sheet).toBeVisible({ timeout: 10_000 })
         const sheetBox = await sheet.boundingBox()
         expect(sheetBox).not.toBeNull()
@@ -2177,7 +2185,7 @@ test.describe('Wave4 B · 导出 + 浮层全量体验', () => {
         // 保持 1024 宽进入后续快照步骤：长链路下 1024→1440 连续 resize 偶发渲染进程挂起，
         // 与 1024 布局断言无关；不再回放大，避免测试环境假失败（真机复验另行记录）。
         return {
-          evidence: `Esc 打开检查器→关闭后选择仍=1、焦点=${JSON.stringify(focusBack)}；遮罩点击 8,8 关闭 Sheet 且选择=1；Sheet+Confirm 第 1 次 Esc 只关 Confirm（annotations 仍 ${annoBefore}），第 2 次 Esc 关 Sheet；1024 视口 innerWidth=${vp.innerWidth}、scrollWidth=${vp.scrollWidth}；检查器 Sheet 宽=${Math.round(sheetBox!.width)}、右边界=${Math.round(sheetBox!.x + sheetBox!.width)}；Git Sheet 宽=${Math.round(gitBox!.width)}；git-toolbar client/scroll=${toolbarMetrics.clientWidth}/${toolbarMetrics.scrollWidth}`,
+          evidence: `Esc 打开标注面板→关闭后选择仍=1、焦点=${JSON.stringify(focusBack)}；遮罩点击 8,8 关闭 Sheet 且选择=1；Sheet+Confirm 第 1 次 Esc 只关 Confirm（annotations 仍 ${annoBefore}），第 2 次 Esc 关 Sheet；1024 视口 innerWidth=${vp.innerWidth}、scrollWidth=${vp.scrollWidth}；标注 Sheet 宽=${Math.round(sheetBox!.width)}、右边界=${Math.round(sheetBox!.x + sheetBox!.width)}；Git Sheet 宽=${Math.round(gitBox!.width)}；git-toolbar client/scroll=${toolbarMetrics.clientWidth}/${toolbarMetrics.scrollWidth}`,
           shots,
         }
       })

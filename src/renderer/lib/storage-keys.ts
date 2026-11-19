@@ -66,9 +66,6 @@ export const AI_REASONING_KEY = 'ai_model_reasoning';
 /** 标注显隐键（逐字沿用 js/annotation-core.js:1007）。 */
 export const PROTO_ANNO_VISIBLE = 'proto_anno_visible';
 
-/** 链接检查器折叠键（逐字沿用 js/link-bind.js:900）。 */
-export const LINK_INSP_FOLD = 'linkInspFold_v1';
-
 /** 待提交队列键（逐字沿用 js/store.js:83 / js/edit-entry.js:2347）。 */
 export const EDIT_QUEUE_KEY = 'edit_queue_v1';
 

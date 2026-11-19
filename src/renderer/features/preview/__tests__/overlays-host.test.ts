@@ -145,7 +145,8 @@ describe('PreviewOverlaysHost 工具条挂载与层级', () => {
     expect(slot.querySelector('[data-testid="overlays-open-anno"]')).toBeTruthy();
     expect(slot.querySelector('[data-testid="overlays-open-queue"]')).toBeTruthy();
     expect(slot.querySelector('[data-testid="overlays-open-snapshot"]')).toBeTruthy();
-    expect(slot.querySelector('[data-testid="overlays-open-inspector"]')).toBeTruthy();
+    // W6：检查器入口已随功能删除，不得回流。
+    expect(slot.querySelector('[data-testid="overlays-open-inspector"]')).toBeNull();
     // 多选 Drawer / 就地改入口已收敛：需求走底部输入条，修改走唯一 PickModifyDialog。
     expect(slot.querySelector('[data-testid="overlays-open-multi"]')).toBeNull();
     expect(slot.querySelector('[data-testid="overlays-open-inline"]')).toBeNull();

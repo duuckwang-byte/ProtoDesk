@@ -7,11 +7,10 @@
  *   ├─ PickOverlay                悬停框 / 选中框 / 角标（W3-02 已有）
  *   ├─ 标注角标（overlay）         选中元素命中 annotation 时按 annoColorOf 画编号
  *   ├─ 标注定位高亮（overlay）     点击标注项只高亮元素，不切换弹窗
- *   ├─ 浮层工具条（portal 到 Stage 工具区）交互 / 标注 / 待提交 / 快照 / 检查器
+ *   ├─ 浮层工具条（portal 到 Stage 工具区）交互 / 标注 / 待提交 / 快照
  *   │                             设置 / AI / Git 打开时整条隐藏，避免穿透 Dialog/Sheet 遮罩
  *   ├─ Sheet(标注)   → AnnoPanel          列表 + 当前面板直接编辑 / 定位高亮 / 删除（Confirm）
  *   ├─ Sheet(快照)   → SnapshotPanel      列表 + 恢复（Confirm）
- *   ├─ Sheet(检查器) → Inspector          手动入口；拾取/标注流程不再默认打开
  *   ├─ Sheet(链接)   链接清单 + 预览跳转 / 删除（Confirm）
  *   ├─ Sheet(待提交) 队列清单（条目可直接编辑）+ 底部固定提交/清空（Confirm）
  *   ├─ PickComposer         松开 Ctrl/Cmd → 底部一条统一需求输入条（bottom 固定 1rem；
@@ -23,8 +22,8 @@
  * 数据口径：
  * - 标注/链接读写一律用 `currentSource.sandboxDir`；保存三键 `selector + page + htmlFile`；
  *   selector 来自 W3-02 帧桥（PreviewFrame 的 generateSelector，不在此重算）。
- * - 标注显隐键 `PROTO_ANNO_VISIBLE`、检查器折叠键 `LINK_INSP_FOLD`、待提交键
- *   `EDIT_QUEUE_KEY` 均只读消费 lib/storage-keys 常量（不新增键、不迁移）。
+ * - 标注显隐键 `PROTO_ANNO_VISIBLE`、待提交键 `EDIT_QUEUE_KEY` 均只读消费
+ *   lib/storage-keys 常量（不新增键、不迁移；检查器及其折叠键已随 W6 功能删除移除）。
  * - 链接帧桥只调用 LinkBind 对 W3-02 已有协议（STAMP_SET / NAV_JUMP / ANNO_RECTS）的封装，
  *   不新增协议名、不读 iframe document。
  * - 就地改/多选只入待提交队列；Ctrl/Cmd+Shift「修改文字」例外：直接读源 HTML → 替换元素文本 →
@@ -42,7 +41,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { Camera, Inbox, Link2, MessageSquarePlus, PanelRight, X } from 'lucide-react'
+import { Camera, Inbox, Link2, MessageSquarePlus, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -57,7 +56,6 @@ import { frameScaleFromWidths, scaleRectToPage } from './lib/iframe-pick'
 import { isTrustedFrameEvent } from './lib/secure-srcdoc'
 import PickComposer, { type PickTargetOption } from './PickComposer'
 import PickModifyDialog, { type PickModifySaveResult } from './PickModifyDialog'
-import Inspector from '@/components/overlays/Inspector'
 import type { EditQueueItem } from '@/components/overlays/MultiEditBar'
 import AnnoPanel from '@/components/overlays/AnnoPanel'
 import SnapshotPanel from '@/components/overlays/SnapshotPanel'
@@ -83,7 +81,6 @@ import {
   linkButtonName,
   loadLinks,
   makeLinkId,
-  readLinkFold,
   removeLink,
   requestAnnoRectsInFrame,
   saveLinks,
@@ -91,8 +88,6 @@ import {
   stampLinksInFrame,
   targetLabel,
   upsertLink,
-  writeLinkFold,
-  type LinkFoldState,
   type LinkItem,
 } from '@/features/links/LinkBind'
 
@@ -141,7 +136,7 @@ export interface PreviewOverlaysHostProps {
   onRemoveSelection?: (selector: string) => void
 }
 
-type SheetKind = 'anno' | 'snapshot' | 'inspector' | 'links' | 'queue'
+type SheetKind = 'anno' | 'snapshot' | 'links' | 'queue'
 
 type ConfirmState =
   | { kind: 'link'; link: LinkItem }
@@ -400,7 +395,6 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
   const [links, setLinks] = useState<LinkItem[]>([])
   const [linksLoading, setLinksLoading] = useState(false)
   const [linksReady, setLinksReady] = useState(false)
-  const [linkFold, setLinkFold] = useState<LinkFoldState | null>(() => readLinkFold())
   const [queue, setQueue] = useState<PickQueueItem[]>(() => loadQueue())
   const [sheet, setSheet] = useState<SheetKind | null>(null)
   /*
@@ -514,14 +508,10 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
     setComposerDraft('')
   }, [composerDraftScope])
 
-  /* ── 待提交队列持久化（edit_queue_v1）与折叠态持久化（linkInspFold_v1） ── */
+  /* ── 待提交队列持久化（edit_queue_v1） ── */
   useEffect(() => {
     writeJson(EDIT_QUEUE_KEY, queue)
   }, [queue])
-
-  useEffect(() => {
-    if (linkFold) writeLinkFold(linkFold)
-  }, [linkFold])
 
   /* ── 链接帧桥：STAMP_SET（已有协议）随链接清单/切源重打；ANNO_RECTS best-effort ── */
   useEffect(() => {
@@ -751,8 +741,7 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
     return out
   }, [annoVisible, annoItems, props.selected, page, htmlFile, liveRects])
 
-  /* 检查器/需求条只认当前选中元素；标注定位不再借道检查器 Sheet。 */
-  const inspectTarget: PreviewPickedElement | null = selectedOne
+  /* 需求条只认当前唯一选中元素；标注/跳转/需求都以它为目标。 */
   const currentAnno = useMemo(
     () =>
       selectedOne
@@ -764,16 +753,6 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
     () => (selectedOne ? findLink(links, selectedOne.selector, page, htmlFile) : null),
     [links, selectedOne, page, htmlFile],
   )
-  const queueDraft = useMemo(() => {
-    if (!selectedOne) return ''
-    const hit = queue.find(
-      (q) =>
-        q.selector === selectedOne.selector &&
-        q.page === page &&
-        (!q.htmlFile || !htmlFile || q.htmlFile === htmlFile),
-    )
-    return hit ? hit.text : ''
-  }, [queue, selectedOne, page, htmlFile])
 
   const targetOptions = useMemo(
     () =>
@@ -819,7 +798,7 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
 
   const handleSaveAnno = useCallback(
     async (content: string) => {
-      const target = inspectTarget
+      const target = selectedOne
       const text = String(content || '').trim()
       if (!target || !sandboxDir) {
         pushToast({ title: '请先选择原型元素，再保存标注。' })
@@ -861,7 +840,7 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
       pushToast({ title: existing ? '已更新需求标注。' : '已新增需求标注。' })
       return true
     },
-    [annoItems, annoReady, currentAnno, htmlFile, page, inspectTarget, pushToast, sandboxDir],
+    [annoItems, annoReady, currentAnno, htmlFile, page, selectedOne, pushToast, sandboxDir],
   )
 
   /* 标注面板内直接编辑：按 id 定位条目，写 saveAnnos 并更新列表。 */
@@ -917,7 +896,7 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
     [annoItems, annoReady, pushToast, sandboxDir],
   )
 
-  /* 定位只高亮元素：不打开/切换 Inspector Sheet，也不清空当前选择。 */
+  /* 定位只高亮元素：不清空当前选择、不切换任何弹层。 */
   const handleLocateAnno = useCallback((anno: AnnoItem) => {
     setLocatedAnno({ id: anno.id, selector: anno.selector, rect: null })
   }, [])
@@ -925,7 +904,7 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
   /* ── 链接 ── */
   const handleSaveJump = useCallback(
     async (target: string, targetPage: string) => {
-      const el = inspectTarget
+      const el = selectedOne
       if (!el || !sandboxDir) {
         pushToast({ title: '请先选择原型元素，再绑定跳转。' })
         return false
@@ -968,11 +947,11 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
       pushToast({ title: existing ? '已更新跳转绑定。' : '已保存跳转绑定。' })
       return true
     },
-    [currentLink, htmlFile, page, inspectTarget, links, linksReady, pushToast, sandboxDir],
+    [currentLink, htmlFile, page, selectedOne, links, linksReady, pushToast, sandboxDir],
   )
 
   const handleRemoveJump = useCallback(async () => {
-    const el = inspectTarget
+    const el = selectedOne
     if (!el || !sandboxDir) return false
     if (!linksReady) {
       pushToast({ title: '跳转链接尚未成功读取，已取消删除以避免覆盖。' })
@@ -987,7 +966,7 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
     setLinks(next)
     pushToast({ title: '已删除跳转绑定。' })
     return true
-  }, [htmlFile, page, inspectTarget, links, linksReady, pushToast, sandboxDir])
+  }, [htmlFile, page, selectedOne, links, linksReady, pushToast, sandboxDir])
 
   const handleDeleteLink = useCallback(
     async (link: LinkItem) => {
@@ -1043,27 +1022,6 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
   )
 
   /* ── 队列操作 ── */
-  const handleAddRequirement = useCallback(
-    (text: string) => {
-      const el = inspectTarget
-      const value = String(text || '').trim()
-      if (!el || !value) {
-        pushToast({ title: '请先输入要调整的内容。' })
-        return
-      }
-      enqueue([
-        {
-          selector: el.selector,
-          page: page,
-          htmlFile: htmlFile,
-          text: value,
-          tagName: el.tagName,
-        },
-      ])
-      pushToast({ title: '已加入待提交队列。' })
-    },
-    [enqueue, htmlFile, page, inspectTarget, pushToast],
-  )
 
   const handleQueueToggle = useCallback((id: string, selected: boolean) => {
     setQueue((prev) => prev.map((q) => (q.id === id ? { ...q, selected } : q)))
@@ -1443,18 +1401,6 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
               >
                 <Camera aria-hidden="true" className="size-3.5" />
               </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                data-testid="overlays-open-inspector"
-                className="size-6 shrink-0"
-                aria-label="检查器"
-                title="检查器（手动入口；需先选中元素）"
-                disabled={!inspectTarget}
-                onClick={() => setSheet('inspector')}
-              >
-                <PanelRight aria-hidden="true" className="size-3.5" />
-              </Button>
 
               {hasSelection ? (
                 <>
@@ -1499,25 +1445,32 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
         - chips 在上、输入框在下；多选一条统一需求，提交为一条批量待提交；
         - 单元素时输入框旁有「标注 / 交互」小面板入口；
         - 底部不再常驻待提交条，输入条位置固定 bottom:1rem；
-        - 应用级弹层打开（modalOpen）时整条不渲染，避免 Esc/焦点互抢。
+        - 应用级弹层打开（modalOpen）时整条不渲染，避免 Esc/焦点互抢；
+        - W6 修复：portal 到 body + z-50。此前渲染在本容器（z-30）内，z-40 被
+          层叠上下文封顶，移动端默认打开的文档面板（z-40）会盖住输入条；
+          portal 后与 Sheet/Confirm 同挂 body（本段在前、Sheet 在后，同 z-50
+          时后挂者在上），Sheet 遮罩仍能盖住输入条，层级关系与旧实现一致。
       */}
-      {!modalOpen && props.pickComposerOpen ? (
-        <PickComposer
-          elements={props.selected}
-          annotationContent={currentAnno?.content || ''}
-          linkTarget={currentLink?.target || ''}
-          linkTargetPage={currentLink?.targetPage || ''}
-          linkBound={!!currentLink}
-          targetOptions={targetOptions as PickTargetOption[]}
-          draft={composerDraft}
-          onDraftChange={setComposerDraft}
-          onRemove={handleComposerRemove}
-          onSubmit={handlePickComposerSubmit}
-          onCancel={handlePickComposerCancel}
-          onSaveAnnotation={handleComposerSaveAnno}
-          onSaveLink={handleComposerSaveLink}
-          onRemoveLink={handleComposerRemoveLink}
-        />
+      {!modalOpen && props.pickComposerOpen && typeof document !== 'undefined' ? (
+        createPortal(
+          <PickComposer
+            elements={props.selected}
+            annotationContent={currentAnno?.content || ''}
+            linkTarget={currentLink?.target || ''}
+            linkTargetPage={currentLink?.targetPage || ''}
+            linkBound={!!currentLink}
+            targetOptions={targetOptions as PickTargetOption[]}
+            draft={composerDraft}
+            onDraftChange={setComposerDraft}
+            onRemove={handleComposerRemove}
+            onSubmit={handlePickComposerSubmit}
+            onCancel={handlePickComposerCancel}
+            onSaveAnnotation={handleComposerSaveAnno}
+            onSaveLink={handleComposerSaveLink}
+            onRemoveLink={handleComposerRemoveLink}
+          />,
+          document.body,
+        )
       ) : null}
 
       {/* Sheet/Confirm 统一 portal 到 body：避免继承容器的 pointer-events:none */}
@@ -1575,76 +1528,6 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
                 </SheetContent>
               </Sheet>
 
-              <Sheet open={sheet === 'inspector'} onOpenChange={(open) => !open && setSheet(null)}>
-                <SheetContent
-                  side="right"
-                  data-testid="overlays-sheet-inspector"
-                  className="pointer-events-auto w-[min(430px,94vw)] overflow-y-auto p-4"
-                >
-                  <SheetHeader className="p-0 pb-3">
-                    <SheetTitle>检查器</SheetTitle>
-                    <SheetDescription>
-                      修改需求 / 跳转交互 / 需求标注；需求只入待提交队列。
-                    </SheetDescription>
-                  </SheetHeader>
-                  {inspectTarget ? (
-                    <Inspector
-                      selector={inspectTarget.selector}
-                      page={page}
-                      label={inspectTarget.text}
-                      text={inspectTarget.text}
-                      tagName={inspectTarget.tagName}
-                      htmlFile={htmlFile}
-                      draft={queueDraft}
-                      boundTarget={currentLink?.target || ''}
-                      boundTargetPage={currentLink?.targetPage || ''}
-                      isBound={!!currentLink}
-                      annoContent={currentAnno?.content || ''}
-                      hasAnno={!!currentAnno}
-                      targetOptions={targetOptions}
-                      fold={linkFold || undefined}
-                      onFoldChange={(section, open) => {
-                        setLinkFold((prev) => ({ ...(prev || {}), [section]: open }))
-                      }}
-                      onAddRequirement={handleAddRequirement}
-                      onStartJumpSelect={() => {
-                        pushToast({ title: '从下拉选择目标原型；子页面可在第二个下拉里选。' })
-                      }}
-                      onSaveJump={(target, targetPage) => {
-                        void handleSaveJump(target, targetPage)
-                      }}
-                      onRemoveJump={() => {
-                        void handleRemoveJump()
-                      }}
-                      onSaveAnno={(content) => {
-                        void handleSaveAnno(content)
-                      }}
-                      onDeleteAnno={async () => {
-                        if (currentAnno) await handleDeleteAnno(currentAnno.id)
-                      }}
-                    />
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border p-4 text-xs text-muted-foreground">
-                      按住 Ctrl 点击原型元素，或在标注列表里点一条标注进行定位。
-                    </div>
-                  )}
-                  {inspectTarget ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      data-testid="inspector-remove-selection"
-                      className="mt-3"
-                      onClick={() => {
-                        handleComposerRemove(inspectTarget.selector)
-                        setSheet(null)
-                      }}
-                    >
-                      取消该元素选择
-                    </Button>
-                  ) : null}
-                </SheetContent>
-              </Sheet>
-
               <Sheet open={sheet === 'links'} onOpenChange={(open) => !open && setSheet(null)}>
                 <SheetContent
                   side="right"
@@ -1661,7 +1544,7 @@ export default function PreviewOverlaysHost(props: PreviewOverlaysHostProps) {
                     <div className="p-4 text-xs text-muted-foreground">正在读取链接…</div>
                   ) : links.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-4 text-xs text-muted-foreground">
-                      当前原型暂无跳转绑定。选中一个元素后，在检查器「跳转交互」里绑定目标。
+                      当前原型暂无跳转绑定。按住 Ctrl 选中一个元素后，在需求条「交互」面板里绑定目标。
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2" data-testid="overlays-link-list">

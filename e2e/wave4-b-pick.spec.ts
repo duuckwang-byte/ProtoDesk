@@ -10,7 +10,7 @@
  * 4. 选中框随 iframe 滚动 / 舞台 75%、125% 缩放实时重算，不漂移；
  * 5. 待提交只从工具栏「待提交」打开（底部不再常驻 multi-edit-bar）；条目可直接编辑，
  *    底部提交/清空固定可见、不随列表滚动；
- * 6. 标注：点击条目/定位只高亮元素、不打开检查器 Sheet；内容在标注面板内直接编辑并保存；
+ * 6. 标注：点击条目/定位只高亮元素；内容在标注面板内直接编辑并保存；
  * 7. Sheet 打开后焦点进入浮层、Tab/Shift+Tab 焦点陷阱、Esc 关闭后焦点回归；
  * 8. 需求草稿：继续 Ctrl 多选期间输入条不短暂消失、草稿与 chips 同时保留，松开后焦点回输入框；
  *    取消 / 提交 / 清空选择 / 切源后草稿清空。
@@ -854,11 +854,12 @@ test('B pick 复测：Ctrl 需求弹窗 / Ctrl+Shift 修改弹窗 / 普通点击
     log('drift', evidence.drift)
 
     // ── 6. Sheet 焦点陷阱：进入 / Tab 循环 / Esc 回归 ─────────────────
-    const inspector = page.getByTestId('overlays-open-inspector')
-    await expect(inspector).toBeEnabled()
+    // W6：检查器已删除，用工具条「标注」按钮作为 Sheet 打开者（同为普通流按钮）。
+    const sheetOpener = page.getByTestId('overlays-open-anno')
+    await expect(sheetOpener).toBeEnabled()
     // 先聚焦触发器再 Enter：需求条同时打开时，鼠标点击的焦点回退目标不稳定；
     // 键盘激活可确定性地验证 Sheet 关闭后焦点回到触发按钮。
-    await inspector.focus()
+    await sheetOpener.focus()
     await page.keyboard.press('Enter')
     const sheet = page.locator('[data-slot="sheet-content"]').first()
     await expect(sheet).toBeVisible({ timeout: 10_000 })
@@ -886,11 +887,11 @@ test('B pick 复测：Ctrl 需求弹窗 / Ctrl+Shift 修改弹窗 / 普通点击
     const focusAfterEsc = await activeInfo(page)
     log('focusAfterEsc', focusAfterEsc)
     expect(focusAfterEsc.inSheet, 'Esc 关闭后焦点不得留在 Sheet 内').toBe(false)
-    if (focusAfterEsc.testid !== 'overlays-open-inspector') {
+    if (focusAfterEsc.testid !== 'overlays-open-anno') {
       observe(
         'B-PICK-OBS-sheet-focus-return',
         'P2',
-        `需求条同时打开时，检查器 Sheet 经 Esc 关闭后焦点回到 ${focusAfterEsc.tag || '未知'}，未回到触发按钮；关闭 Sheet 本身正常、选择保留。`,
+        `需求条同时打开时，标注 Sheet 经 Esc 关闭后焦点回到 ${focusAfterEsc.tag || '未知'}，未回到触发按钮；关闭 Sheet 本身正常、选择保留。`,
       )
     }
     expect(await page.getByTestId('overlays-selection-count').innerText(), '关闭 Sheet 不应清空选择').toBe('1')

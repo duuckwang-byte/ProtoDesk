@@ -4,6 +4,9 @@
  * 只接管容器/工具栏/保存/状态；contenteditable/undo 内核不动（§10.3）：
  * - 预览态：按 docs-store 的轻量 Markdown 块解析结果渲染（标题/段落/表格/列表/代码块等），
  *   标题输出 `data-toc-id` 供 DocToc 锚点定位；段落/标题保留悬停 `✎ 微改`（E2E 锚点 `doc-micro-edit`）；
+ *   W6 修复：补回旧版 P2 的「双击就地改」——阅读态双击段落/标题/列表/引用块直接弹
+ *   微改浮层（旧版 js/core-docs.js P2 双击段落微浮层口径；code/img 双击不触发），
+ *   列表/引用同时补上悬停 ✎ 微改（此前完全没有编辑入口）；
  * - 编辑态：原生 contenteditable（浏览器自带 undo），React 只在编辑区挂载时灌入 innerText；
  *   编辑区/预览区使用不同 key，退出编辑即整块卸载，避免 contenteditable 文本残留到预览（docs-P1-1）；
  * - 保存/放弃走 docs-store（desc → sandbox:write / latest → doc:write-latest，
@@ -28,6 +31,8 @@ import {
   useState,
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react"
 import { ChevronDown, ChevronUp, Pencil, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -40,7 +45,9 @@ import {
   useDocsStore,
   type DocBlock,
   type DocHeadingBlock,
+  type DocListBlock,
   type DocParagraphBlock,
+  type DocQuoteBlock,
 } from "@/stores/docs-store"
 
 export interface DocEditorProps {
@@ -263,8 +270,9 @@ export function insertPlainTextAtSelection(text: string, root: HTMLElement): boo
 }
 
 /**
- * 段落/标题微改（悬停出现 ✎，E2E 锚点 data-testid="doc-micro-edit"）。
+ * 段落/标题微改（悬停出现 ✎ 或双击打开，E2E 锚点 data-testid="doc-micro-edit"）。
  * 保存时按解析块的行号区间替换原文，不再用 split/join 破坏表格与列表结构。
+ * W6：双击正文就地改（对齐旧版 P2 微浮层）——图片不拦截，双击文本即弹微改浮层。
  */
 function MicroEditBlock({
   block,
@@ -280,6 +288,12 @@ function MicroEditBlock({
   function handleOpenChange(next: boolean) {
     setOpen(next)
     if (next) setValue(block.text)
+  }
+
+  // 双击 = 打开微改浮层（旧版 P2 口径）；块内图片双击不触发（走原生选择/查看）。
+  function handleDoubleClick(event: ReactMouseEvent<HTMLDivElement>) {
+    if (event.target instanceof HTMLElement && event.target.tagName === "IMG") return
+    handleOpenChange(true)
   }
 
   async function apply() {
@@ -311,7 +325,7 @@ function MicroEditBlock({
   const Tag = (headingTag ?? "p") as "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p"
 
   return (
-    <div data-para-idx={index} className="group relative">
+    <div data-para-idx={index} className="group relative" onDoubleClick={handleDoubleClick}>
       {block.kind === "heading" ? (
         <Tag
           id={block.id}
@@ -359,6 +373,101 @@ function MicroEditBlock({
   )
 }
 
+/**
+ * 列表/引用块就地改（W6 补回旧版 P2 双击口径；此前这两类块完全没有编辑入口）。
+ * - 与 MicroEditBlock 同挂载形态：悬停 ✎ / 双击打开 Popover；
+ * - 区别在编辑对象：这两类块的“该块内容”是原始 Markdown 行（含 `- `/`1. `/`> ` 前缀），
+ *   用多行 textarea 编辑，保存按块行号区间整块替换（同 MicroEditBlock 的 apply 口径）；
+ * - 打开时从 store 现取原文，块被其它编辑改动后不会拿旧值。
+ */
+function RawEditBlock({
+  block,
+  index,
+  children,
+}: {
+  block: DocListBlock | DocQuoteBlock
+  index: number
+  children: ReactNode
+}) {
+  const setDraft = useDocsStore((s) => s.setDraft)
+  const [value, setValue] = useState("")
+  const [open, setOpen] = useState(false)
+
+  // 每次打开都从当前 docContent 取该块的原始行，避免复用挂载时的旧内容。
+  function rawOfBlock(): string {
+    const st = useDocsStore.getState()
+    const lines = String(st.docContent).replace(/\r\n?/g, "\n").split("\n")
+    if (block.start < 0 || block.end < block.start || block.end >= lines.length) return ""
+    return lines.slice(block.start, block.end + 1).join("\n")
+  }
+
+  function handleOpenChange(next: boolean) {
+    setOpen(next)
+    if (next) setValue(rawOfBlock())
+  }
+
+  function handleDoubleClick(event: ReactMouseEvent<HTMLDivElement>) {
+    if (event.target instanceof HTMLElement && event.target.tagName === "IMG") return
+    handleOpenChange(true)
+  }
+
+  async function apply() {
+    const next = value
+    const raw = rawOfBlock()
+    if (!next.trim() || next === raw) {
+      setOpen(false)
+      return
+    }
+    const st = useDocsStore.getState()
+    const lines = String(st.docContent).replace(/\r\n?/g, "\n").split("\n")
+    if (block.start < 0 || block.end < block.start || block.end >= lines.length) {
+      setOpen(false)
+      return
+    }
+    lines.splice(block.start, block.end - block.start + 1, ...next.split("\n"))
+    setDraft(lines.join("\n"))
+    setOpen(false)
+    const ok = await useDocsStore.getState().save()
+    // 保存失败：保留草稿并进入编辑态，让用户可重试（错误已由 store toast）。
+    if (!ok) useDocsStore.getState().setEditing(true)
+  }
+
+  return (
+    <div data-para-idx={index} className="group relative" onDoubleClick={handleDoubleClick}>
+      {children}
+      <Popover open={open} onOpenChange={handleOpenChange}>
+        <PopoverTrigger
+          data-testid="doc-micro-edit"
+          aria-label={`微改第 ${index + 1} 块`}
+          title="微改本块"
+          className="absolute -right-0.5 top-0 hidden items-center justify-center rounded border border-border bg-background p-1 text-muted-foreground shadow-sm hover:text-foreground group-hover:inline-flex"
+        >
+          <Pencil className="size-3" />
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-72">
+          <p className="mb-1.5 text-[11px] font-medium text-foreground">微改第 {index + 1} 块（Markdown 源行）</p>
+          <textarea
+            data-testid="doc-raw-edit-input"
+            aria-label="微改内容"
+            className="min-h-24 w-full resize-y rounded-md border border-input bg-background px-2 py-1 text-xs leading-5 outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--cobalt)]"
+            rows={5}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+          <div className="mt-1.5 flex justify-end gap-1.5">
+            <Button variant="ghost" size="sm" className="h-6 text-[11px]" onClick={() => setOpen(false)}>
+              取消
+            </Button>
+            <Button size="sm" className="h-6 text-[11px]" onClick={apply} data-testid="doc-raw-edit-apply">
+              应用
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
 /** 列表项（有序/无序共用；深度以缩进呈现，避免额外依赖）。 */
 function ListItems({ block }: { block: Extract<DocBlock, { kind: "list" }> }) {
   return (
@@ -383,17 +492,21 @@ function DocBlockView({ block, index }: { block: DocBlock; index: number }) {
     case "paragraph":
       return <MicroEditBlock block={block} index={index} />
     case "list":
-      return block.ordered ? (
-        <ol
-          start={block.startNumber !== 1 ? block.startNumber : undefined}
-          className="my-1 list-decimal space-y-0.5 pl-5 text-xs leading-5"
-        >
-          <ListItems block={block} />
-        </ol>
-      ) : (
-        <ul className="my-1 list-disc space-y-0.5 pl-5 text-xs leading-5">
-          <ListItems block={block} />
-        </ul>
+      return (
+        <RawEditBlock block={block} index={index}>
+          {block.ordered ? (
+            <ol
+              start={block.startNumber !== 1 ? block.startNumber : undefined}
+              className="my-1 list-decimal space-y-0.5 pl-5 text-xs leading-5"
+            >
+              <ListItems block={block} />
+            </ol>
+          ) : (
+            <ul className="my-1 list-disc space-y-0.5 pl-5 text-xs leading-5">
+              <ListItems block={block} />
+            </ul>
+          )}
+        </RawEditBlock>
       )
     case "code":
       return (
@@ -446,9 +559,11 @@ function DocBlockView({ block, index }: { block: DocBlock; index: number }) {
       )
     case "quote":
       return (
-        <blockquote className="my-1.5 border-l-2 border-border pl-2 text-[11px] leading-5 text-muted-foreground">
-          <InlineHtml text={block.text} breaks />
-        </blockquote>
+        <RawEditBlock block={block} index={index}>
+          <blockquote className="my-1.5 border-l-2 border-border pl-2 text-[11px] leading-5 text-muted-foreground">
+            <InlineHtml text={block.text} breaks />
+          </blockquote>
+        </RawEditBlock>
       )
     case "hr":
       return <hr className="my-2 border-border" />
